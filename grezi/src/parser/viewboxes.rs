@@ -5,7 +5,9 @@ use std::{
 
 use crate::layout::{Constraint, UnresolvedLayout};
 
-use super::{GrzCursor, NodeKind};
+#[cfg(not(target_arch = "wasm32"))]
+use super::GrzCursor;
+use super::NodeKind;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -104,6 +106,7 @@ impl FromStr for Direction {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox(
     tree_cursor: &mut GrzCursor<'_>,
     source: &str,

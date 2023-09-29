@@ -16,6 +16,7 @@ yoke = { version = "0.7.2", features = ["derive"] }
 num_enum = "0.7.0"
 serde = { version = "1.0.188", features = ["derive"] }
 postcard = { version = "1.0.8", features = ["use-std"] }
+log = "0.4.20"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -34,7 +35,7 @@ env_logger = "0.10"
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2.10", features = ["js"] }
-eframe = { version = "0.22.0", default-features = false, features = ["default_fonts", "wgpu", "persistence"] }
+eframe = { version = "0.22.0", default-features = false, features = ["default_fonts", "glow", "persistence"] }
 wasm-bindgen-futures = "0.4"
 
 [build-dependencies]

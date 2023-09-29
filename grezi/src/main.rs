@@ -14,13 +14,17 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+
 use eframe::{
-    egui::{self, FontData, FontDefinitions, Rect, Ui},
+    egui::{self, FontData, FontDefinitions, PointerButton, Rect, Ui},
     epaint::{mutex::Mutex, Color32, FontFamily, Pos2, Rounding, Vec2},
 };
+#[cfg(not(target_arch = "wasm32"))]
 use imara_diff::{
     intern::{InternedInput, TokenSource},
     sources::ByteLines,
@@ -28,18 +32,21 @@ use imara_diff::{
 };
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
 use layout::UnresolvedLayout;
+#[cfg(not(target_arch = "wasm32"))]
 use notify::{event::ModifyKind, Watcher};
 use parser::{
     actions::{Actions, ResolvedActions},
-    highlighting::HelixCell,
     objects::{Object, ObjectState},
     slides::{ResolvedSlideObj, SlideObj},
     viewboxes::ViewboxIn,
     AstObject, PassThroughHasher,
 };
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use tree_sitter::Tree;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::parser::highlighting::HelixCell;
 use crate::parser::objects::ResolvedObject;
 
 mod layout;
@@ -48,14 +55,18 @@ mod parser;
 #[allow(dead_code)]
 struct MyEguiApp {
     slide_show: SlideShow,
+    #[cfg(not(target_arch = "wasm32"))]
     new_file: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
     slide_show_file: Arc<Mutex<String>>,
     #[cfg(not(target_arch = "wasm32"))]
     tree_info: Arc<Mutex<Option<(Tree, String)>>>,
+    #[cfg(not(target_arch = "wasm32"))]
     file_name: String,
     index: usize,
+    #[cfg(not(target_arch = "wasm32"))]
     delta: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
     helix_cell: Option<HelixCell>,
     window_size: [u32; 2],
     // Safe, I think, IDK
@@ -72,6 +83,7 @@ struct SlideShow {
     objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 struct LinesWVec<'a> {
     vec: Rc<RefCell<Vec<Range<usize>>>>,
@@ -82,6 +94,7 @@ struct LinesWVec<'a> {
 #[cfg(target_arch = "wasm32")]
 const PRESENTATION: &[u8] = include_bytes!(env!("PRESENTATION"));
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a> Iterator for LinesWVec<'a> {
     type Item = &'a [u8];
 
@@ -98,6 +111,7 @@ impl<'a> Iterator for LinesWVec<'a> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a> TokenSource for LinesWVec<'a> {
     type Token = &'a [u8];
 
@@ -118,7 +132,9 @@ impl MyEguiApp {
         // Restore app state using cc.storage (requires the "persistence" feature).
         // Use the cc.gl (a glo::Context) to create graphics shaders and buffers that you can use
         // for e.g. egui::PaintCallback.
+        #[cfg(not(target_arch = "wasm32"))]
         let mut args = std::env::args().skip(1);
+        #[cfg(not(target_arch = "wasm32"))]
         let file_name = args.next().unwrap();
         let mut fonts = FontDefinitions::default();
 
@@ -187,12 +203,13 @@ impl MyEguiApp {
             .watch(Path::new(&file_name), notify::RecursiveMode::NonRecursive)
             .unwrap();
 
+        #[cfg(not(target_arch = "wasm32"))]
         let mut helix_cell = None;
-        let mut viewboxes = HashMap::default();
-        let mut objects = HashMap::default();
 
         #[cfg(not(target_arch = "wasm32"))]
         let slide_show: SlideShow = {
+            let mut viewboxes = HashMap::default();
+            let mut objects = HashMap::default();
             if file_name.ends_with(".slideshow") {
                 let file = std::fs::read(&file_name).unwrap();
                 postcard::from_bytes(&file).unwrap()
@@ -225,34 +242,12 @@ impl MyEguiApp {
             }
         };
         #[cfg(target_arch = "wasm32")]
-        let ast = {
-            let ast = parser::parse_file(
-                env!("PRESENTATION"),
-                PRESENTATION,
-                None,
-                size_rect,
-                ctx,
-                &mut self.helix_cell,
-            );
-            match ast.1 {
-                Ok(ast) => {
-                    self.delta = Instant::now();
-                    self.time = 0.0;
-                    SlideShow {
-                        slide_show: ast.1,
-                        viewboxes,
-                        objects,
-                    }
-                }
-                Err(e) => {
-                    println!("{:?}", e.get());
-                    std::process::exit(1);
-                }
-            }
-        };
+        let slide_show: SlideShow = { postcard::from_bytes(PRESENTATION).unwrap() };
 
+        #[cfg(not(target_arch = "wasm32"))]
         new_file.store(false, Ordering::Relaxed);
 
+        #[cfg(not(target_arch = "wasm32"))]
         if args.find(|f| f == "--export").is_some() {
             postcard::to_io(&slide_show, std::fs::File::create("out.slideshow").unwrap()).unwrap();
             std::process::exit(0);
@@ -260,20 +255,27 @@ impl MyEguiApp {
 
         Self {
             slide_show,
+            #[cfg(not(target_arch = "wasm32"))]
             new_file,
             #[cfg(not(target_arch = "wasm32"))]
             slide_show_file,
             #[cfg(not(target_arch = "wasm32"))]
             tree_info,
+            #[cfg(not(target_arch = "wasm32"))]
             file_name,
             index: 0,
+            #[cfg(not(target_arch = "wasm32"))]
             delta: Instant::now(),
             time: 0.0,
+            #[cfg(not(target_arch = "wasm32"))]
             helix_cell,
             resolved_viewboxes: HashMap::default(),
             resolved_actions: None,
             resolved_slide: None,
+            #[cfg(not(target_arch = "wasm32"))]
             window_size: [0, 0],
+            #[cfg(target_arch = "wasm32")]
+            window_size: [1920, 1080],
         }
     }
 
@@ -488,21 +490,67 @@ impl MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let delta = self.delta;
-        self.delta = Instant::now();
-        let delta = self.delta.duration_since(delta);
-        self.time += delta.as_secs_f32();
-        if self.window_size == [0, 0] {
-            return;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let delta = self.delta;
+            self.delta = Instant::now();
+            let delta = self.delta.duration_since(delta);
+            self.time += delta.as_secs_f32();
+            if self.window_size == [0, 0] {
+                return;
+            }
         }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.time += 0.01666667;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|input| {
             if input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape) {
                 frame.close();
             }
         });
+        let mut button_hit = false;
+        egui::TopBottomPanel::bottom("controls")
+            .exact_height(32.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("⬅").clicked() {
+                        if self.index != 0 {
+                            self.index -= 1;
+                            self.resolved_actions = None;
+                            self.resolved_slide = None;
+                        }
+                        button_hit = true;
+                        self.time = 1000.0;
+                    } else if ui.button("➡").clicked() {
+                        if self.index != self.slide_show.slide_show.len() {
+                            self.index += 1;
+                            self.resolved_actions = None;
+                            self.resolved_slide = None;
+                        }
+                        button_hit = true;
+                        self.time = 0.0;
+                    }
+                    ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
+                    ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
+                })
+            });
         egui::CentralPanel::default().show(ctx, |ui| {
+            #[cfg(target_arch = "wasm32")]
+            {
+                let available = ui.available_size();
+                let window_size = [available.x as u32, available.y as u32];
+                if self.window_size != window_size {
+                    self.time = 0.0;
+                    self.window_size = window_size;
+                    self.resolved_viewboxes.clear();
+                    self.resolved_actions = None;
+                    self.resolved_slide = None;
+                }
+            }
+            #[cfg(not(target_arch = "wasm32"))]
             if self.new_file.load(Ordering::Relaxed) {
-                #[cfg(not(target_arch = "wasm32"))]
                 let ast = {
                     let mut tree_info = self.tree_info.lock();
                     let mut info = tree_info.take();
@@ -542,28 +590,6 @@ impl eframe::App for MyEguiApp {
                         }
                     }
                 };
-                #[cfg(target_arch = "wasm32")]
-                let ast = {
-                    let ast = parser::parse_file(
-                        env!("PRESENTATION"),
-                        PRESENTATION,
-                        None,
-                        size_rect,
-                        ctx,
-                        &mut self.helix_cell,
-                    );
-                    match ast.1 {
-                        Ok(ast) => {
-                            self.delta = Instant::now();
-                            self.time = 0.0;
-                            ast.1
-                        }
-                        Err(e) => {
-                            println!("{:?}", e.get());
-                            std::process::exit(1);
-                        }
-                    }
-                };
 
                 self.resolved_actions = None;
                 self.resolved_slide = None;
@@ -581,8 +607,11 @@ impl eframe::App for MyEguiApp {
                         actions,
                         ..
                     } => {
-                        let resolved_slide =
-                            self.resolve_slide(slide, ctx, frame.info().window_info.size);
+                        let resolved_slide = self.resolve_slide(
+                            slide,
+                            ctx,
+                            Vec2::new(self.window_size[0] as f32, self.window_size[1] as f32),
+                        );
                         self.resolved_actions =
                             Some(self.resolve_actions(actions, &resolved_slide));
                         self.resolved_slide = Some(resolved_slide);
@@ -596,8 +625,14 @@ impl eframe::App for MyEguiApp {
                             as *const AstObject;
                         match unsafe { &*slide } {
                             AstObject::Slide { objects, .. } => {
-                                let resolved_slide =
-                                    self.resolve_slide(objects, ctx, frame.info().window_info.size);
+                                let resolved_slide = self.resolve_slide(
+                                    objects,
+                                    ctx,
+                                    Vec2::new(
+                                        self.window_size[0] as f32,
+                                        self.window_size[1] as f32,
+                                    ),
+                                );
                                 self.resolved_actions =
                                     Some(self.resolve_actions(actions, &resolved_slide));
                                 self.resolved_slide = Some(resolved_slide);
@@ -648,12 +683,22 @@ impl eframe::App for MyEguiApp {
                             key: egui::Key::ArrowRight | egui::Key::Space,
                             pressed: true,
                             ..
-                        } => {
+                        }
+                        | egui::Event::PointerButton {
+                            button: PointerButton::Primary,
+                            pressed: false,
+                            ..
+                        } if !button_hit => {
                             self.index += 1;
                             self.resolved_actions = None;
                             self.resolved_slide = None;
                             if self.index == self.slide_show.slide_show.len() {
+                                #[cfg(not(target_arch = "wasm32"))]
                                 frame.close();
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    self.index -= 1;
+                                }
                             }
                             self.time = 0.0;
                         }
@@ -661,13 +706,18 @@ impl eframe::App for MyEguiApp {
                             key: egui::Key::ArrowLeft,
                             pressed: true,
                             ..
-                        } => {
+                        }
+                        | egui::Event::PointerButton {
+                            button: PointerButton::Secondary,
+                            pressed: false,
+                            ..
+                        } if !button_hit => {
                             if self.index != 0 {
                                 self.index -= 1;
                                 self.resolved_actions = None;
                                 self.resolved_slide = None;
                             }
-                            self.time = 0.0;
+                            self.time = 1000.0;
                         }
                         egui::Event::Key {
                             key: egui::Key::R,
@@ -692,6 +742,7 @@ impl eframe::App for MyEguiApp {
         });
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn post_rendering(&mut self, window_size_px: [u32; 2], _frame: &eframe::Frame) {
         if self.window_size != window_size_px {
             self.time = 0.0;
@@ -727,14 +778,17 @@ fn main() {
     // Redirect `log` message to `console.log` and friends:
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
-    let web_options = eframe::WebOptions::default();
+    let web_options = eframe::WebOptions {
+        follow_system_theme: false,
+        ..Default::default()
+    };
 
     wasm_bindgen_futures::spawn_local(async {
         eframe::WebRunner::new()
             .start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|cc| Box::new(eframe_template::TemplateApp::new(cc))),
+                Box::new(|cc| Box::new(MyEguiApp::new(cc))),
             )
             .await
             .expect("failed to start eframe");

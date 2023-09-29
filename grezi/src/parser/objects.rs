@@ -14,10 +14,14 @@ use eframe::{
 use pulldown_cmark::Tag;
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(target_arch = "wasm32"))]
 use super::{
     highlighting::{self, HelixCell},
+    GrzCursor,
+};
+use super::{
     viewboxes::{LineUp, ViewboxIn},
-    FieldName, GrzCursor, NodeKind,
+    FieldName, NodeKind,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -55,6 +59,7 @@ pub enum ObjectState {
     Exiting = 0,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_objects(
     tree_cursor: &mut GrzCursor<'_>,
     source: &str,

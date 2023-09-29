@@ -1,6 +1,7 @@
 #![allow(unreachable_patterns)]
 
 pub mod actions;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod highlighting;
 pub mod objects;
 pub mod slides;
@@ -16,6 +17,7 @@ use miette::{Diagnostic, GraphicalReportHandler, SourceOffset, SourceSpan};
 use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+#[cfg(not(target_arch = "wasm32"))]
 use tree_sitter::{Node, Parser, Tree, TreeCursor};
 use yoke::{Yoke, Yokeable};
 
@@ -104,10 +106,12 @@ impl Hasher for PassThroughHasher {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct GrzCursor<'a> {
     tree_cursor: TreeCursor<'a>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<'a> GrzCursor<'a> {
     fn new(tree: &'a Tree) -> GrzCursor<'a> {
         GrzCursor {
@@ -160,6 +164,7 @@ impl<'a> GrzCursor<'a> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file(
     file_name: &str,
     source: String,

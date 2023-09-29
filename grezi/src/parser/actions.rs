@@ -6,7 +6,9 @@ use std::{
 use eframe::epaint::text::cursor::PCursor;
 use serde::{Deserialize, Serialize};
 
-use super::{AstObject, GrzCursor, NodeKind, PassThroughHasher};
+#[cfg(not(target_arch = "wasm32"))]
+use super::GrzCursor;
+use super::{AstObject, NodeKind, PassThroughHasher};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Actions {
@@ -25,6 +27,7 @@ pub enum ResolvedActions {
     },
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_actions(
     tree_cursor: &mut GrzCursor<'_>,
     source: &str,

@@ -6,11 +6,13 @@ use std::{
 
 use eframe::epaint::text::cursor::PCursor;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::GrzCursor;
 use super::{
     actions::Actions,
     objects::{Object, ObjectState, ResolvedObject},
     viewboxes::{LineUp, ViewboxIn},
-    AstObject, FieldName, GrzCursor, NodeKind, PassThroughHasher,
+    AstObject, FieldName, NodeKind, PassThroughHasher,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +32,7 @@ pub struct ResolvedSlideObj {
     pub state: ObjectState,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_slides(
     tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
