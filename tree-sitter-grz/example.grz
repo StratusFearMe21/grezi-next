@@ -1,0 +1,566 @@
+VerticalViewbox: Size[0] ^
+	1:2,
+	1:2,
+]
+
+HorizontalViewbox: Size[0] >
+	1:2,
+	1:2,
+]
+
+BottomReasonsOne: VerticalViewbox[1] >
+	1:2,
+	1:2,
+]
+
+BottomReasonsTwo: VerticalViewbox[1] >
+	1:3,
+	1:3,
+	1:3,
+]
+
+Title: Header(
+	value: "Grezi!",
+)
+
+Information: Paragraph(
+	value: "Very Cool",
+)
+
+{
+	Title: VerticalViewbox[0]__..,
+	Information: VerticalViewbox[1]^^..,
+}[]
+
+WhyGrezi: Header(
+	value: "Why Grezi?",
+)
+
+{
+	WhyGrezi: Size[0]^^..,
+}[]
+
+WhyInfoOne: Paragraph(
+	value: "Faster",
+)
+
+WhyInfoTwo: Paragraph(
+	value: "Better",
+)
+
+WhyInfoThree: Paragraph(
+	value: "Free",
+)
+
+{
+	WhyGrezi: VerticalViewbox[0],
+	WhyInfoOne: BottomReasonsTwo[0]__..,
+	WhyInfoTwo: BottomReasonsTwo[1]__..,
+	WhyInfoThree: BottomReasonsTwo[2]__..,
+}[
+	stagger(0.1),
+]
+
+// {
+// 	WhyGrezi: VerticalViewbox[0]....,
+// 	WhyInfoOne: BottomReasonsOne[0]....,
+// 	WhyInfoTwo: BottomReasonsOne[1]>>..,
+// }[]
+
+// {
+// 	WhyGrezi: VerticalViewbox[0]....,
+// 	WhyInfoOne: BottomReasonsTwo[0]....,
+// 	WhyInfoTwo: BottomReasonsTwo[1]....,
+// 	WhyInfoThree: BottomReasonsTwo[2]>>..,
+// }[]
+
+ReasonLong: Paragraph(
+	value: "Grezi can allow you to make stunning presentations faster and more efficiently than ever before. With engaging movement and neat effects, Grezi has everything!",
+)
+
+IKnow: Header(
+	value: "I know what you're thinking!",
+)
+
+{
+	IKnow: Size[0]__..,
+}[]
+
+Wow: Paragraph(
+	value: "Wow, that's so cool, how can I do that!",
+)
+
+{
+	IKnow: VerticalViewbox[0]....,
+	Wow: VerticalViewbox[1]__..,
+}[]
+
+LetsLearn: Header(
+	value: "Let's learn!",
+)
+
+Viewbox: Paragraph(
+	value: "VerticalViewbox: Size[0] ^
+    1:2,
+    1:2
+]",
+	language: "grz",
+	alignment: "left",
+	font_family: "Fira Code",
+)
+
+SizeThirds: HorizontalViewbox[0] ^
+	1:3,
+	1:3,
+	1:3,
+]
+
+SizeHalves: HorizontalViewbox[0] ^
+	1:2,
+	1:2,
+]
+
+SizeThirdAndTwo: HorizontalViewbox[0] ^
+	1:3,
+	2:3,
+]
+
+{
+	LetsLearn: Size[0]__..,
+}[]
+
+{
+	LetsLearn: SizeThirds[1]....,
+	Viewbox: HorizontalViewbox[1]>>..,
+}[]
+
+ThisIsAViewbox: Paragraph(
+	value: "This is a viewbox",
+)
+
+{
+	LetsLearn: SizeHalves[0]....,
+	ThisIsAViewbox: SizeHalves[1]__..,
+	Viewbox: HorizontalViewbox[1],
+}[]
+
+ViewboxDescription: Paragraph(
+	value: "A viewbox is a method of splitting the screen into multiple pieces. Viewboxes allow for the alignment of text and objects to be completely automatic.",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxDescription: SizeThirdAndTwo[1]__..,
+	Viewbox: HorizontalViewbox[1],
+}[]
+
+ViewboxNameDescription: Paragraph(
+	value: "We start by specifying the name of the viewbox itself we will use this name to reference it in our presentation",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxNameDescription: SizeThirdAndTwo[1]__..,
+	Viewbox: HorizontalViewbox[1],
+}[
+	highlight(Viewbox, "0:0", "0:15")
+]
+
+ViewboxSplitDescription: Paragraph(
+	value: "Then we specify the area that we will use to split the viewbox. Specifying 'Size' refers to the size of your screen",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxSplitDescription: SizeThirdAndTwo[1]__..,
+	Viewbox: HorizontalViewbox[1],
+}[
+	highlight(Viewbox, "0:17", "0:21")
+]
+
+ViewboxIndexDescription: Paragraph(
+	value: "Now we specify the index of the area that we want to split on.",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxIndexDescription: SizeThirdAndTwo[1]__..,
+	Viewbox: HorizontalViewbox[1],
+}[
+	highlight(Viewbox, "0:21", "0:24")
+]
+
+ViewboxDirectionDescription: Paragraph(
+	value: "We now specify the direction we want our split to go.you can use '_' or '^' to set the direction to vertical. Or, you can use '>' or '<' to set the direction to horizontal",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxDirectionDescription: SizeThirdAndTwo[1]__..,
+	Viewbox: HorizontalViewbox[1],
+}[
+	highlight(Viewbox, "0:25", "0:26")
+]
+
+ViewboxConstraints: Paragraph(
+	font_family: "Fira Code",
+	language: "grz",
+	alignment: "left",
+	value: "VerticalViewbox: Size[0] ^
+    1:2,
+    1:2",
+)
+
+ViewboxConstraintsDescription: Paragraph(
+	value: "We now specify how we want our area to be split. To do this we use 'constraints' to tell Grezi in what proportions we want our area to be split in.",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxConstraintsDescription: SizeThirdAndTwo[1]__..,
+	ViewboxConstraints: HorizontalViewbox[1]....,
+}[]
+
+ValidConstraints: Paragraph(
+	value: "1:2, 50%, 24+, 18-, 36",
+	font_family: "Fira Code",
+)
+
+ValidConstraintsDescription: Paragraph(
+	alignment: "left",
+	value: "Valid constraints include:
+- Ratios
+- Percentages
+- Maximum length
+- Minimum length
+- Fixed length",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ValidConstraintsDescription: SizeThirdAndTwo[1]__..,
+	ValidConstraints: HorizontalViewbox[1]....,
+}[]
+
+ViewboxFinal: Paragraph(
+	value: "Finally we end our viewbox with a bracket '['",
+)
+
+{
+	LetsLearn: SizeThirdAndTwo[0]....,
+	ViewboxFinal: SizeThirdAndTwo[1]__..,
+	Viewbox: HorizontalViewbox[1]....,
+}[]
+
+YouDidIt: Header(
+	value: "You Made a Viewbox!",
+)
+
+NowLetsMakeObjects: Paragraph(
+	value: "Let's move on to..",
+)
+
+ObjectsHeader: Header(
+	value: "Objects",
+)
+
+{
+	YouDidIt: Size[0]^^..,
+}[]
+
+{
+	YouDidIt: VerticalViewbox[0]....,
+	NowLetsMakeObjects: VerticalViewbox[1]__..,
+}[]
+
+{
+	ObjectsHeader: Size[0]^^..,
+}[]
+
+ObjectsDescription: Paragraph(
+	value: "Objects are what actually go on the slides. There are only a couple right now but there are more to come.",
+)
+
+ObjectsHowToOne: Paragraph(
+	value: "First you specify the name of the object",
+)
+
+ObjectsHowToTwo: Paragraph(
+	value: "Then you specify the object's type",
+)
+
+ObjectsHowToThree: Paragraph(
+	value: "Then you modify the object with key/value pairs. These are unique to the object",
+)
+
+ObjectsHowToFour: Paragraph(
+	value: "Finally, you finish off the object",
+)
+
+ObjectsHowToOneExample: Paragraph(
+	value: "ExampleObject",
+	font_family: "Fira Code",
+	language: "grz",
+	alignment: "left",
+)
+
+ObjectsHowToTwoExample: Paragraph(
+	alignment: "left",
+	font_family: "Fira Code",
+	language: "grz",
+	value: "ExampleObject: Paragraph",
+)
+
+ObjectsHowToThreeExample: Paragraph(
+	value: "ExampleObject: Paragraph
+    (value: 'Very epic gamer cool')",
+	alignment: "left",
+	font_family: "Fira Code",
+	language: "grz",
+)
+
+ObjectsHowToFourExample: Paragraph(
+	alignment: "left",
+	value: "ExampleObject: Paragraph
+    (value: 'Very epic gamer cool')",
+	font_family: "Fira Code",
+	language: "grz",
+)
+
+{
+	ObjectsHeader: SizeThirdAndTwo[0]....,
+	ObjectsDescription: SizeThirdAndTwo[1]__..,
+	ObjectsHowToFourExample: HorizontalViewbox[1]>>..,
+}[]
+
+{
+	ObjectsHeader: SizeThirdAndTwo[0]....,
+	ObjectsHowToOne: SizeThirdAndTwo[1]__..,
+	ObjectsHowToOneExample: HorizontalViewbox[1]....,
+}[]
+
+{
+	ObjectsHeader: SizeThirdAndTwo[0]....,
+	ObjectsHowToTwo: SizeThirdAndTwo[1]__..,
+	ObjectsHowToTwoExample: HorizontalViewbox[1]....,
+}[]
+
+{
+	ObjectsHeader: SizeThirdAndTwo[0]....,
+	ObjectsHowToThree: SizeThirdAndTwo[1]__..,
+	ObjectsHowToThreeExample: HorizontalViewbox[1]....,
+}[]
+
+{
+	ObjectsHeader: SizeThirdAndTwo[0]....,
+	ObjectsHowToFour: SizeThirdAndTwo[1]__..,
+	ObjectsHowToFourExample: HorizontalViewbox[1]....,
+}[]
+
+AndFinally: Header(
+	value: "And finally",
+)
+
+LetsMoveOnSlides: Paragraph(
+	value: "We move on to the last concept",
+)
+
+SlidesName: Header(
+	value: "Slides",
+)
+
+{
+	AndFinally: Size[0]^^..,
+}[]
+
+{
+	AndFinally: VerticalViewbox[0]....,
+	LetsMoveOnSlides: VerticalViewbox[1]__..,
+}[]
+
+{
+	SlidesName: Size[0]^^..,
+}[]
+
+MoreSpace: Size[0] >
+	1:3,
+	2:3,
+]
+
+MoreSpaceThirdAndTwo: MoreSpace[0] ^
+	1:3,
+	2:3,
+]
+
+SlidesDescription: Paragraph(
+	value: "Slides include the relative locations of objects and how they should move on the screen.",
+)
+
+SlidesOne: Paragraph(
+	value: "You create a slide by literally just starting with a bracket",
+)
+
+SlidesTwo: Paragraph(
+	value: "Then you specify the name of an object that you want to put on your slide",
+)
+
+SlidesThree: Paragraph(
+	value: "Now you specify the area on the screen your object should go based on a previously defined viewbox and index.",
+)
+
+SlidesFour: Paragraph(
+	value: "Now you specify how the object should move on the screen. This is done with a 'Line Up String'",
+)
+
+SlidesFive: Paragraph(
+	value: "These strings specify a corner or edge of the area that you specified that your object go",
+)
+
+SlidesSix: Paragraph(
+	alignment: "left",
+	value: "Some examples include:
+- From 'center center' to 'center center'
+- From 'center center' to 'top left'
+- From 'top left' to 'top right'
+- From 'center bottom' to 'center top'",
+)
+
+SlidesSeven: Paragraph(
+	value: "To add more objects simply seperate them with commas.",
+)
+
+SlidesEight: Paragraph(
+	value: "To finish your slide, close the bracket and add square brackets",
+)
+
+SlidesOneExample: Paragraph(
+	value: "{",
+	font_family: "Fira Code",
+	language: "grz",
+	alignment: "left",
+)
+
+SlidesTwoExample: Paragraph(
+	font_family: "Fira Code",
+	language: "grz",
+	alignment: "left",
+	value: "{
+    TitleObject",
+)
+
+SlidesThreeExample: Paragraph(
+	alignment: "left",
+	value: "{
+    TitleObject: VerticalViewbox[0]",
+	font_family: "Fira Code",
+	language: "grz",
+)
+
+SlidesFourExample: Paragraph(
+	value: "{
+    TitleObject: VerticalViewbox[0]^^..",
+	font_family: "Fira Code",
+	language: "grz",
+	alignment: "left",
+)
+
+SlidesFiveExample: Paragraph(
+	value: "^^..",
+	font_family: "Fira Code",
+	alignment: "left",
+)
+
+SlidesSixExample: Paragraph(
+	value: "....
+
+..^<
+
+^<^>
+
+._.^",
+	font_family: "Fira Code",
+)
+
+SlidesSevenExample: Paragraph(
+	alignment: "left",
+	value: "{
+    TitleObject: VerticalViewbox[0]^^..,
+    Subtitle: VerticalViewbox[1]__..,",
+	font_family: "Fira Code",
+	language: "grz",
+)
+
+SlidesEightExample: Paragraph(
+	value: "{
+    TitleObject: VerticalViewbox[0]^^..,
+    Subtitle: VerticalViewbox[1]__..,
+}[]",
+	font_family: "Fira Code",
+	language: "grz",
+	alignment: "left",
+)
+
+{
+	SlidesName: MoreSpaceThirdAndTwo[0]....,
+	SlidesOne: MoreSpaceThirdAndTwo[1]__..,
+	SlidesOneExample: MoreSpace[1]....,
+}[]
+
+{
+	SlidesName: MoreSpaceThirdAndTwo[0]....,
+	SlidesTwo: MoreSpaceThirdAndTwo[1]__..,
+	SlidesTwoExample: MoreSpace[1]....,
+}[]
+
+{
+	SlidesName: MoreSpaceThirdAndTwo[0]....,
+	SlidesThree: MoreSpaceThirdAndTwo[1]__..,
+	SlidesThreeExample: MoreSpace[1]....,
+}[]
+
+{
+	SlidesName: MoreSpaceThirdAndTwo[0]....,
+	SlidesFour: MoreSpaceThirdAndTwo[1]__..,
+	SlidesFourExample: MoreSpace[1]....,
+}[]
+
+{
+	SlidesName: SizeThirdAndTwo[0]....,
+	SlidesFive: SizeThirdAndTwo[1]__..,
+	SlidesFiveExample: HorizontalViewbox[1]....,
+}[]
+
+{
+	SlidesName: SizeThirdAndTwo[0]....,
+	SlidesSix: SizeThirdAndTwo[1]__..,
+	SlidesSixExample: HorizontalViewbox[1]....,
+}[]
+
+{
+	SlidesName: MoreSpaceThirdAndTwo[0]....,
+	SlidesSeven: MoreSpaceThirdAndTwo[1]__..,
+	SlidesSevenExample: MoreSpace[1]....,
+}[]
+
+{
+	SlidesName: MoreSpaceThirdAndTwo[0]....,
+	SlidesEight: MoreSpaceThirdAndTwo[1]__..,
+	SlidesEightExample: MoreSpace[1]....,
+}[]
+
+Congrats: Header(
+	value: "Congratulations!",
+)
+
+YourAMaster: Paragraph(
+	value: "You're A Grezi Master!",
+)
+
+{
+	Congrats: Size[0]__..,
+}[]
+
+{
+	Congrats: VerticalViewbox[0]....,
+	YourAMaster: VerticalViewbox[1]__..,
+}[]
