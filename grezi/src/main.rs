@@ -3,7 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use std::{
-    cell::{RefCell, UnsafeCell},
+    cell::RefCell,
     collections::HashMap,
     hash::BuildHasherDefault,
     mem::ManuallyDrop,
@@ -59,7 +59,7 @@ struct MyEguiApp {
     helix_cell: Option<HelixCell>,
     window_size: [u32; 2],
     // Safe, I think, IDK
-    resolved_viewboxes: UnsafeCell<HashMap<u64, Vec<Rect>, BuildHasherDefault<PassThroughHasher>>>,
+    resolved_viewboxes: HashMap<u64, Vec<Rect>, BuildHasherDefault<PassThroughHasher>>,
     resolved_actions: Option<Vec<ResolvedActions>>,
     resolved_slide: Option<Vec<ResolvedSlideObj>>,
     time: f32,
@@ -270,7 +270,7 @@ impl MyEguiApp {
             delta: Instant::now(),
             time: 0.0,
             helix_cell,
-            resolved_viewboxes: UnsafeCell::new(HashMap::default()),
+            resolved_viewboxes: HashMap::default(),
             resolved_actions: None,
             resolved_slide: None,
             window_size: [0, 0],
@@ -375,26 +375,29 @@ impl MyEguiApp {
         }
     }
 
-    fn resolve_layout(&self, hash: u64, index: usize, size: Rect) -> Rect {
-        unsafe { &mut *self.resolved_viewboxes.get() }
-            .entry(hash)
-            .or_insert_with(|| {
+    // TODO: Remove one of the get calls
+    fn resolve_layout(&mut self, hash: u64, index: usize, size: Rect) -> Rect {
+        match self.resolved_viewboxes.get(&hash) {
+            None => {
+                let split = match self.slide_show.viewboxes.get(&hash).unwrap().split_on {
+                    ViewboxIn::Size => size,
+                    ViewboxIn::Custom(hash, index) => self.resolve_layout(hash, index, size),
+                };
                 let unresolved_layout = self.slide_show.viewboxes.get(&hash).unwrap();
-                layout::Layout::default()
+                let layout = layout::Layout::default()
                     .direction(unresolved_layout.direction)
                     .constraints(&unresolved_layout.constraints)
-                    .split(match unresolved_layout.split_on {
-                        ViewboxIn::Size => size,
-                        ViewboxIn::Custom(hash, index) => self.resolve_layout(hash, index, size),
-                    })
-            })
-            .get(index)
-            .copied()
-            .unwrap()
+                    .split(split);
+                let rect = layout[index];
+                self.resolved_viewboxes.insert(hash, layout);
+                rect
+            }
+            Some(viewboxes) => viewboxes.get(index).copied().unwrap(),
+        }
     }
 
     fn resolve_slide(
-        &self,
+        &mut self,
         slide: &[SlideObj],
         ctx: &egui::Context,
         size: Vec2,
@@ -402,7 +405,6 @@ impl MyEguiApp {
         let mut resolved_slides = Vec::new();
         let size = Rect::from_min_size(Pos2::ZERO, size);
         for object in slide {
-            let obj = self.slide_show.objects.get(&object.object).unwrap();
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => size.shrink(15.0),
                 ViewboxIn::Custom(hash, index) => self.resolve_layout(hash, index, size),
@@ -411,6 +413,7 @@ impl MyEguiApp {
                 ViewboxIn::Size => size.shrink(15.0),
                 ViewboxIn::Custom(hash, index) => self.resolve_layout(hash, index, size),
             };
+            let obj = self.slide_show.objects.get(&object.object).unwrap();
             match &obj.object {
                 parser::objects::ObjectType::Text { layout_job } => {
                     let mut layout_job = layout_job.clone();
@@ -564,14 +567,15 @@ impl eframe::App for MyEguiApp {
 
                 self.resolved_actions = None;
                 self.resolved_slide = None;
-                self.resolved_viewboxes.get_mut().clear();
+                self.resolved_viewboxes.clear();
                 self.slide_show.slide_show = ast;
                 self.new_file.store(false, Ordering::Relaxed);
             }
 
-            let slide = self.slide_show.slide_show.get(self.index).unwrap();
+            let slide = self.slide_show.slide_show.get(self.index).unwrap() as *const AstObject;
+            // This is safe because the resolution functions do not touch self.slide_show.slide_show
             let resolved_slide = match &self.resolved_slide {
-                None => match slide {
+                None => match unsafe { &*slide } {
                     AstObject::Slide {
                         objects: slide,
                         actions,
@@ -588,8 +592,9 @@ impl eframe::App for MyEguiApp {
                         actions,
                         slide_in_ast,
                     } => {
-                        let slide = self.slide_show.slide_show.get(*slide_in_ast).unwrap();
-                        match slide {
+                        let slide = self.slide_show.slide_show.get(*slide_in_ast).unwrap()
+                            as *const AstObject;
+                        match unsafe { &*slide } {
                             AstObject::Slide { objects, .. } => {
                                 let resolved_slide =
                                     self.resolve_slide(objects, ctx, frame.info().window_info.size);
@@ -604,6 +609,7 @@ impl eframe::App for MyEguiApp {
                 },
                 Some(resolved) => resolved,
             };
+            let slide = self.slide_show.slide_show.get(self.index).unwrap();
 
             let resolved_actions = match &self.resolved_actions {
                 None => unreachable!(),
@@ -690,7 +696,7 @@ impl eframe::App for MyEguiApp {
         if self.window_size != window_size_px {
             self.time = 0.0;
             self.window_size = window_size_px;
-            self.resolved_viewboxes.get_mut().clear();
+            self.resolved_viewboxes.clear();
             self.resolved_actions = None;
             self.resolved_slide = None;
         }
