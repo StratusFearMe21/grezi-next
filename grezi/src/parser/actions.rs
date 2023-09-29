@@ -3,7 +3,7 @@ use std::{
     hash::{BuildHasher, BuildHasherDefault, Hasher},
 };
 
-use eframe::epaint::text::cursor::PCursor;
+use eframe::epaint::{text::cursor::PCursor, Rect};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -21,10 +21,7 @@ pub enum Actions {
 
 #[derive(Debug)]
 pub enum ResolvedActions {
-    Highlight {
-        locations: [[f32; 2]; 2],
-        persist: bool,
-    },
+    Highlight { locations: Rect, persist: bool },
 }
 
 #[cfg(not(target_arch = "wasm32"))]

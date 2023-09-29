@@ -216,18 +216,12 @@ impl MyEguiApp {
             } else {
                 let mut tree_info = tree_info.lock();
                 let file = std::fs::read_to_string(&file_name).unwrap();
-                let ast = parser::parse_file(
-                    &file_name,
-                    file,
-                    None,
-                    &mut helix_cell,
-                    &mut viewboxes,
-                    &mut objects,
-                );
-                *tree_info = Some((ast.0, String::new()));
-                match ast.1 {
+                let ast =
+                    parser::parse_file(&file, None, &mut helix_cell, &mut viewboxes, &mut objects);
+                match ast {
                     Ok(ast) => {
-                        *slide_show_file.lock() = ast.0;
+                        *tree_info = Some((ast.0, String::new()));
+                        *slide_show_file.lock() = file;
                         SlideShow {
                             slide_show: ast.1,
                             viewboxes,
@@ -235,7 +229,7 @@ impl MyEguiApp {
                         }
                     }
                     Err(e) => {
-                        println!("{:?}", e.get());
+                        println!("{:?}", e);
                         std::process::exit(1);
                     }
                 }
@@ -286,7 +280,7 @@ impl MyEguiApp {
             } else {
                 0.0
             };
-            let obj_pos;
+            let mut obj_pos;
             match &obj.object {
                 parser::objects::ResolvedObject::Text(galley) => {
                     obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
@@ -297,6 +291,7 @@ impl MyEguiApp {
                         obj.scaled_time[1],
                     ));
                     ui.painter().galley(obj_pos, Arc::clone(galley));
+                    obj_pos.x += galley.rect.min.x;
                     // ui.painter()
                     // .circle(obj_pos, 5.0, Color32::RED, Stroke::NONE);
                 }
@@ -346,27 +341,27 @@ impl MyEguiApp {
                         Rect {
                             min: Pos2::new(
                                 if *persist {
-                                    locations[0][0]
+                                    locations.min.x
                                 } else {
                                     keyframe::ease_with_scaled_time(
                                         Linear,
-                                        locations[0][0],
-                                        locations[1][0],
+                                        locations.min.x,
+                                        locations.max.x,
                                         time,
                                         0.5,
                                     )
                                 },
-                                locations[0][1],
+                                locations.min.y,
                             ),
                             max: Pos2::new(
                                 keyframe::ease_with_scaled_time(
                                     EaseOutQuint,
-                                    locations[0][0],
-                                    locations[1][0],
+                                    locations.min.x,
+                                    locations.max.x,
                                     time,
                                     0.5,
                                 ),
-                                locations[1][1],
+                                locations.max.y,
                             ),
                         },
                         Rounding::none(),
@@ -386,6 +381,13 @@ impl MyEguiApp {
                     ViewboxIn::Custom(hash, index) => self.resolve_layout(hash, index, size),
                 };
                 let unresolved_layout = self.slide_show.viewboxes.get(&hash).unwrap();
+                let mut constraints = unresolved_layout.constraints.clone();
+                constraints.iter_mut().for_each(|c| match c {
+                    layout::Constraint::Length(length) => *length *= size.max.x / 1920.0,
+                    layout::Constraint::Min(min) => *min *= size.max.x / 1920.0,
+                    layout::Constraint::Max(max) => *max *= size.max.x / 1920.0,
+                    _ => {}
+                });
                 let layout = layout::Layout::default()
                     .direction(unresolved_layout.direction)
                     .constraints(&unresolved_layout.constraints)
@@ -424,11 +426,14 @@ impl MyEguiApp {
                         row.format.font_id.size *= size.max.x / 1920.0;
                     }
                     let galley = ctx.fonts(|f| f.layout_job(layout_job));
+                    let galley_x = -galley.rect.min.x;
                     let resolved_obj = ResolvedObject::Text(galley);
                     let size = resolved_obj.bounds();
                     use parser::viewboxes::LineUp;
-                    let first_pos = get_pos!(object.locations[0].0, first_viewbox, size);
-                    let second_pos = get_pos!(object.locations[1].0, second_viewbox, size);
+                    let mut first_pos = get_pos!(object.locations[0].0, first_viewbox, size);
+                    let mut second_pos = get_pos!(object.locations[1].0, second_viewbox, size);
+                    first_pos[0] += galley_x;
+                    second_pos[0] += galley_x;
                     resolved_slides.push(ResolvedSlideObj {
                         object: resolved_obj,
                         locations: [first_pos, second_pos],
@@ -475,10 +480,7 @@ impl MyEguiApp {
                         }
                     };
                     resolved_actions.push(ResolvedActions::Highlight {
-                        locations: [
-                            [locations.min.x, locations.min.y],
-                            [locations.max.x, locations.max.y],
-                        ],
+                        locations,
                         persist: *persist,
                     });
                 }
@@ -511,24 +513,21 @@ impl eframe::App for MyEguiApp {
             }
         });
         let mut button_hit = false;
+        #[cfg(target_arch = "wasm32")]
         egui::TopBottomPanel::bottom("controls")
             .exact_height(32.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("⬅").clicked() {
-                        if self.index != 0 {
-                            self.index -= 1;
-                            self.resolved_actions = None;
-                            self.resolved_slide = None;
-                        }
+                    if ui.add_enabled(self.index != 0, egui::Button::new("⬅")).clicked() {
+                        self.index -= 1;
+                        self.resolved_actions = None;
+                        self.resolved_slide = None;
                         button_hit = true;
                         self.time = 1000.0;
-                    } else if ui.button("➡").clicked() {
-                        if self.index != self.slide_show.slide_show.len() {
-                            self.index += 1;
-                            self.resolved_actions = None;
-                            self.resolved_slide = None;
-                        }
+                    } else if ui.add_enabled(self.index != self.slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
+                        self.index += 1;
+                        self.resolved_actions = None;
+                        self.resolved_slide = None;
                         button_hit = true;
                         self.time = 0.0;
                     }
@@ -569,23 +568,22 @@ impl eframe::App for MyEguiApp {
                     self.slide_show.viewboxes.clear();
                     self.slide_show.objects.clear();
                     let ast = parser::parse_file(
-                        &self.file_name,
-                        file,
+                        &file,
                         info.as_ref().map(|t| &t.0),
                         &mut self.helix_cell,
                         &mut self.slide_show.viewboxes,
                         &mut self.slide_show.objects,
                     );
-                    *tree_info = Some((ast.0, String::new()));
-                    match ast.1 {
+                    match ast {
                         Ok(ast) => {
+                            *tree_info = Some((ast.0, String::new()));
                             self.delta = Instant::now();
                             self.time = 0.0;
-                            *self.slide_show_file.lock() = ast.0;
+                            *self.slide_show_file.lock() = file;
                             ast.1
                         }
                         Err(e) => {
-                            println!("{:?}", e.get());
+                            println!("{:?}", e);
                             std::process::exit(1);
                         }
                     }
@@ -689,18 +687,15 @@ impl eframe::App for MyEguiApp {
                             pressed: false,
                             ..
                         } if !button_hit => {
-                            self.index += 1;
-                            self.resolved_actions = None;
-                            self.resolved_slide = None;
-                            if self.index == self.slide_show.slide_show.len() {
+                            if self.index == self.slide_show.slide_show.len() - 1 {
                                 #[cfg(not(target_arch = "wasm32"))]
                                 frame.close();
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    self.index -= 1;
-                                }
+                            } else {
+                                self.index += 1;
+                                self.resolved_actions = None;
+                                self.resolved_slide = None;
+                                self.time = 0.0;
                             }
-                            self.time = 0.0;
                         }
                         egui::Event::Key {
                             key: egui::Key::ArrowLeft,
@@ -716,8 +711,8 @@ impl eframe::App for MyEguiApp {
                                 self.index -= 1;
                                 self.resolved_actions = None;
                                 self.resolved_slide = None;
+                                self.time = 1000.0;
                             }
-                            self.time = 1000.0;
                         }
                         egui::Event::Key {
                             key: egui::Key::R,

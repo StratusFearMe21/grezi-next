@@ -33,26 +33,37 @@ pub struct ResolvedSlideObj {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn parse_slides(
+pub fn parse_slides<'a>(
     tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
-    source: &str,
-) -> AstObject {
+    source: &'a str,
+) -> Result<AstObject, super::Error<'a>> {
+    use miette::SourceSpan;
+
+    use super::Error;
+
     tree_cursor.goto_first_child();
     tree_cursor.goto_first_child();
     let mut slide_objects = Vec::new();
     let mut slide_on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
+        let object_range = tree_cursor.node().byte_range();
         tree_cursor.goto_first_child();
         let object_name = {
             let mut hasher = hasher.build_hasher();
             std::hash::Hash::hash(&source[tree_cursor.node().byte_range()], &mut hasher);
             hasher.finish()
         };
-        let object = { objects.get_mut(&object_name).unwrap() };
+        let object = objects.get_mut(&object_name).ok_or_else(|| {
+            let node = tree_cursor.node().byte_range();
+            Error::NotFound(
+                SourceSpan::new(node.start.into(), (node.end - node.start).into()),
+                source,
+            )
+        })?;
         tree_cursor.goto_next_sibling();
         let viewbox = &source[tree_cursor.node().byte_range()];
         let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
@@ -135,7 +146,15 @@ pub fn parse_slides(
                             line_up_now = lineup_first;
                             state = ObjectState::Exiting;
                             lineup_first_locations = {
-                                let lineup = object.position.unwrap();
+                                let lineup = object.position.ok_or_else(|| {
+                                    Error::BadExit(
+                                        SourceSpan::new(
+                                            object_range.start.into(),
+                                            (object_range.end - object_range.start).into(),
+                                        ),
+                                        source,
+                                    )
+                                })?;
                                 (lineup, viewbox_first)
                             };
                             (lineup_first, viewbox)
@@ -213,7 +232,13 @@ pub fn parse_slides(
                         );
                         &hasher.finish()
                     })
-                    .unwrap();
+                    .ok_or_else(|| {
+                        let node = tree_cursor.node().byte_range();
+                        Error::NotFound(
+                            SourceSpan::new(node.start.into(), (node.end - node.start).into()),
+                            source,
+                        )
+                    })?;
                 tree_cursor.goto_next_sibling();
 
                 let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
@@ -262,9 +287,9 @@ pub fn parse_slides(
     core::mem::swap(&mut slide_on_screen, on_screen);
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();
-    AstObject::Slide {
+    Ok(AstObject::Slide {
         objects: slide_objects,
         actions,
         max_time,
-    }
+    })
 }

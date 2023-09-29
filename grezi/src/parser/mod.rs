@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 #[cfg(not(target_arch = "wasm32"))]
 use tree_sitter::{Node, Parser, Tree, TreeCursor};
-use yoke::{Yoke, Yokeable};
 
 use crate::layout::UnresolvedLayout;
 
@@ -31,28 +30,28 @@ macro_rules! get_pos {
     ($line_up:expr, $vbx:expr, $obj:expr) => {
         match $line_up {
             LineUp::TopLeft => [$vbx.min.x, $vbx.min.y],
-            LineUp::TopRight => [$vbx.max.x - $obj.max.x, $vbx.min.y],
-            LineUp::BottomLeft => [$vbx.min.x, $vbx.max.y - $obj.max.y],
-            LineUp::BottomRight => [$vbx.max.x - $obj.max.x, $vbx.max.y - $obj.max.y],
+            LineUp::TopRight => [$vbx.max.x - $obj.width(), $vbx.min.y],
+            LineUp::BottomLeft => [$vbx.min.x, $vbx.max.y - $obj.height()],
+            LineUp::BottomRight => [$vbx.max.x - $obj.width(), $vbx.max.y - $obj.height()],
             LineUp::CenterTop => [
-                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.max.x / 2.0),
+                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.width() / 2.0),
                 $vbx.min.y,
             ],
             LineUp::CenterBottom => [
-                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.max.x / 2.0),
-                $vbx.max.y - $obj.max.y,
+                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.width() / 2.0),
+                $vbx.max.y - $obj.height(),
             ],
             LineUp::CenterLeft => [
                 $vbx.min.x,
                 ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.max.y / 2.0),
             ],
             LineUp::CenterRight => [
-                $vbx.max.x - $obj.max.x,
-                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.max.y / 2.0),
+                $vbx.max.x - $obj.width(),
+                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.height() / 2.0),
             ],
             LineUp::CenterCenter => [
-                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.max.x / 2.0),
-                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.max.y / 2.0),
+                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.width() / 2.0),
+                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.height() / 2.0),
             ],
         }
     };
@@ -71,14 +70,26 @@ pub enum AstObject {
     },
 }
 
-#[derive(Error, Diagnostic, Yokeable)]
+#[derive(Error, Diagnostic)]
 pub enum Error<'a> {
     #[error("Bad Node")]
     #[diagnostic(code(parser::parse_file))]
     BadNode(
         #[label("here")] SourceSpan,
         #[source_code] &'a str,
-        #[help] &'a str,
+        #[help("Node is of kind: {}")] &'a str,
+    ),
+    #[error("Object is not on screen")]
+    #[diagnostic(code(parser::slide::parse_slide))]
+    BadExit(
+        #[label("Object cannot exit, as it is not currently on screen")] SourceSpan,
+        #[source_code] &'a str,
+    ),
+    #[error("Object could not be found")]
+    #[diagnostic(code(parser::slide::parse_slide))]
+    NotFound(
+        #[label("Object not found")] SourceSpan,
+        #[source_code] &'a str,
     ),
 }
 
@@ -165,17 +176,13 @@ impl<'a> GrzCursor<'a> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn parse_file(
-    file_name: &str,
-    source: String,
+pub fn parse_file<'a>(
+    source: &'a str,
     old_tree: Option<&Tree>,
     helix_cell: &mut Option<highlighting::HelixCell>,
     layouts: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, objects::Object, BuildHasherDefault<PassThroughHasher>>,
-) -> (
-    Tree,
-    Result<(String, Vec<AstObject>), Yoke<Error<'static>, String>>,
-) {
+) -> Result<(Tree, Vec<AstObject>), Error<'a>> {
     let mut parser = Parser::new();
     parser.set_language(tree_sitter_grz::language()).unwrap();
     let tree = parser.parse(&source, old_tree).unwrap();
@@ -201,7 +208,7 @@ pub fn parse_file(
                     &mut on_screen,
                     objects,
                     &source,
-                ));
+                )?);
             }
             NodeKind::Viewbox => {
                 let layout = viewboxes::parse_viewbox(&mut tree_cursor, &source, &hasher);
@@ -241,34 +248,14 @@ pub fn parse_file(
                 ));
             }
             _ => {
-                let err_start = tree_cursor.node().start_position();
-                let err_end = tree_cursor.node().end_position();
+                let range = tree_cursor.node().byte_range();
                 let kind: &'static str = node.kind();
                 drop(tree_cursor);
-                return (
-                    tree,
-                    Err(Yoke::<Error<'static>, String>::attach_to_cart(
-                        source,
-                        |source| {
-                            Error::BadNode(
-                                SourceSpan::new(
-                                    SourceOffset::from_location(
-                                        file_name,
-                                        err_start.row,
-                                        err_start.column,
-                                    ),
-                                    SourceOffset::from_location(
-                                        file_name,
-                                        err_end.row,
-                                        err_end.column,
-                                    ),
-                                ),
-                                source,
-                                kind,
-                            )
-                        },
-                    )),
-                );
+                return Err(Error::BadNode(
+                    SourceSpan::new(range.start.into(), (range.end - range.start).into()),
+                    source,
+                    kind,
+                ));
             }
         }
 
@@ -277,5 +264,5 @@ pub fn parse_file(
         }
     }
     drop(tree_cursor);
-    (tree, Ok((source, ast)))
+    Ok((tree, ast))
 }
