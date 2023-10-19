@@ -18,7 +18,7 @@ use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 #[cfg(not(target_arch = "wasm32"))]
-use tree_sitter::{Node, Parser, Tree, TreeCursor};
+use tree_sitter::{Node, Tree, TreeCursor};
 
 include!(concat!(env!("OUT_DIR"), "/kinds.rs"));
 
