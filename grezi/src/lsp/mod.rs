@@ -240,7 +240,13 @@ pub fn start_lsp(
                                             }
                                             break;
                                         }
-                                        NodeKind::SlideFrom => {}
+                                        NodeKind::SlideFrom => {
+                                            if !walker.goto_next_sibling() {
+                                                line.push_str(",\n");
+                                                new_text.push_str(&line);
+                                                break;
+                                            }
+                                        }
                                         _ => {
                                             current_rope
                                                 .byte_slice(walker.node().byte_range())
