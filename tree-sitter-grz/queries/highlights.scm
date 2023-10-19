@@ -4,7 +4,7 @@
   operation: (operation) @keyword.operator)
 (viewbox_obj
   operation: (":") @keyword.operator)
-(command_obj
+(action_obj
   function: (identifier) @function)
 (viewbox_inner
   direction: (direction) @keyword.control)

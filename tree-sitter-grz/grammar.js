@@ -6,19 +6,19 @@ module.exports = grammar({
     $.comment
   ],
 
+  word: $ => $.identifier,
+
   rules: {
     source_file: $ => repeat($._definition),
 
     _definition: $ =>
-      seq(
         choice(
           $.slide,
           $.viewbox,
           $.obj,
           $.register,
           $.action
-        )
-      ),
+        ),
 
     // C Identifier
     identifier: _ =>
@@ -141,7 +141,7 @@ module.exports = grammar({
 
     viewbox_inner: $ => seq(
       field('direction', $.direction),
-      field('parameters', sep1($.viewbox_obj, ',')),
+      field('parameters', sep($.viewbox_obj, ',')),
       optional(','),
       ']'
     ),
@@ -152,7 +152,7 @@ module.exports = grammar({
         ':',
         $._vb_identifier,
         field('attached_box', $.index_parser),
-        $.viewbox_inner
+        field('body', $.viewbox_inner)
       ),
 
     obj_inner: $ => seq(      

@@ -370,6 +370,16 @@
             "named": true
           }
         ]
+      },
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "viewbox_inner",
+            "named": true
+          }
+        ]
       }
     },
     "children": {
@@ -382,10 +392,6 @@
         },
         {
           "type": "size",
-          "named": true
-        },
-        {
-          "type": "viewbox_inner",
           "named": true
         }
       ]
@@ -407,7 +413,7 @@
       },
       "parameters": {
         "multiple": true,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": ",",

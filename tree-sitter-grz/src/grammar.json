@@ -1,5 +1,6 @@
 {
   "name": "grz",
+  "word": "identifier",
   "rules": {
     "source_file": {
       "type": "REPEAT",
@@ -9,32 +10,27 @@
       }
     },
     "_definition": {
-      "type": "SEQ",
+      "type": "CHOICE",
       "members": [
         {
-          "type": "CHOICE",
-          "members": [
-            {
-              "type": "SYMBOL",
-              "name": "slide"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "viewbox"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "obj"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "register"
-            },
-            {
-              "type": "SYMBOL",
-              "name": "action"
-            }
-          ]
+          "type": "SYMBOL",
+          "name": "slide"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "viewbox"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "obj"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "register"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "action"
         }
       ]
     },
@@ -911,27 +907,35 @@
           "type": "FIELD",
           "name": "parameters",
           "content": {
-            "type": "SEQ",
+            "type": "CHOICE",
             "members": [
               {
-                "type": "SYMBOL",
-                "name": "viewbox_obj"
+                "type": "SEQ",
+                "members": [
+                  {
+                    "type": "SYMBOL",
+                    "name": "viewbox_obj"
+                  },
+                  {
+                    "type": "REPEAT",
+                    "content": {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": ","
+                        },
+                        {
+                          "type": "SYMBOL",
+                          "name": "viewbox_obj"
+                        }
+                      ]
+                    }
+                  }
+                ]
               },
               {
-                "type": "REPEAT",
-                "content": {
-                  "type": "SEQ",
-                  "members": [
-                    {
-                      "type": "STRING",
-                      "value": ","
-                    },
-                    {
-                      "type": "SYMBOL",
-                      "name": "viewbox_obj"
-                    }
-                  ]
-                }
+                "type": "BLANK"
               }
             ]
           }
@@ -978,8 +982,12 @@
           }
         },
         {
-          "type": "SYMBOL",
-          "name": "viewbox_inner"
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "viewbox_inner"
+          }
         }
       ]
     },

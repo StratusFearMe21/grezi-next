@@ -3,7 +3,7 @@
   (slide_functions)
   (viewbox_inner)
   (obj_inner)
-  (command)
+  (action)
 ] @indent
 
 [
@@ -11,4 +11,3 @@
   "]"
   ")"
 ] @outdent
-
