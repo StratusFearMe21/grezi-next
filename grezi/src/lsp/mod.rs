@@ -273,7 +273,7 @@ pub fn start_lsp(
                                     break;
                                 }
                                 if !matches!(
-                                    dbg!(NodeKind::from(walker.node().kind_id())),
+                                    NodeKind::from(walker.node().kind_id()),
                                     NodeKind::SlideObj
                                 ) {
                                     break;
