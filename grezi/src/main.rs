@@ -637,53 +637,60 @@ impl eframe::App for MyEguiApp {
             let slide_show_cloned = Arc::clone(&self.slide_show);
             #[cfg(not(target_arch = "wasm32"))]
             let slide_show = slide_show_cloned.read();
-            let slide = slide_show.slide_show.get(self.index).unwrap() as *const AstObject;
+
             // This is safe because the resolution functions do not touch self.slide_show.slide_show
-            let resolved_slide = match &self.resolved_slide {
-                None => match unsafe { &*slide } {
-                    AstObject::Slide {
-                        objects: slide,
-                        actions,
-                        ..
-                    } => {
-                        let resolved_slide = self.resolve_slide(
-                            slide,
-                            ctx,
-                            Vec2::new(self.window_size[0] as f32, self.window_size[1] as f32),
-                            &*slide_show,
-                        );
-                        self.resolved_actions =
-                            Some(self.resolve_actions(actions, &resolved_slide));
-                        self.resolved_slide = Some(resolved_slide);
-                        self.resolved_slide.as_ref().unwrap()
-                    }
-                    AstObject::Action {
-                        actions,
-                        slide_in_ast,
-                    } => {
-                        let slide =
-                            slide_show.slide_show.get(*slide_in_ast).unwrap() as *const AstObject;
-                        match unsafe { &*slide } {
-                            AstObject::Slide { objects, .. } => {
-                                let resolved_slide = self.resolve_slide(
-                                    objects,
-                                    ctx,
-                                    Vec2::new(
-                                        self.window_size[0] as f32,
-                                        self.window_size[1] as f32,
-                                    ),
-                                    &*slide_show,
-                                );
-                                self.resolved_actions =
-                                    Some(self.resolve_actions(actions, &resolved_slide));
-                                self.resolved_slide = Some(resolved_slide);
-                                self.resolved_slide.as_ref().unwrap()
-                            }
-                            _ => todo!(),
+            let resolved_slide = {
+                let slide = slide_show
+                    .slide_show
+                    .get(self.index)
+                    .or_else(|| slide_show.slide_show.last())
+                    .unwrap() as *const AstObject;
+                match &self.resolved_slide {
+                    None => match unsafe { &*slide } {
+                        AstObject::Slide {
+                            objects: slide,
+                            actions,
+                            ..
+                        } => {
+                            let resolved_slide = self.resolve_slide(
+                                slide,
+                                ctx,
+                                Vec2::new(self.window_size[0] as f32, self.window_size[1] as f32),
+                                &*slide_show,
+                            );
+                            self.resolved_actions =
+                                Some(self.resolve_actions(actions, &resolved_slide));
+                            self.resolved_slide = Some(resolved_slide);
+                            self.resolved_slide.as_ref().unwrap()
                         }
-                    }
-                },
-                Some(resolved) => resolved,
+                        AstObject::Action {
+                            actions,
+                            slide_in_ast,
+                        } => {
+                            let slide = slide_show.slide_show.get(*slide_in_ast).unwrap()
+                                as *const AstObject;
+                            match unsafe { &*slide } {
+                                AstObject::Slide { objects, .. } => {
+                                    let resolved_slide = self.resolve_slide(
+                                        objects,
+                                        ctx,
+                                        Vec2::new(
+                                            self.window_size[0] as f32,
+                                            self.window_size[1] as f32,
+                                        ),
+                                        &*slide_show,
+                                    );
+                                    self.resolved_actions =
+                                        Some(self.resolve_actions(actions, &resolved_slide));
+                                    self.resolved_slide = Some(resolved_slide);
+                                    self.resolved_slide.as_ref().unwrap()
+                                }
+                                _ => todo!(),
+                            }
+                        }
+                    },
+                    Some(resolved) => resolved,
+                }
             };
             let slide = slide_show
                 .slide_show
