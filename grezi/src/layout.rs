@@ -78,7 +78,7 @@ impl Constraint {
     // }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct UnresolvedLayout {
     /// The direction in which the boxes inside of the viewbox should go.
     pub direction: Direction,

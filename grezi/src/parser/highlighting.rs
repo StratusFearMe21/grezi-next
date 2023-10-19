@@ -22,6 +22,7 @@ use tree_sitter::Node;
 
 use super::{GrzCursor, NodeKind, PassThroughHasher};
 
+#[derive(Clone)]
 pub struct HelixCell {
     theme: helix_view::Theme,
     text_style: helix_view::theme::Style,

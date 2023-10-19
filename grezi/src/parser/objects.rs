@@ -24,7 +24,7 @@ use super::{
     FieldName, NodeKind,
 };
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Object {
     pub position: Option<LineUp>,
     pub viewbox: Option<ViewboxIn>,
@@ -36,7 +36,7 @@ pub enum ObjectType {
     Text { layout_job: LayoutJob },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ResolvedObject {
     Text(Arc<Galley>),
 }
@@ -169,6 +169,28 @@ pub fn parse_objects(
 
                     let mut tags = Vec::new();
 
+                    macro_rules! layout_append {
+                        ($layout_job:expr,$text:expr,$font_id:expr) => {
+                            $layout_job.append(
+                                $text,
+                                0.0,
+                                TextFormat {
+                                    font_id: $font_id,
+                                    color: Color32::WHITE,
+                                    background: Color32::TRANSPARENT,
+                                    italics: tags.contains(&Tag::Emphasis),
+                                    underline: Stroke::NONE,
+                                    strikethrough: if tags.contains(&Tag::Strikethrough) {
+                                        Stroke::new(3.0, Color32::WHITE)
+                                    } else {
+                                        Stroke::NONE
+                                    },
+                                    ..Default::default()
+                                },
+                            );
+                        };
+                    }
+
                     for event in parser {
                         match event {
                             pulldown_cmark::Event::Start(tag) => {
@@ -178,37 +200,31 @@ pub fn parse_objects(
                                 tags.pop();
                             }
                             pulldown_cmark::Event::Code(text) => {
-                                layout_job.append(
+                                layout_append!(
+                                    layout_job,
                                     text.as_ref(),
-                                    0.0,
-                                    TextFormat {
-                                        font_id: FontId::monospace(font_size),
-                                        color: Color32::WHITE,
-                                        background: Color32::TRANSPARENT,
-                                        italics: false,
-                                        underline: Stroke::NONE,
-                                        strikethrough: Stroke::NONE,
-                                        ..Default::default()
-                                    },
+                                    FontId::monospace(font_size)
+                                );
+                            }
+                            pulldown_cmark::Event::SoftBreak => {
+                                layout_append!(
+                                    layout_job,
+                                    "\n",
+                                    FontId::new(font_size, font.clone())
+                                );
+                            }
+                            pulldown_cmark::Event::HardBreak => {
+                                layout_append!(
+                                    layout_job,
+                                    "\n\n",
+                                    FontId::new(font_size, font.clone())
                                 );
                             }
                             pulldown_cmark::Event::Text(text) => {
-                                layout_job.append(
+                                layout_append!(
+                                    layout_job,
                                     text.as_ref(),
-                                    0.0,
-                                    TextFormat {
-                                        font_id: FontId::new(font_size, font.clone()),
-                                        color: Color32::WHITE,
-                                        background: Color32::TRANSPARENT,
-                                        italics: tags.contains(&Tag::Emphasis),
-                                        underline: Stroke::NONE,
-                                        strikethrough: if tags.contains(&Tag::Strikethrough) {
-                                            Stroke::new(3.0, Color32::WHITE)
-                                        } else {
-                                            Stroke::NONE
-                                        },
-                                        ..Default::default()
-                                    },
+                                    FontId::new(font_size, font.clone())
                                 );
                             }
                             _ => {}

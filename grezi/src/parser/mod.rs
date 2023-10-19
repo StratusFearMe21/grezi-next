@@ -13,14 +13,12 @@ use std::{
     hash::{BuildHasherDefault, Hasher},
 };
 
-use miette::{Diagnostic, GraphicalReportHandler, SourceOffset, SourceSpan};
+use miette::{Diagnostic, GraphicalReportHandler, SourceSpan};
 use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 #[cfg(not(target_arch = "wasm32"))]
 use tree_sitter::{Node, Parser, Tree, TreeCursor};
-
-use crate::layout::UnresolvedLayout;
 
 include!(concat!(env!("OUT_DIR"), "/kinds.rs"));
 
@@ -57,7 +55,7 @@ macro_rules! get_pos {
     };
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum AstObject {
     Slide {
         objects: Vec<slides::SlideObj>,
@@ -178,14 +176,10 @@ impl<'a> GrzCursor<'a> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file<'a>(
     source: &'a str,
-    old_tree: Option<&Tree>,
+    tree: &Tree,
     helix_cell: &mut Option<highlighting::HelixCell>,
-    layouts: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
-    objects: &mut HashMap<u64, objects::Object, BuildHasherDefault<PassThroughHasher>>,
-) -> Result<(Tree, Vec<AstObject>), Error<'a>> {
-    let mut parser = Parser::new();
-    parser.set_language(tree_sitter_grz::language()).unwrap();
-    let tree = parser.parse(&source, old_tree).unwrap();
+    slide_show: &mut crate::SlideShow,
+) -> Result<Vec<AstObject>, Error<'a>> {
     // let yoke = Yoke::<ParseError<'static>, String>::attach_to_cart(file, |source| {
     // let mut registers: AHashMap<&str, &str> = AHashMap::default();
 
@@ -206,19 +200,19 @@ pub fn parse_file<'a>(
                     &mut tree_cursor,
                     &hasher,
                     &mut on_screen,
-                    objects,
+                    &mut slide_show.objects,
                     &source,
                 )?);
             }
             NodeKind::Viewbox => {
                 let layout = viewboxes::parse_viewbox(&mut tree_cursor, &source, &hasher);
 
-                layouts.insert(layout.0, layout.1);
+                slide_show.viewboxes.insert(layout.0, layout.1);
             }
             NodeKind::Obj => {
                 let object = objects::parse_objects(&mut tree_cursor, &source, helix_cell, &hasher);
 
-                objects.insert(object.0, object.1);
+                slide_show.objects.insert(object.0, object.1);
             }
             NodeKind::Register => {
                 tree_cursor.goto_first_child();
@@ -264,5 +258,5 @@ pub fn parse_file<'a>(
         }
     }
     drop(tree_cursor);
-    Ok((tree, ast))
+    Ok(ast)
 }

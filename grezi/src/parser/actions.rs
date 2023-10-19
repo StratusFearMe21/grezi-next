@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::GrzCursor;
 use super::{AstObject, NodeKind, PassThroughHasher};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Actions {
     Highlight {
         locations: Option<[PCursor; 2]>,
@@ -19,7 +19,7 @@ pub enum Actions {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ResolvedActions {
     Highlight { locations: Rect, persist: bool },
 }

@@ -16,7 +16,7 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SlideObj {
     pub object: u64,
     pub locations: [(LineUp, ViewboxIn); 2],
@@ -24,7 +24,7 @@ pub struct SlideObj {
     pub state: ObjectState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ResolvedSlideObj {
     pub object: ResolvedObject,
     pub locations: [[f32; 2]; 2],
