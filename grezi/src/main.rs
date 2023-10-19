@@ -35,6 +35,7 @@ use parser::{
     viewboxes::ViewboxIn,
     AstObject, PassThroughHasher,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
