@@ -45,6 +45,7 @@ use crate::parser::highlighting::HelixCell;
 use crate::parser::objects::ResolvedObject;
 
 mod layout;
+#[cfg(not(target_arch = "wasm32"))]
 mod lsp;
 mod parser;
 
