@@ -804,7 +804,7 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     let args: Args = clap::Parser::parse();
-    let mut app = MyEguiApp::new(&args);
+    let app = MyEguiApp::new(&args);
     let init_app = app.clone();
 
     eframe::run_native(

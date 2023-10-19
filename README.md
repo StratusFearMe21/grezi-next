@@ -12,5 +12,5 @@ Grezi allows you to write presentations using plain text. It's designed to make 
     You can use the LSP by runing grezi with the `--lsp` argument
 - Hot Reloading:
     Grezi allows you to hot reload your presentation *as* you create it. There are 2 hot reloading implementations
-    - LSP (ideal): Just run the LSP and use the `preview` workspace command
+    - LSP (ideal): Just run the LSP
     - Watching: When not in LSP mode, Grezi will watch the open presentation for changes. This implementation is slower than using the LSP hot reloading, but if you don't have an IDE, this should work for you. 

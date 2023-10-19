@@ -4,14 +4,14 @@ use crate::parser::NodeKind;
 use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    request::{Completion, ExecuteCommand, PrepareRenameRequest, Rename, Request},
+    request::{Completion, PrepareRenameRequest, Rename, Request},
     AnnotatedTextEdit, CompletionItem, CompletionItemKind, CompletionOptions,
     CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
-    DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse, RenameOptions,
-    RenameParams, SaveOptions, ServerCapabilities, TextDocumentEdit, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
+    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    PrepareRenameResponse, RenameOptions, RenameParams, SaveOptions, ServerCapabilities,
+    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 use tree_sitter::{Point, Query, QueryCursor};
 
@@ -38,12 +38,6 @@ pub fn start_lsp(
                 ..Default::default()
             },
         )),
-        execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec!["preview".to_string()],
-            work_done_progress_options: WorkDoneProgressOptions {
-                work_done_progress: Some(false),
-            },
-        }),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: WorkDoneProgressOptions {
@@ -77,30 +71,6 @@ pub fn start_lsp(
                 }
 
                 match req.method.as_str() {
-                    ExecuteCommand::METHOD => {
-                        if let Ok(cmd) = req.extract::<ExecuteCommandParams>(ExecuteCommand::METHOD)
-                        {
-                            if cmd.1.command == "preview" {
-                                current_thread.unpark();
-                                connection
-                                    .sender
-                                    .send(lsp_server::Message::Response(Response::new_ok(
-                                        cmd.0,
-                                        (),
-                                    )))
-                                    .unwrap();
-                            } else {
-                                connection
-                                    .sender
-                                    .send(lsp_server::Message::Response(Response::new_err(
-                                        cmd.0,
-                                        404,
-                                        "Not a valid command".into(),
-                                    )))
-                                    .unwrap();
-                            }
-                        }
-                    }
                     PrepareRenameRequest::METHOD => {
                         if let Ok((rqid, pos)) =
                             req.extract::<TextDocumentPositionParams>(PrepareRenameRequest::METHOD)
@@ -373,6 +343,7 @@ pub fn start_lsp(
                         }
 
                         app.new_file.store(false, Ordering::Relaxed);
+                        current_thread.unpark();
                     }
                     "textDocument/didChange" => {
                         let changes: lsp_types::DidChangeTextDocumentParams =
