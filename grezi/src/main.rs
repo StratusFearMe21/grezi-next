@@ -1059,7 +1059,7 @@ fn main() -> eframe::Result<()> {
                                             let tree_info = app.tree_info.lock();
                                             let tree_info = tree_info.as_ref().unwrap();
                                             let mut new_text = String::from("{\n");
-                                            let mut iter = query_cursor.matches(
+                                            let iter = query_cursor.matches(
                                                 &slide_complete_query,
                                                 tree_info.0.root_node(),
                                                 RopeProvider(current_rope.slice(..)),
@@ -1081,7 +1081,18 @@ fn main() -> eframe::Result<()> {
                                                 }
                                                 node = Some(query_match.captures[0].node);
                                             }
-                                            let mut walker = node.unwrap().walk();
+                                            let mut walker = if let Some(n) = node {
+                                                n.walk()
+                                            } else {
+                                                connection
+                                                    .sender
+                                                    .send(Message::Response(Response::new_ok(
+                                                        rqid,
+                                                        None::<CompletionResponse>,
+                                                    )))
+                                                    .unwrap();
+                                                continue 'lsploop;
+                                            };
 
                                             walker.goto_first_child();
                                             walker.goto_first_child();
