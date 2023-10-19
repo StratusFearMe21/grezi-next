@@ -136,10 +136,7 @@ pub fn start_lsp(
                                 .unwrap();
 
                             // identifiers cannot have new lines, so this should work
-                            let rename_name = current_rope
-                                .byte_slice(rename_node.byte_range())
-                                .as_str()
-                                .unwrap();
+                            let rename_name = current_rope.byte_slice(rename_node.byte_range());
 
                             let iter = query_cursor.matches(
                                 &rename_query,
@@ -149,12 +146,7 @@ pub fn start_lsp(
 
                             for query_match in iter {
                                 let node = query_match.captures[0].node;
-                                if rename_name
-                                    == current_rope
-                                        .byte_slice(node.byte_range())
-                                        .as_str()
-                                        .unwrap_or_default()
-                                {
+                                if current_rope.byte_slice(node.byte_range()).eq(&rename_name) {
                                     let range = node.range();
 
                                     workspace_edit.push(OneOf::Left(TextEdit {
@@ -241,23 +233,24 @@ pub fn start_lsp(
                                             line.push_str(",\n");
                                             if !current_rope
                                                 .byte_slice(walker.node().byte_range())
-                                                .as_str()
-                                                .unwrap()
-                                                .contains('|')
+                                                .chunks()
+                                                .any(|c| c.contains('|'))
                                             {
                                                 new_text.push_str(&line);
                                             }
                                             break;
                                         }
                                         _ => {
-                                            let text = current_rope
+                                            current_rope
                                                 .byte_slice(walker.node().byte_range())
-                                                .as_str()
-                                                .unwrap();
-                                            line.push_str(text);
-                                            if text == ":" {
-                                                line.push(' ');
-                                            }
+                                                .chunks()
+                                                .for_each(|c| {
+                                                    line.push_str(c);
+                                                    if c == ":" {
+                                                        line.push(' ');
+                                                    }
+                                                });
+
                                             if !walker.goto_next_sibling() {
                                                 line.push_str(",\n");
                                                 new_text.push_str(&line);
