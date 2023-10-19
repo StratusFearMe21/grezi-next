@@ -240,6 +240,7 @@ pub fn start_lsp(
                                             }
                                             break;
                                         }
+                                        NodeKind::SlideFrom => {}
                                         _ => {
                                             current_rope
                                                 .byte_slice(walker.node().byte_range())
