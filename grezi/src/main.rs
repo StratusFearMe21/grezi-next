@@ -794,13 +794,19 @@ impl eframe::App for MyEguiApp {
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    use crate::parser::NodeKind;
+    use helix_core::syntax::RopeProvider;
     use lsp_server::{Connection, Message, Response};
     use lsp_types::{
-        request::{ExecuteCommand, Request},
-        ExecuteCommandOptions, ExecuteCommandParams, SaveOptions, ServerCapabilities,
-        TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-        TextDocumentSyncSaveOptions, WorkDoneProgressOptions,
+        request::{ExecuteCommand, PrepareRenameRequest, Rename, Request},
+        AnnotatedTextEdit, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, OneOf,
+        OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse, RenameOptions,
+        RenameParams, SaveOptions, ServerCapabilities, TextDocumentEdit,
+        TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+        TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+        WorkDoneProgressOptions, WorkspaceEdit,
     };
+    use tree_sitter::{Point, Query, QueryCursor};
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
@@ -846,42 +852,195 @@ fn main() -> eframe::Result<()> {
                                 work_done_progress: Some(false),
                             },
                         }),
+                        rename_provider: Some(OneOf::Right(RenameOptions {
+                            prepare_provider: Some(true),
+                            work_done_progress_options: WorkDoneProgressOptions {
+                                work_done_progress: Some(false),
+                            },
+                        })),
                         ..Default::default()
                     })
                     .unwrap();
                     connection.initialize(server_capabilities).unwrap();
                     let mut current_rope = ropey::Rope::new();
                     let mut current_document_version = 0;
+                    let mut currently_open = Url::parse("file:///dev/null").unwrap();
+                    let rename_query =
+                        Query::new(tree_sitter_grz::language(), "(identifier) @rename").unwrap();
+                    let mut query_cursor = QueryCursor::new();
                     for msg in &connection.receiver {
                         match msg {
                             Message::Request(req) => {
-                                if connection.handle_shutdown(dbg!(&req)).unwrap() {
+                                if connection.handle_shutdown(&req).unwrap() {
                                     return;
                                 }
 
-                                if let Ok(cmd) =
-                                    req.extract::<ExecuteCommandParams>(ExecuteCommand::METHOD)
-                                {
-                                    if cmd.1.command == "preview" {
-                                        current_thread.unpark();
-                                        connection
-                                            .sender
-                                            .send(lsp_server::Message::Response(Response::new_ok(
-                                                cmd.0,
-                                                (),
-                                            )))
-                                            .unwrap();
-                                    } else {
-                                        connection
-                                            .sender
-                                            .send(lsp_server::Message::Response(Response::new_err(
-                                                cmd.0,
-                                                404,
-                                                "Not a valid command".into(),
-                                            )))
-                                            .unwrap();
+                                match req.method.as_str() {
+                                    ExecuteCommand::METHOD => {
+                                        if let Ok(cmd) = req
+                                            .extract::<ExecuteCommandParams>(ExecuteCommand::METHOD)
+                                        {
+                                            if cmd.1.command == "preview" {
+                                                current_thread.unpark();
+                                                connection
+                                                    .sender
+                                                    .send(lsp_server::Message::Response(
+                                                        Response::new_ok(cmd.0, ()),
+                                                    ))
+                                                    .unwrap();
+                                            } else {
+                                                connection
+                                                    .sender
+                                                    .send(lsp_server::Message::Response(
+                                                        Response::new_err(
+                                                            cmd.0,
+                                                            404,
+                                                            "Not a valid command".into(),
+                                                        ),
+                                                    ))
+                                                    .unwrap();
+                                            }
+                                        }
                                     }
+                                    PrepareRenameRequest::METHOD => {
+                                        if let Ok((rqid, pos)) = req
+                                            .extract::<TextDocumentPositionParams>(
+                                                PrepareRenameRequest::METHOD,
+                                            )
+                                        {
+                                            let tree_info = app.tree_info.lock();
+                                            let tree_info = tree_info.as_ref().unwrap();
+                                            let point = Point {
+                                                row: pos.position.line as usize,
+                                                column: pos.position.character as usize,
+                                            };
+
+                                            connection
+                                                .sender
+                                                .send(Message::Response(Response::new_ok(
+                                                    rqid,
+                                                    tree_info
+                                                        .0
+                                                        .root_node()
+                                                        .descendant_for_point_range(point, point)
+                                                        .and_then(|f| {
+                                                            if matches!(
+                                                                NodeKind::from(f.kind_id()),
+                                                                NodeKind::Identifier
+                                                            ) {
+                                                                let node_range = f.range();
+                                                                Some(PrepareRenameResponse::Range(
+                                                                    lsp_types::Range {
+                                                                        start: Position {
+                                                                            line: node_range
+                                                                                .start_point
+                                                                                .row
+                                                                                as u32,
+                                                                            character: node_range
+                                                                                .start_point
+                                                                                .column
+                                                                                as u32,
+                                                                        },
+                                                                        end: Position {
+                                                                            line: node_range
+                                                                                .end_point
+                                                                                .row
+                                                                                as u32,
+                                                                            character: node_range
+                                                                                .end_point
+                                                                                .column
+                                                                                as u32,
+                                                                        },
+                                                                    },
+                                                                ))
+                                                            } else {
+                                                                None
+                                                            }
+                                                        }),
+                                                )))
+                                                .unwrap();
+                                        }
+                                    }
+                                    Rename::METHOD => {
+                                        if let Ok((rqid, rename)) =
+                                            req.extract::<RenameParams>(Rename::METHOD)
+                                        {
+                                            let tree_info = app.tree_info.lock();
+                                            let tree_info = tree_info.as_ref().unwrap();
+                                            let mut workspace_edit: Vec<
+                                                OneOf<TextEdit, AnnotatedTextEdit>,
+                                            > = Vec::new();
+                                            let point = Point {
+                                                row: rename.text_document_position.position.line
+                                                    as usize,
+                                                column: rename
+                                                    .text_document_position
+                                                    .position
+                                                    .character
+                                                    as usize,
+                                            };
+
+                                            let rename_node = tree_info
+                                                .0
+                                                .root_node()
+                                                .descendant_for_point_range(point, point)
+                                                .unwrap();
+
+                                            // identifiers cannot have new lines, so this should work
+                                            let rename_name = current_rope
+                                                .byte_slice(rename_node.byte_range())
+                                                .as_str()
+                                                .unwrap();
+
+                                            let iter = query_cursor.matches(
+                                                &rename_query,
+                                                tree_info.0.root_node(),
+                                                RopeProvider(current_rope.slice(..)),
+                                            );
+
+                                            for query_match in iter {
+                                                let node = query_match.captures[0].node;
+                                                if rename_name
+                                                    == current_rope
+                                                        .byte_slice(node.byte_range())
+                                                        .as_str()
+                                                        .unwrap_or_default()
+                                                {
+                                                    let range = node.range();
+
+                                                    workspace_edit.push(OneOf::Left(TextEdit {
+                                                        range: lsp_types::Range {
+                                                            start: Position {
+                                                                line: range.start_point.row as u32,
+                                                                character: range.start_point.column
+                                                                    as u32,
+                                                            },
+                                                            end: Position {
+                                                                line: range.end_point.row as u32,
+                                                                character: range.end_point.column
+                                                                    as u32,
+                                                            },
+                                                        },
+                                                        new_text: rename.new_name.clone(),
+                                                    }));
+                                                }
+                                            }
+
+                                            connection.sender.send(Message::Response(Response::new_ok(rqid, Some(WorkspaceEdit {
+                                                document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                                                    text_document: OptionalVersionedTextDocumentIdentifier {
+                                                        uri: currently_open.clone(),
+                                                        version: Some(current_document_version)
+                                                    },
+                                                    edits: workspace_edit
+                                                }])),
+                                                ..Default::default()
+                                            })))).unwrap();
+                                        }
+                                    }
+                                    _ => {}
                                 }
+
                                 // ...
                             }
                             Message::Response(resp) => {}
@@ -890,6 +1049,7 @@ fn main() -> eframe::Result<()> {
                                     "textDocument/didOpen" => {
                                         let doc: lsp_types::DidOpenTextDocumentParams =
                                             serde_json::from_value(not.params).unwrap();
+                                        currently_open = doc.text_document.uri;
                                         let mut slide_show = app.slide_show.write();
                                         current_rope =
                                             ropey::Rope::from_str(&doc.text_document.text);

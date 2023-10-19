@@ -12,7 +12,7 @@ fn main() {
     let mut out_enum = BufWriter::new(File::create(Path::new(&out_dir).join("kinds.rs")).unwrap());
 
     out_enum
-        .write_all(b"#[repr(u16)] #[derive(Default,FromPrimitive,Debug)] enum NodeKind {")
+        .write_all(b"#[repr(u16)] #[derive(Default,FromPrimitive,Debug)] pub enum NodeKind {")
         .unwrap();
 
     for id in 0..lang.node_kind_count() as u16 {
@@ -27,7 +27,7 @@ fn main() {
     out_enum.write_all(b"#[default] Invalid}").unwrap();
 
     out_enum
-        .write_all(b"#[repr(u16)] #[derive(Default,FromPrimitive,Debug)] enum FieldName {")
+        .write_all(b"#[repr(u16)] #[derive(Default,FromPrimitive,Debug)] pub enum FieldName {")
         .unwrap();
 
     for id in 0..lang.field_count() as u16 {
