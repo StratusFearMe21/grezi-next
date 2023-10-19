@@ -795,11 +795,14 @@ impl eframe::App for MyEguiApp {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     use crate::parser::NodeKind;
+    use eframe::egui::plot::Text;
     use helix_core::syntax::RopeProvider;
     use lsp_server::{Connection, Message, Response};
     use lsp_types::{
-        request::{ExecuteCommand, PrepareRenameRequest, Rename, Request},
-        AnnotatedTextEdit, DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, OneOf,
+        request::{Completion, ExecuteCommand, PrepareRenameRequest, Rename, Request},
+        AnnotatedTextEdit, CompletionItem, CompletionItemKind, CompletionOptions,
+        CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
+        DocumentChanges, ExecuteCommandOptions, ExecuteCommandParams, OneOf,
         OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse, RenameOptions,
         RenameParams, SaveOptions, ServerCapabilities, TextDocumentEdit,
         TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
@@ -858,6 +861,14 @@ fn main() -> eframe::Result<()> {
                                 work_done_progress: Some(false),
                             },
                         })),
+                        completion_provider: Some(CompletionOptions {
+                            resolve_provider: Some(false),
+                            trigger_characters: Some(vec!["{".to_string()]),
+                            completion_item: Some(CompletionOptionsCompletionItem {
+                                label_details_support: Some(false),
+                            }),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     })
                     .unwrap();
@@ -867,8 +878,11 @@ fn main() -> eframe::Result<()> {
                     let mut currently_open = Url::parse("file:///dev/null").unwrap();
                     let rename_query =
                         Query::new(tree_sitter_grz::language(), "(identifier) @rename").unwrap();
+                    let slide_complete_query =
+                        Query::new(tree_sitter_grz::language(), "[(slide)] @find").unwrap();
+
                     let mut query_cursor = QueryCursor::new();
-                    for msg in &connection.receiver {
+                    'lsploop: for msg in &connection.receiver {
                         match msg {
                             Message::Request(req) => {
                                 if connection.handle_shutdown(&req).unwrap() {
@@ -1036,6 +1050,129 @@ fn main() -> eframe::Result<()> {
                                                 }])),
                                                 ..Default::default()
                                             })))).unwrap();
+                                        }
+                                    }
+                                    Completion::METHOD => {
+                                        if let Ok((rqid, completion)) =
+                                            req.extract::<CompletionParams>(Completion::METHOD)
+                                        {
+                                            let tree_info = app.tree_info.lock();
+                                            let tree_info = tree_info.as_ref().unwrap();
+                                            let mut new_text = String::from("{\n");
+                                            let mut iter = query_cursor.matches(
+                                                &slide_complete_query,
+                                                tree_info.0.root_node(),
+                                                RopeProvider(current_rope.slice(..)),
+                                            );
+                                            let mut node = None;
+                                            for query_match in iter {
+                                                if query_match.captures[0]
+                                                    .node
+                                                    .range()
+                                                    .end_point
+                                                    .row
+                                                    > completion
+                                                        .text_document_position
+                                                        .position
+                                                        .line
+                                                        as usize
+                                                {
+                                                    break;
+                                                }
+                                                node = Some(query_match.captures[0].node);
+                                            }
+                                            let mut walker = node.unwrap().walk();
+
+                                            walker.goto_first_child();
+                                            walker.goto_first_child();
+                                            walker.goto_next_sibling();
+                                            loop {
+                                                let mut line = String::new();
+                                                walker.goto_first_child();
+                                                line.push_str("    ");
+                                                loop {
+                                                    match NodeKind::from(walker.node().kind_id()) {
+                                                        NodeKind::EdgeParser => {
+                                                            line.push_str(",\n");
+                                                            if !current_rope
+                                                                .byte_slice(
+                                                                    walker.node().byte_range(),
+                                                                )
+                                                                .as_str()
+                                                                .unwrap()
+                                                                .contains('|')
+                                                            {
+                                                                new_text.push_str(&line);
+                                                            }
+                                                            break;
+                                                        }
+                                                        _ => {
+                                                            let text = current_rope
+                                                                .byte_slice(
+                                                                    walker.node().byte_range(),
+                                                                )
+                                                                .as_str()
+                                                                .unwrap();
+                                                            line.push_str(text);
+                                                            if text == ":" {
+                                                                line.push(' ');
+                                                            }
+                                                            if !walker.goto_next_sibling() {
+                                                                line.push_str(",\n");
+                                                                new_text.push_str(&line);
+                                                                break;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                walker.goto_parent();
+
+                                                walker.goto_next_sibling();
+                                                if !walker.goto_next_sibling() {
+                                                    break;
+                                                }
+                                                if !matches!(
+                                                    dbg!(NodeKind::from(walker.node().kind_id())),
+                                                    NodeKind::SlideObj
+                                                ) {
+                                                    break;
+                                                }
+                                            }
+                                            new_text.push_str("}[]");
+                                            let item = CompletionItem {
+                                                label: "Continue Slide".into(),
+                                                kind: Some(CompletionItemKind::SNIPPET),
+                                                preselect: Some(true),
+                                                text_edit: Some(CompletionTextEdit::Edit(
+                                                    TextEdit {
+                                                        range: lsp_types::Range {
+                                                            start: Position {
+                                                                line: completion
+                                                                    .text_document_position
+                                                                    .position
+                                                                    .line,
+                                                                character: 0,
+                                                            },
+                                                            end: Position {
+                                                                line: completion
+                                                                    .text_document_position
+                                                                    .position
+                                                                    .line,
+                                                                character: 10,
+                                                            },
+                                                        },
+                                                        new_text,
+                                                    },
+                                                )),
+                                                ..Default::default()
+                                            };
+                                            connection
+                                                .sender
+                                                .send(Message::Response(Response::new_ok(
+                                                    rqid,
+                                                    Some(CompletionResponse::Array(vec![item])),
+                                                )))
+                                                .unwrap();
                                         }
                                     }
                                     _ => {}
