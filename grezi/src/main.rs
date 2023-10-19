@@ -685,7 +685,11 @@ impl eframe::App for MyEguiApp {
                 },
                 Some(resolved) => resolved,
             };
-            let slide = slide_show.slide_show.get(self.index).unwrap();
+            let slide = slide_show
+                .slide_show
+                .get(self.index)
+                .or_else(|| slide_show.slide_show.last())
+                .unwrap();
 
             let resolved_actions = match &self.resolved_actions {
                 None => unreachable!(),
