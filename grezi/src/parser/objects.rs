@@ -62,19 +62,21 @@ pub enum ObjectState {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_objects(
     tree_cursor: &mut GrzCursor<'_>,
-    source: &str,
+    source: &ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
 ) -> (u64, Object) {
+    use std::borrow::Cow;
+
     tree_cursor.goto_first_child();
-    let name = &source[tree_cursor.node().byte_range()];
+    let name = source.byte_slice(tree_cursor.node().byte_range());
     tree_cursor.goto_next_sibling();
-    let obj_type = &source[tree_cursor.node().byte_range()];
+    let obj_type: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
     tree_cursor.goto_next_sibling();
     tree_cursor.goto_first_child();
     let parameters = std::iter::from_fn(|| {
         if tree_cursor.field_id() == Some(FieldName::Parameters as u16) {
-            let key = &source[tree_cursor.node().byte_range()];
+            let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
             tree_cursor.goto_next_sibling();
             let value = match NodeKind::from(tree_cursor.node().kind_id()) {
                 NodeKind::StringLiteral => {
@@ -90,26 +92,30 @@ pub fn parse_objects(
             None
         }
     });
-    let object = match obj_type {
+    let object = match obj_type.as_ref() {
         "Paragraph" | "Header" => {
             let mut text = None;
             let mut align = Align::LEFT;
             let mut font = FontFamily::Proportional;
-            let mut font_size = match obj_type {
+            let mut font_size = match obj_type.as_ref() {
                 "Paragraph" => 48.0,
                 "Header" => 64.0,
                 _ => unreachable!(),
             };
             let mut language = None;
             for parameter in parameters {
-                let value = &source[parameter
-                    .1
-                    .child(1 /* second child */)
-                    .unwrap()
-                    .byte_range()];
-                match parameter.0 {
+                let value: Cow<'_, str> = source
+                    .byte_slice(
+                        parameter
+                            .1
+                            .child(1 /* second child */)
+                            .unwrap()
+                            .byte_range(),
+                    )
+                    .into();
+                match parameter.0.as_ref() {
                     "value" => text = Some(parameter.1),
-                    "align" => match value {
+                    "align" => match value.as_ref() {
                         "left" | "Left" => align = Align::LEFT,
                         "center" | "Center" => align = Align::Center,
                         "right" | "Right" => align = Align::RIGHT,
@@ -152,13 +158,19 @@ pub fn parse_objects(
                     loop {
                         match NodeKind::from(walker.node().kind_id()) {
                             NodeKind::StringContent => {
-                                string_content.push_str(&source[walker.node().byte_range()]);
+                                source
+                                    .byte_slice(walker.node().byte_range())
+                                    .chunks()
+                                    .for_each(|chunk| string_content.push_str(chunk));
                             }
                             NodeKind::EscapeSequence => {
-                                string_content.push_str(
-                                    &source[walker.node().byte_range().start + 1
-                                        ..walker.node().byte_range().end],
-                                );
+                                source
+                                    .byte_slice(
+                                        walker.node().byte_range().start + 1
+                                            ..walker.node().byte_range().end,
+                                    )
+                                    .chunks()
+                                    .for_each(|chunk| string_content.push_str(chunk));
                             }
                             _ => break,
                         }
@@ -242,7 +254,7 @@ pub fn parse_objects(
     (
         {
             let mut hasher = hasher.build_hasher();
-            std::hash::Hash::hash(name, &mut hasher);
+            std::hash::Hash::hash(&name, &mut hasher);
             hasher.finish()
         },
         Object {

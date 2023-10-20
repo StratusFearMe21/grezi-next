@@ -27,67 +27,75 @@ pub enum ResolvedActions {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_actions(
     tree_cursor: &mut GrzCursor<'_>,
-    source: &str,
+    source: &ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     slide_in_ast: usize,
 ) -> AstObject {
+    use std::borrow::Cow;
+
     tree_cursor.goto_first_child();
     let mut actions = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
         tree_cursor.goto_first_child();
         let object_name = {
             let mut hasher = hasher.build_hasher();
-            std::hash::Hash::hash(&source[tree_cursor.node().byte_range()], &mut hasher);
+            std::hash::Hash::hash(
+                &source.byte_slice(tree_cursor.node().byte_range()),
+                &mut hasher,
+            );
             hasher.finish()
         };
         let object = on_screen.get(&object_name).unwrap();
         tree_cursor.goto_next_sibling();
-        let function_name = &source[tree_cursor.node().byte_range()];
-        match function_name {
-            "highlight" => {
-                tree_cursor.goto_next_sibling();
+        let function_name = source.byte_slice(tree_cursor.node().byte_range());
 
-                let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
-                    NodeKind::StringLiteral => {
-                        tree_cursor.goto_first_child();
-                        let value = &source[tree_cursor.node().byte_range()];
-                        tree_cursor.goto_parent();
-                        let (line, column) = value.split_once(':').unwrap();
-                        let from = PCursor {
-                            paragraph: line.parse().unwrap(),
-                            offset: column.parse().unwrap(),
-                            prefer_next_row: true,
-                        };
-                        tree_cursor.goto_next_sibling();
-                        let to = match NodeKind::from(tree_cursor.node().kind_id()) {
-                            NodeKind::StringLiteral => {
-                                tree_cursor.goto_first_child();
-                                let value = &source[tree_cursor.node().byte_range()];
-                                tree_cursor.goto_parent();
-                                let (line, column) = value.split_once(':').unwrap();
-                                PCursor {
-                                    paragraph: line.parse().unwrap(),
-                                    offset: column.parse().unwrap(),
-                                    prefer_next_row: true,
-                                }
+        if function_name == "highlight" {
+            tree_cursor.goto_next_sibling();
+
+            let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::StringLiteral => {
+                    tree_cursor.goto_first_child();
+                    let value: Cow<'_, str> =
+                        source.byte_slice(tree_cursor.node().byte_range()).into();
+                    tree_cursor.goto_parent();
+                    let (line, column) = value.split_once(':').unwrap();
+                    let from = PCursor {
+                        paragraph: line.parse().unwrap(),
+                        offset: column.parse().unwrap(),
+                        prefer_next_row: true,
+                    };
+                    tree_cursor.goto_next_sibling();
+                    let to = match NodeKind::from(tree_cursor.node().kind_id()) {
+                        NodeKind::StringLiteral => {
+                            tree_cursor.goto_first_child();
+                            let value: Cow<'_, str> =
+                                source.byte_slice(tree_cursor.node().byte_range()).into();
+                            tree_cursor.goto_parent();
+                            let (line, column) = value.split_once(':').unwrap();
+                            PCursor {
+                                paragraph: line.parse().unwrap(),
+                                offset: column.parse().unwrap(),
+                                prefer_next_row: true,
                             }
-                            // "number_literal" => &source[tree_cursor.node().byte_range()],
-                            _ => todo!(),
-                        };
-                        Some([from, to])
-                    }
-                    // "number_literal" => &source[tree_cursor.node().byte_range()],
-                    _ => None,
-                };
-                actions.push(Actions::Highlight {
-                    locations,
-                    index: *object,
-                    persist: false,
-                });
-            }
-            _ => todo!(),
+                        }
+                        // "number_literal" => &source[tree_cursor.node().byte_range()],
+                        _ => todo!(),
+                    };
+                    Some([from, to])
+                }
+                // "number_literal" => &source[tree_cursor.node().byte_range()],
+                _ => None,
+            };
+            actions.push(Actions::Highlight {
+                locations,
+                index: *object,
+                persist: false,
+            });
+        } else {
+            todo!()
         }
+
         tree_cursor.goto_parent();
         tree_cursor.goto_next_sibling();
     }

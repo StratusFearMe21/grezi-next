@@ -13,6 +13,7 @@ use lsp_types::{
     TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
     WorkspaceEdit,
 };
+use ropey::Rope;
 use tree_sitter::{Point, Query, QueryCursor};
 
 pub fn start_lsp(
@@ -33,7 +34,7 @@ pub fn start_lsp(
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
                 save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                    include_text: Some(true),
+                    include_text: Some(false),
                 })),
                 ..Default::default()
             },
@@ -190,6 +191,31 @@ pub fn start_lsp(
                         if let Ok((rqid, completion)) =
                             req.extract::<CompletionParams>(Completion::METHOD)
                         {
+                            let mut items = vec![CompletionItem {
+                                label: "New Slide".into(),
+                                kind: Some(CompletionItemKind::SNIPPET),
+                                preselect: Some(true),
+                                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                                    range: lsp_types::Range {
+                                        start: Position {
+                                            line: completion.text_document_position.position.line,
+                                            character: 0,
+                                        },
+                                        end: Position {
+                                            line: completion.text_document_position.position.line,
+                                            character: current_rope
+                                                .line(
+                                                    completion.text_document_position.position.line
+                                                        as usize,
+                                                )
+                                                .len_chars()
+                                                as u32,
+                                        },
+                                    },
+                                    new_text: "{}[]".to_string(),
+                                })),
+                                ..Default::default()
+                            }];
                             let tree_info = app.tree_info.lock();
                             let tree_info = tree_info.as_ref().unwrap();
                             let mut new_text = String::from("{\n");
@@ -214,7 +240,7 @@ pub fn start_lsp(
                                     .sender
                                     .send(Message::Response(Response::new_ok(
                                         rqid,
-                                        None::<CompletionResponse>,
+                                        Some(CompletionResponse::Array(items)),
                                     )))
                                     .unwrap();
                                 continue 'lsploop;
@@ -280,7 +306,7 @@ pub fn start_lsp(
                                 }
                             }
                             new_text.push_str("}[]");
-                            let item = CompletionItem {
+                            items.push(CompletionItem {
                                 label: "Continue Slide".into(),
                                 kind: Some(CompletionItemKind::SNIPPET),
                                 preselect: Some(true),
@@ -292,18 +318,24 @@ pub fn start_lsp(
                                         },
                                         end: Position {
                                             line: completion.text_document_position.position.line,
-                                            character: 10,
+                                            character: current_rope
+                                                .line(
+                                                    completion.text_document_position.position.line
+                                                        as usize,
+                                                )
+                                                .len_chars()
+                                                as u32,
                                         },
                                     },
                                     new_text,
                                 })),
                                 ..Default::default()
-                            };
+                            });
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    Some(CompletionResponse::Array(vec![item])),
+                                    Some(CompletionResponse::Array(items)),
                                 )))
                                 .unwrap();
                         }
@@ -317,7 +349,7 @@ pub fn start_lsp(
             Message::Notification(not) => {
                 match not.method.as_str() {
                     "textDocument/didOpen" => {
-                        let mut doc: lsp_types::DidOpenTextDocumentParams =
+                        let doc: lsp_types::DidOpenTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
                         currently_open = doc.text_document.uri;
                         let mut slide_show = app.slide_show.write();
@@ -361,20 +393,33 @@ pub fn start_lsp(
                                 )))
                                 .unwrap();
                             current_document_version += 1;
-                            doc.text_document.text = current_rope.to_string();
                         }
                         let mut tree_info = app.tree_info.lock();
-                        let tree = parser.parse(&doc.text_document.text, None).unwrap();
+                        let tree = parser
+                            .parse_with(
+                                &mut |byte, _| {
+                                    if byte <= current_rope.len_bytes() {
+                                        let (chunk, start_byte, _, _) =
+                                            current_rope.chunk_at_byte(byte);
+                                        &chunk.as_bytes()[byte - start_byte..]
+                                    } else {
+                                        // out of range
+                                        &[]
+                                    }
+                                },
+                                None,
+                            )
+                            .unwrap();
                         let ast = crate::parser::parse_file(
-                            &doc.text_document.text,
+                            &current_rope,
                             &tree,
                             &mut app.helix_cell,
                             &mut *slide_show,
                         );
                         match ast {
                             Ok(ast) => {
-                                *tree_info = Some((tree, String::new()));
-                                *app.slide_show_file.lock() = doc.text_document.text;
+                                *tree_info = Some((tree, Rope::new()));
+                                *app.slide_show_file.lock() = current_rope.clone();
                                 slide_show.slide_show = ast;
                             }
                             Err(e) => {
@@ -437,12 +482,11 @@ pub fn start_lsp(
                         }
                     }
                     "textDocument/didSave" => {
-                        let save: lsp_types::DidSaveTextDocumentParams =
-                            serde_json::from_value(not.params).unwrap();
+                        // let _: lsp_types::DidSaveTextDocumentParams =
+                        //    serde_json::from_value(not.params).unwrap();
                         let mut tree_info = app.tree_info.lock();
                         if let Some(info) = tree_info.as_mut() {
-                            let text = save.text.unwrap();
-                            info.1 = text;
+                            info.1 = current_rope.clone();
                         }
 
                         app.new_file.store(true, Ordering::Relaxed);

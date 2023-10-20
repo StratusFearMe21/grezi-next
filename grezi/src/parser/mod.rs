@@ -8,6 +8,7 @@ pub mod slides;
 pub mod viewboxes;
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::Debug,
     hash::{BuildHasherDefault, Hasher},
@@ -74,20 +75,20 @@ pub enum Error<'a> {
     #[diagnostic(code(parser::parse_file))]
     BadNode(
         #[label("here")] SourceSpan,
-        #[source_code] &'a str,
+        #[source_code] Cow<'a, str>,
         #[help("Node is of kind: {}")] &'a str,
     ),
     #[error("Object is not on screen")]
     #[diagnostic(code(parser::slide::parse_slide))]
     BadExit(
         #[label("Object cannot exit, as it is not currently on screen")] SourceSpan,
-        #[source_code] &'a str,
+        #[source_code] Cow<'a, str>,
     ),
     #[error("Object could not be found")]
     #[diagnostic(code(parser::slide::parse_slide))]
     NotFound(
         #[label("Object not found")] SourceSpan,
-        #[source_code] &'a str,
+        #[source_code] Cow<'a, str>,
     ),
 }
 
@@ -175,7 +176,7 @@ impl<'a> GrzCursor<'a> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file<'a>(
-    source: &'a str,
+    source: &'a ropey::Rope,
     tree: &Tree,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
@@ -216,17 +217,17 @@ pub fn parse_file<'a>(
             }
             NodeKind::Register => {
                 tree_cursor.goto_first_child();
-                let key = &source[tree_cursor.node().byte_range()];
+                let key = source.byte_slice(tree_cursor.node().byte_range());
                 tree_cursor.goto_next_sibling();
                 let value = match NodeKind::from(tree_cursor.node().kind_id()) {
                     NodeKind::StringLiteral => {
                         tree_cursor.goto_first_child();
                         tree_cursor.goto_next_sibling();
-                        let value = &source[tree_cursor.node().byte_range()];
+                        let value = source.byte_slice(tree_cursor.node().byte_range());
                         tree_cursor.goto_parent();
                         value
                     }
-                    NodeKind::NumberLiteral => &source[tree_cursor.node().byte_range()],
+                    NodeKind::NumberLiteral => source.byte_slice(tree_cursor.node().byte_range()),
                     _ => todo!(),
                 };
                 tree_cursor.goto_parent();
@@ -247,7 +248,7 @@ pub fn parse_file<'a>(
                 drop(tree_cursor);
                 return Err(Error::BadNode(
                     SourceSpan::new(range.start.into(), (range.end - range.start).into()),
-                    source,
+                    source.into(),
                     kind,
                 ));
             }

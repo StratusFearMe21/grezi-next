@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     hash::{BuildHasher, BuildHasherDefault, Hasher},
     sync::Arc,
 };
@@ -17,7 +18,7 @@ use helix_core::{
 };
 use helix_view::theme::Color;
 use helix_view::theme::Modifier;
-use ropey::RopeBuilder;
+use ropey::{Rope, RopeBuilder};
 use tree_sitter::Node;
 
 use super::{GrzCursor, NodeKind, PassThroughHasher};
@@ -36,11 +37,11 @@ pub struct HelixCell {
 
 pub fn highlight_text(
     text: Node<'_>,
-    lang: &str,
+    lang: Cow<'_, str>,
     align: Align,
     font_id: FontId,
     helix_cell: &mut Option<HelixCell>,
-    source: &str,
+    source: &Rope,
     hasher: &ahash::RandomState,
 ) -> LayoutJob {
     let mut layout_job = LayoutJob {
@@ -76,12 +77,21 @@ pub fn highlight_text(
     let mut walker = GrzCursor::from_node(&text);
     walker.goto_first_child();
 
+    let mut slice: Cow<'_, str>;
     loop {
         match NodeKind::from(walker.node().kind_id()) {
-            NodeKind::StringContent => rope.append(&source[walker.node().byte_range()]),
-            NodeKind::EscapeSequence => rope.append(
-                &source[walker.node().byte_range().start + 1..walker.node().byte_range().end],
-            ),
+            NodeKind::StringContent => rope.append({
+                slice = source.byte_slice(walker.node().byte_range()).into();
+                slice.as_ref()
+            }),
+            NodeKind::EscapeSequence => rope.append({
+                slice = source
+                    .byte_slice(
+                        walker.node().byte_range().start + 1..walker.node().byte_range().end,
+                    )
+                    .into();
+                slice.as_ref()
+            }),
             _ => break,
         }
         walker.goto_next_sibling();
@@ -91,14 +101,14 @@ pub fn highlight_text(
 
     let hash = {
         let mut hasher = hasher.build_hasher();
-        std::hash::Hash::hash(lang, &mut hasher);
+        std::hash::Hash::hash(&lang, &mut hasher);
         hasher.finish()
     };
     let highlight_config = helix.loaded_syntaxes.entry(hash).or_insert_with(|| {
         helix
             .loader
             .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(
-                (*lang).into(),
+                lang.into(),
             ))
             .and_then(|config| config.highlight_config(helix.theme.scopes()))
             .unwrap()

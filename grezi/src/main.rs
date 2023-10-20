@@ -69,9 +69,9 @@ pub struct MyEguiApp {
     #[cfg(not(target_arch = "wasm32"))]
     new_file: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
-    slide_show_file: Arc<Mutex<String>>,
+    slide_show_file: Arc<Mutex<Rope>>,
     #[cfg(not(target_arch = "wasm32"))]
-    tree_info: Arc<Mutex<Option<(Tree, String)>>>,
+    tree_info: Arc<Mutex<Option<(Tree, Rope)>>>,
     #[cfg(not(target_arch = "wasm32"))]
     file_name: String,
     #[cfg(not(target_arch = "wasm32"))]
@@ -142,8 +142,7 @@ impl MyEguiApp {
                                         std::fs::File::open(&watcher_file_name).unwrap(),
                                     )
                                     .unwrap();
-                                    let slide_show_file = watcher_slide_show_file.lock();
-                                    let slide_show = Rope::from_str(slide_show_file.as_str());
+                                    let slide_show = watcher_slide_show_file.lock();
                                     let mut tree_info = watcher_tree_info.lock();
                                     if let Some(info) = tree_info.as_mut() {
                                         let transaction =
@@ -156,10 +155,22 @@ impl MyEguiApp {
                                             info.0.edit(change);
                                         }
 
-                                        info.1 = new_file.to_string();
+                                        info.1 = new_file;
                                         info.0 = watcher_parser
                                             .lock()
-                                            .parse(&info.1, Some(&info.0))
+                                            .parse_with(
+                                                &mut |byte, _| {
+                                                    if byte <= info.1.len_bytes() {
+                                                        let (chunk, start_byte, _, _) =
+                                                            info.1.chunk_at_byte(byte);
+                                                        &chunk.as_bytes()[byte - start_byte..]
+                                                    } else {
+                                                        // out of range
+                                                        &[]
+                                                    }
+                                                },
+                                                Some(&info.0),
+                                            )
                                             .unwrap();
                                     }
 
@@ -187,11 +198,11 @@ impl MyEguiApp {
         // for e.g. egui::PaintCallback.
 
         #[cfg(not(target_arch = "wasm32"))]
-        let slide_show_file = Arc::new(Mutex::new(String::new()));
+        let slide_show_file = Arc::new(Mutex::new(Rope::new()));
         #[cfg(not(target_arch = "wasm32"))]
         let new_file = Arc::new(AtomicBool::new(true));
         #[cfg(not(target_arch = "wasm32"))]
-        let tree_info: Arc<Mutex<Option<(Tree, String)>>> = Arc::new(Mutex::new(None));
+        let tree_info: Arc<Mutex<Option<(Tree, Rope)>>> = Arc::new(Mutex::new(None));
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut helix_cell = None;
@@ -227,13 +238,29 @@ impl MyEguiApp {
                     objects,
                 };
                 let mut tree_info = tree_info.lock();
-                let file = std::fs::read_to_string(args.presentation.as_ref().unwrap()).unwrap();
+                let file = Rope::from_reader(
+                    std::fs::File::open(args.presentation.as_ref().unwrap()).unwrap(),
+                )
+                .unwrap();
 
-                let tree = parser.parse(&file, None).unwrap();
+                let tree = parser
+                    .parse_with(
+                        &mut |byte, _| {
+                            if byte <= file.len_bytes() {
+                                let (chunk, start_byte, _, _) = file.chunk_at_byte(byte);
+                                &chunk.as_bytes()[byte - start_byte..]
+                            } else {
+                                // out of range
+                                &[]
+                            }
+                        },
+                        None,
+                    )
+                    .unwrap();
                 let ast = parser::parse_file(&file, &tree, &mut helix_cell, &mut slide_show);
                 match ast {
                     Ok(ast) => {
-                        *tree_info = Some((tree, String::new()));
+                        *tree_info = Some((tree, Rope::new()));
                         *slide_show_file.lock() = file;
                         slide_show.slide_show = ast;
                         slide_show
@@ -593,14 +620,18 @@ impl eframe::App for MyEguiApp {
                 let ast = {
                     let mut tree_info = self.tree_info.lock();
                     let file = tree_info.as_mut().map_or_else(
-                        || std::fs::read_to_string(&self.file_name).unwrap(),
+                        || {
+                            Rope::from_reader(std::fs::File::open(&self.file_name).unwrap())
+                                .unwrap()
+                        },
                         |i| {
-                            if !i.1.is_empty() {
-                                let mut new_string = String::new();
-                                core::mem::swap(&mut new_string, &mut i.1);
-                                new_string
+                            if i.1.chars().next().is_some() {
+                                let mut new_rope = Rope::new();
+                                core::mem::swap(&mut new_rope, &mut i.1);
+                                new_rope
                             } else {
-                                std::fs::read_to_string(&self.file_name).unwrap()
+                                Rope::from_reader(std::fs::File::open(&self.file_name).unwrap())
+                                    .unwrap()
                             }
                         },
                     );

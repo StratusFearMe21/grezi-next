@@ -38,8 +38,10 @@ pub fn parse_slides<'a>(
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
-    source: &'a str,
+    source: &'a ropey::Rope,
 ) -> Result<AstObject, super::Error<'a>> {
+    use std::borrow::Cow;
+
     use miette::SourceSpan;
 
     use super::Error;
@@ -54,22 +56,26 @@ pub fn parse_slides<'a>(
         tree_cursor.goto_first_child();
         let object_name = {
             let mut hasher = hasher.build_hasher();
-            std::hash::Hash::hash(&source[tree_cursor.node().byte_range()], &mut hasher);
+            std::hash::Hash::hash(
+                &source.byte_slice(tree_cursor.node().byte_range()),
+                &mut hasher,
+            );
             hasher.finish()
         };
         let object = objects.get_mut(&object_name).ok_or_else(|| {
             let node = tree_cursor.node().byte_range();
             Error::NotFound(
                 SourceSpan::new(node.start.into(), (node.end - node.start).into()),
-                source,
+                source.into(),
             )
         })?;
         tree_cursor.goto_next_sibling();
-        let viewbox = &source[tree_cursor.node().byte_range()];
+        let viewbox = &source.byte_slice(tree_cursor.node().byte_range());
         let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
         tree_cursor.goto_next_sibling();
         tree_cursor.goto_first_child();
-        let vb_index: usize = source[tree_cursor.node().byte_range()].parse().unwrap();
+        let vb_index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+        let vb_index: usize = vb_index.parse().unwrap();
         let viewbox = match viewbox_node {
             NodeKind::Size => ViewboxIn::Size,
             NodeKind::Identifier => {
@@ -85,11 +91,13 @@ pub fn parse_slides<'a>(
         match NodeKind::from(tree_cursor.node().kind_id()) {
             NodeKind::SlideFrom => {
                 tree_cursor.goto_first_child();
-                let viewbox = &source[tree_cursor.node().byte_range()];
+                let viewbox = source.byte_slice(tree_cursor.node().byte_range());
                 let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
                 tree_cursor.goto_next_sibling();
                 tree_cursor.goto_first_child();
-                let vb_index: usize = source[tree_cursor.node().byte_range()].parse().unwrap();
+                let vb_index: Cow<'_, str> =
+                    source.byte_slice(tree_cursor.node().byte_range()).into();
+                let vb_index: usize = vb_index.parse().unwrap();
                 tree_cursor.goto_parent();
                 tree_cursor.goto_parent();
                 tree_cursor.goto_next_sibling();
@@ -97,7 +105,7 @@ pub fn parse_slides<'a>(
                     NodeKind::Size => Some(ViewboxIn::Size),
                     NodeKind::Identifier => {
                         let mut hasher = hasher.build_hasher();
-                        std::hash::Hash::hash(viewbox, &mut hasher);
+                        std::hash::Hash::hash(&viewbox, &mut hasher);
                         Some(ViewboxIn::Custom(hasher.finish(), vb_index))
                     }
                     _ => todo!(),
@@ -113,7 +121,7 @@ pub fn parse_slides<'a>(
         };
 
         let (locations, line_up_now) = {
-            let edges = &source[tree_cursor.node().byte_range()];
+            let edges: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
 
             let lineup_first;
             let viewbox_first = from.unwrap_or_else(|| object.viewbox.unwrap_or(viewbox));
@@ -152,7 +160,7 @@ pub fn parse_slides<'a>(
                                             object_range.start.into(),
                                             (object_range.end - object_range.start).into(),
                                         ),
-                                        source,
+                                        source.into(),
                                     )
                                 })?;
                                 (lineup, viewbox_first)
@@ -198,10 +206,13 @@ pub fn parse_slides<'a>(
     let mut actions = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
         tree_cursor.goto_first_child();
-        match &source[tree_cursor.node().byte_range()] {
+        let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+        match key.as_ref() {
             "stagger" => {
                 tree_cursor.goto_next_sibling();
-                let scaler: f32 = source[tree_cursor.node().byte_range()].parse().unwrap();
+                let scaler: Cow<'_, str> =
+                    source.byte_slice(tree_cursor.node().byte_range()).into();
+                let scaler: f32 = scaler.parse().unwrap();
                 let mut min_time = 0.0;
                 for object in slide_objects.iter_mut().skip(1) {
                     max_time += scaler;
@@ -211,11 +222,8 @@ pub fn parse_slides<'a>(
             }
             "time" => {
                 tree_cursor.goto_next_sibling();
-                let time: f32 = (source[tree_cursor.node().byte_range()]
-                    .parse::<f32>()
-                    .unwrap()
-                    - 0.5)
-                    .abs();
+                let time: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+                let time: f32 = (time.parse::<f32>().unwrap() - 0.5).abs();
                 max_time += time;
                 for object in slide_objects.iter_mut() {
                     object.scaled_time[1] += time;
@@ -227,7 +235,7 @@ pub fn parse_slides<'a>(
                     .get({
                         let mut hasher = hasher.build_hasher();
                         std::hash::Hash::hash(
-                            &source[tree_cursor.node().byte_range()],
+                            &source.byte_slice(tree_cursor.node().byte_range()),
                             &mut hasher,
                         );
                         &hasher.finish()
@@ -236,7 +244,7 @@ pub fn parse_slides<'a>(
                         let node = tree_cursor.node().byte_range();
                         Error::NotFound(
                             SourceSpan::new(node.start.into(), (node.end - node.start).into()),
-                            source,
+                            source.into(),
                         )
                     })?;
                 tree_cursor.goto_next_sibling();
@@ -244,7 +252,8 @@ pub fn parse_slides<'a>(
                 let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
                     NodeKind::StringLiteral => {
                         tree_cursor.goto_first_child();
-                        let value = &source[tree_cursor.node().byte_range()];
+                        let value: Cow<'_, str> =
+                            source.byte_slice(tree_cursor.node().byte_range()).into();
                         tree_cursor.goto_parent();
                         let (line, column) = value.split_once(':').unwrap();
                         let from = PCursor {
@@ -256,7 +265,8 @@ pub fn parse_slides<'a>(
                         let to = match NodeKind::from(tree_cursor.node().kind_id()) {
                             NodeKind::StringLiteral => {
                                 tree_cursor.goto_first_child();
-                                let value = &source[tree_cursor.node().byte_range()];
+                                let value: Cow<'_, str> =
+                                    source.byte_slice(tree_cursor.node().byte_range()).into();
                                 tree_cursor.goto_parent();
                                 let (line, column) = value.split_once(':').unwrap();
                                 PCursor {

@@ -3,10 +3,15 @@ ViewBox: Size[0] ^
     1:2,
 ]
 
-Obj: Paragraph(
+Title: Header(
     value: "Hello World"
 )
 
+Subtitle: Paragraph(
+    value: "By author"
+)
+
 {
-    Obj: ViewBox[0]__..,
+    Title: ViewBox[0]^^..,
+    Subtitle: ViewBox[1]__..,
 }[]

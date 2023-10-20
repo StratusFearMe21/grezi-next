@@ -109,13 +109,15 @@ impl FromStr for Direction {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox(
     tree_cursor: &mut GrzCursor<'_>,
-    source: &str,
+    source: &ropey::Rope,
     hasher: &ahash::RandomState,
 ) -> (u64, UnresolvedLayout) {
+    use std::borrow::Cow;
+
     tree_cursor.goto_first_child();
-    let name = &source[tree_cursor.node().byte_range()];
+    let name = source.byte_slice(tree_cursor.node().byte_range());
     tree_cursor.goto_next_sibling();
-    let attached_box = &source[tree_cursor.node().byte_range()];
+    let attached_box = source.byte_slice(tree_cursor.node().byte_range());
     let node_kind = NodeKind::from(tree_cursor.node().kind_id());
     tree_cursor.goto_next_sibling();
     tree_cursor.goto_first_child();
@@ -123,36 +125,36 @@ pub fn parse_viewbox(
         NodeKind::Size => ViewboxIn::Size,
         NodeKind::Identifier => {
             let mut hasher = hasher.build_hasher();
-            std::hash::Hash::hash(attached_box, &mut hasher);
-            ViewboxIn::Custom(
-                hasher.finish(),
-                source[tree_cursor.node().byte_range()].parse().unwrap(),
-            )
+            std::hash::Hash::hash(&attached_box, &mut hasher);
+            let index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+            ViewboxIn::Custom(hasher.finish(), index.parse().unwrap())
         }
         _ => todo!(),
     };
     tree_cursor.goto_parent();
     tree_cursor.goto_next_sibling();
     tree_cursor.goto_first_child();
-    let direction = Direction::from_str(&source[tree_cursor.node().byte_range()]).unwrap();
+    let direction: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+    let direction = Direction::from_str(direction.as_ref()).unwrap();
     tree_cursor.goto_next_sibling();
     let mut constraints = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::ViewboxObj as u16 {
         tree_cursor.goto_first_child();
-        let numerator: f32 = source[tree_cursor.node().byte_range()].parse().unwrap();
+        let numerator: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+        let numerator: f32 = numerator.parse().unwrap();
         // We want a char literal here
         tree_cursor.tree_cursor.goto_next_sibling();
-        match &source[tree_cursor.node().byte_range()] {
+        let op: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+        match op.as_ref() {
             "%" => constraints.push(Constraint::Percentage(numerator)),
             "-" => constraints.push(Constraint::Min(numerator)),
             "+" => constraints.push(Constraint::Max(numerator)),
             "~" => constraints.push(Constraint::Length(numerator)),
             ":" => {
                 tree_cursor.goto_next_sibling();
-                constraints.push(Constraint::Ratio(
-                    numerator,
-                    source[tree_cursor.node().byte_range()].parse().unwrap(),
-                ));
+                let denominator: Cow<'_, str> =
+                    source.byte_slice(tree_cursor.node().byte_range()).into();
+                constraints.push(Constraint::Ratio(numerator, denominator.parse().unwrap()));
             }
             _ => todo!(),
         }
@@ -162,7 +164,7 @@ pub fn parse_viewbox(
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();
     let mut hasher = hasher.build_hasher();
-    std::hash::Hash::hash(name, &mut hasher);
+    std::hash::Hash::hash(&name, &mut hasher);
     (
         hasher.finish(),
         UnresolvedLayout {
