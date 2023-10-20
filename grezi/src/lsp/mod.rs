@@ -360,7 +360,7 @@ pub fn start_lsp(
                                     },
                                 )))
                                 .unwrap();
-                            doc.text_document.text = HELLO_WORLD.to_string();
+                            doc.text_document.text = current_rope.to_string();
                         }
                         let mut tree_info = app.tree_info.lock();
                         let tree = parser.parse(&doc.text_document.text, None).unwrap();
