@@ -4,10 +4,13 @@ use crate::parser::NodeKind;
 use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    request::{ApplyWorkspaceEdit, Completion, PrepareRenameRequest, Rename, Request},
+    request::{
+        ApplyWorkspaceEdit, Completion, GotoDeclaration, PrepareRenameRequest, Rename, Request,
+    },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    CompletionTextEdit, DeclarationCapability, DocumentChanges, GotoDefinitionParams,
+    GotoDefinitionResponse, Location, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
     PrepareRenameResponse, RenameOptions, RenameParams, SaveOptions, ServerCapabilities,
     TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
@@ -53,6 +56,7 @@ pub fn start_lsp(
             }),
             ..Default::default()
         }),
+        declaration_provider: Some(DeclarationCapability::Simple(true)),
         ..Default::default()
     })
     .unwrap();
@@ -62,7 +66,17 @@ pub fn start_lsp(
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
     let rename_query = Query::new(tree_sitter_grz::language(), "(identifier) @rename").unwrap();
     let slide_complete_query = Query::new(tree_sitter_grz::language(), "[(slide)] @find").unwrap();
-
+    let top_level_search_query = Query::new(
+        tree_sitter_grz::language(),
+        "[\
+    (slide)\
+    (viewbox)\
+    (obj)\
+    (register)\
+    (action)\
+    ] @obj",
+    )
+    .unwrap();
     let mut query_cursor = QueryCursor::new();
     'lsploop: for msg in &connection.receiver {
         match msg {
@@ -336,6 +350,74 @@ pub fn start_lsp(
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
                                     Some(CompletionResponse::Array(items)),
+                                )))
+                                .unwrap();
+                        }
+                    }
+                    GotoDeclaration::METHOD => {
+                        if let Ok((rqid, goto_declaration)) =
+                            req.extract::<GotoDefinitionParams>(GotoDeclaration::METHOD)
+                        {
+                            let tree_info = app.tree_info.lock();
+                            let tree_info = tree_info.as_ref().unwrap();
+                            let point = Point {
+                                row: goto_declaration.text_document_position_params.position.line
+                                    as usize,
+                                column: goto_declaration
+                                    .text_document_position_params
+                                    .position
+                                    .character as usize,
+                            };
+
+                            let usage_node = tree_info
+                                .0
+                                .root_node()
+                                .descendant_for_point_range(point, point)
+                                .unwrap();
+
+                            let iter = query_cursor.matches(
+                                &top_level_search_query,
+                                tree_info.0.root_node(),
+                                RopeProvider(current_rope.slice(..)),
+                            );
+
+                            for query_match in iter {
+                                if let Some(child) = query_match.captures[0].node.child(0) {
+                                    if current_rope.byte_slice(child.byte_range())
+                                        == current_rope.byte_slice(usage_node.byte_range())
+                                    {
+                                        let range = child.range();
+                                        connection
+                                            .sender
+                                            .send(Message::Response(Response::new_ok(
+                                                rqid,
+                                                Some(GotoDefinitionResponse::Scalar(Location {
+                                                    uri: currently_open.clone(),
+                                                    range: lsp_types::Range {
+                                                        start: Position {
+                                                            line: range.start_point.row as u32,
+                                                            character: range.start_point.column
+                                                                as u32,
+                                                        },
+                                                        end: Position {
+                                                            line: range.end_point.row as u32,
+                                                            character: range.end_point.column
+                                                                as u32,
+                                                        },
+                                                    },
+                                                })),
+                                            )))
+                                            .unwrap();
+                                        continue 'lsploop;
+                                    }
+                                }
+                            }
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(
+                                    rqid,
+                                    None::<GotoDefinitionResponse>,
                                 )))
                                 .unwrap();
                         }
