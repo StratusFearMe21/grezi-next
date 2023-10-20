@@ -360,6 +360,7 @@ pub fn start_lsp(
                                     },
                                 )))
                                 .unwrap();
+                            current_document_version += 1;
                             doc.text_document.text = current_rope.to_string();
                         }
                         let mut tree_info = app.tree_info.lock();
