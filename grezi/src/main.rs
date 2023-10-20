@@ -640,156 +640,163 @@ impl eframe::App for MyEguiApp {
 
             // This is safe because the resolution functions do not touch self.slide_show.slide_show
             let resolved_slide = {
-                let slide = slide_show
+                if let Some(slide) = slide_show
                     .slide_show
                     .get(self.index)
                     .or_else(|| slide_show.slide_show.last())
-                    .unwrap() as *const AstObject;
-                match &self.resolved_slide {
-                    None => match unsafe { &*slide } {
-                        AstObject::Slide {
-                            objects: slide,
-                            actions,
-                            ..
-                        } => {
-                            let resolved_slide = self.resolve_slide(
-                                slide,
-                                ctx,
-                                Vec2::new(self.window_size[0] as f32, self.window_size[1] as f32),
-                                &*slide_show,
-                            );
-                            self.resolved_actions =
-                                Some(self.resolve_actions(actions, &resolved_slide));
-                            self.resolved_slide = Some(resolved_slide);
-                            self.resolved_slide.as_ref().unwrap()
-                        }
-                        AstObject::Action {
-                            actions,
-                            slide_in_ast,
-                        } => {
-                            let slide = slide_show.slide_show.get(*slide_in_ast).unwrap()
-                                as *const AstObject;
-                            match unsafe { &*slide } {
-                                AstObject::Slide { objects, .. } => {
-                                    let resolved_slide = self.resolve_slide(
-                                        objects,
-                                        ctx,
-                                        Vec2::new(
-                                            self.window_size[0] as f32,
-                                            self.window_size[1] as f32,
-                                        ),
-                                        &*slide_show,
-                                    );
-                                    self.resolved_actions =
-                                        Some(self.resolve_actions(actions, &resolved_slide));
-                                    self.resolved_slide = Some(resolved_slide);
-                                    self.resolved_slide.as_ref().unwrap()
-                                }
-                                _ => todo!(),
+                {
+                    let slide = slide as *const AstObject;
+                    match &self.resolved_slide {
+                        None => match unsafe { &*slide } {
+                            AstObject::Slide {
+                                objects: slide,
+                                actions,
+                                ..
+                            } => {
+                                let resolved_slide = self.resolve_slide(
+                                    slide,
+                                    ctx,
+                                    Vec2::new(
+                                        self.window_size[0] as f32,
+                                        self.window_size[1] as f32,
+                                    ),
+                                    &*slide_show,
+                                );
+                                self.resolved_actions =
+                                    Some(self.resolve_actions(actions, &resolved_slide));
+                                self.resolved_slide = Some(resolved_slide);
+                                self.resolved_slide.as_ref().unwrap()
                             }
-                        }
-                    },
-                    Some(resolved) => resolved,
+                            AstObject::Action {
+                                actions,
+                                slide_in_ast,
+                            } => {
+                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap()
+                                    as *const AstObject;
+                                match unsafe { &*slide } {
+                                    AstObject::Slide { objects, .. } => {
+                                        let resolved_slide = self.resolve_slide(
+                                            objects,
+                                            ctx,
+                                            Vec2::new(
+                                                self.window_size[0] as f32,
+                                                self.window_size[1] as f32,
+                                            ),
+                                            &*slide_show,
+                                        );
+                                        self.resolved_actions =
+                                            Some(self.resolve_actions(actions, &resolved_slide));
+                                        self.resolved_slide = Some(resolved_slide);
+                                        self.resolved_slide.as_ref().unwrap()
+                                    }
+                                    _ => todo!(),
+                                }
+                            }
+                        },
+                        Some(resolved) => resolved,
+                    }
+                } else {
+                    return;
                 }
             };
-            let slide = slide_show
+            if let Some(slide) = slide_show
                 .slide_show
                 .get(self.index)
                 .or_else(|| slide_show.slide_show.last())
-                .unwrap();
+            {
+                let resolved_actions = match &self.resolved_actions {
+                    None => unreachable!(),
+                    Some(resolved) => resolved,
+                };
 
-            let resolved_actions = match &self.resolved_actions {
-                None => unreachable!(),
-                Some(resolved) => resolved,
-            };
+                match slide {
+                    AstObject::Slide { max_time, .. } => {
+                        self.draw_slide(resolved_slide, ui, self.time);
+                        self.draw_actions(resolved_actions, ui, self.time);
 
-            match slide {
-                AstObject::Slide { max_time, .. } => {
-                    self.draw_slide(resolved_slide, ui, self.time);
-                    self.draw_actions(resolved_actions, ui, self.time);
+                        if self.time < *max_time {
+                            ctx.request_repaint();
+                        }
+                    }
+                    AstObject::Action { slide_in_ast, .. } => {
+                        let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
+                        match slide {
+                            AstObject::Slide { max_time, .. } => {
+                                self.draw_slide(resolved_slide, ui, *max_time);
+                            }
+                            _ => todo!(),
+                        }
+                        self.draw_actions(resolved_actions, ui, self.time);
 
-                    if self.time < *max_time {
-                        ctx.request_repaint();
+                        if self.time < 0.5 {
+                            ctx.request_repaint();
+                        }
                     }
                 }
-                AstObject::Action { slide_in_ast, .. } => {
-                    let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                    match slide {
-                        AstObject::Slide { max_time, .. } => {
-                            self.draw_slide(resolved_slide, ui, *max_time);
-                        }
-                        _ => todo!(),
-                    }
-                    self.draw_actions(resolved_actions, ui, self.time);
 
-                    if self.time < 0.5 {
-                        ctx.request_repaint();
-                    }
-                }
-            }
-
-            ctx.input(|input| {
-                for event in input.events.iter() {
-                    match event {
-                        egui::Event::Key {
-                            key: egui::Key::ArrowRight | egui::Key::Space,
-                            pressed: true,
-                            ..
-                        }
-                        | egui::Event::PointerButton {
-                            button: PointerButton::Primary,
-                            pressed: false,
-                            ..
-                        } if !button_hit => {
-                            if self.index == slide_show.slide_show.len() - 1 {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                if !self.dont_exit {
-                                    frame.close();
+                ctx.input(|input| {
+                    for event in input.events.iter() {
+                        match event {
+                            egui::Event::Key {
+                                key: egui::Key::ArrowRight | egui::Key::Space,
+                                pressed: true,
+                                ..
+                            }
+                            | egui::Event::PointerButton {
+                                button: PointerButton::Primary,
+                                pressed: false,
+                                ..
+                            } if !button_hit => {
+                                if self.index == slide_show.slide_show.len() - 1 {
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    if !self.dont_exit {
+                                        frame.close();
+                                    }
+                                } else {
+                                    self.index += 1;
+                                    self.resolved_actions = None;
+                                    self.resolved_slide = None;
+                                    self.time = 0.0;
                                 }
-                            } else {
-                                self.index += 1;
-                                self.resolved_actions = None;
-                                self.resolved_slide = None;
+                            }
+                            egui::Event::Key {
+                                key: egui::Key::ArrowLeft,
+                                pressed: true,
+                                ..
+                            }
+                            | egui::Event::PointerButton {
+                                button: PointerButton::Secondary,
+                                pressed: false,
+                                ..
+                            } if !button_hit => {
+                                if self.index != 0 {
+                                    self.index -= 1;
+                                    self.resolved_actions = None;
+                                    self.resolved_slide = None;
+                                    self.time = 1000.0;
+                                }
+                            }
+                            egui::Event::Key {
+                                key: egui::Key::R,
+                                pressed: true,
+                                ..
+                            } => {
                                 self.time = 0.0;
                             }
-                        }
-                        egui::Event::Key {
-                            key: egui::Key::ArrowLeft,
-                            pressed: true,
-                            ..
-                        }
-                        | egui::Event::PointerButton {
-                            button: PointerButton::Secondary,
-                            pressed: false,
-                            ..
-                        } if !button_hit => {
-                            if self.index != 0 {
-                                self.index -= 1;
+                            egui::Event::Key {
+                                key: egui::Key::B,
+                                pressed: true,
+                                ..
+                            } => {
+                                self.index = 0;
                                 self.resolved_actions = None;
                                 self.resolved_slide = None;
-                                self.time = 1000.0;
                             }
+                            _ => {}
                         }
-                        egui::Event::Key {
-                            key: egui::Key::R,
-                            pressed: true,
-                            ..
-                        } => {
-                            self.time = 0.0;
-                        }
-                        egui::Event::Key {
-                            key: egui::Key::B,
-                            pressed: true,
-                            ..
-                        } => {
-                            self.index = 0;
-                            self.resolved_actions = None;
-                            self.resolved_slide = None;
-                        }
-                        _ => {}
                     }
-                }
-            })
+                })
+            }
         });
     }
 
