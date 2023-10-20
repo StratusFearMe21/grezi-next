@@ -5,16 +5,17 @@ use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     request::{
-        ApplyWorkspaceEdit, Completion, GotoDeclaration, PrepareRenameRequest, Rename, Request,
+        ApplyWorkspaceEdit, Completion, GotoDeclaration, PrepareRenameRequest, References, Rename,
+        Request,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
     CompletionTextEdit, DeclarationCapability, DocumentChanges, GotoDefinitionParams,
     GotoDefinitionResponse, Location, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
-    PrepareRenameResponse, RenameOptions, RenameParams, SaveOptions, ServerCapabilities,
-    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
-    WorkspaceEdit,
+    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
+    ServerCapabilities, TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    WorkDoneProgressOptions, WorkspaceEdit,
 };
 use ropey::Rope;
 use tree_sitter::{Point, Query, QueryCursor};
@@ -57,6 +58,7 @@ pub fn start_lsp(
             ..Default::default()
         }),
         declaration_provider: Some(DeclarationCapability::Simple(true)),
+        references_provider: Some(OneOf::Left(true)),
         ..Default::default()
     })
     .unwrap();
@@ -65,7 +67,7 @@ pub fn start_lsp(
     let mut current_document_version = 0;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
     let rename_query = Query::new(tree_sitter_grz::language(), "(identifier) @rename").unwrap();
-    let slide_complete_query = Query::new(tree_sitter_grz::language(), "[(slide)] @find").unwrap();
+    let slide_complete_query = Query::new(tree_sitter_grz::language(), "(slide) @find").unwrap();
     let top_level_search_query = Query::new(
         tree_sitter_grz::language(),
         "[\
@@ -419,6 +421,60 @@ pub fn start_lsp(
                                     rqid,
                                     None::<GotoDefinitionResponse>,
                                 )))
+                                .unwrap();
+                        }
+                    }
+                    References::METHOD => {
+                        if let Ok((rqid, references)) =
+                            req.extract::<ReferenceParams>(References::METHOD)
+                        {
+                            let tree_info = app.tree_info.lock();
+                            let tree_info = tree_info.as_ref().unwrap();
+                            let point = Point {
+                                row: references.text_document_position.position.line as usize,
+                                column: references.text_document_position.position.character
+                                    as usize,
+                            };
+
+                            let reference_node = tree_info
+                                .0
+                                .root_node()
+                                .descendant_for_point_range(point, point)
+                                .unwrap();
+
+                            let iter = query_cursor.matches(
+                                &rename_query,
+                                tree_info.0.root_node(),
+                                RopeProvider(current_rope.slice(..)),
+                            );
+
+                            let mut locations = Vec::new();
+
+                            for query_match in iter {
+                                if current_rope
+                                    .byte_slice(query_match.captures[0].node.byte_range())
+                                    == current_rope.byte_slice(reference_node.byte_range())
+                                {
+                                    let range = query_match.captures[0].node.range();
+                                    locations.push(Location {
+                                        uri: currently_open.clone(),
+                                        range: lsp_types::Range {
+                                            start: Position {
+                                                line: range.start_point.row as u32,
+                                                character: range.start_point.column as u32,
+                                            },
+                                            end: Position {
+                                                line: range.end_point.row as u32,
+                                                character: range.end_point.column as u32,
+                                            },
+                                        },
+                                    });
+                                }
+                            }
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(rqid, Some(locations))))
                                 .unwrap();
                         }
                     }
