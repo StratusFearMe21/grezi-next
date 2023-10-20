@@ -9,6 +9,7 @@ Grezi allows you to write presentations using plain text. It's designed to make 
     - Rename symbol support
     - Hot reloading on save
     - Snippet for copying down the previous slide and removing exited objects
+    - Automatic "Hello World" boilerplate for empty files
     You can use the LSP by runing grezi with the `--lsp` argument
 - Hot Reloading:
     Grezi allows you to hot reload your presentation *as* you create it. There are 2 hot reloading implementations

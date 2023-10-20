@@ -4,10 +4,10 @@ use crate::parser::NodeKind;
 use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    request::{Completion, PrepareRenameRequest, Rename, Request},
-    AnnotatedTextEdit, CompletionItem, CompletionItemKind, CompletionOptions,
-    CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
-    DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    request::{ApplyWorkspaceEdit, Completion, PrepareRenameRequest, Rename, Request},
+    AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
+    CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
+    CompletionTextEdit, DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
     PrepareRenameResponse, RenameOptions, RenameParams, SaveOptions, ServerCapabilities,
     TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
@@ -317,11 +317,51 @@ pub fn start_lsp(
             Message::Notification(not) => {
                 match not.method.as_str() {
                     "textDocument/didOpen" => {
-                        let doc: lsp_types::DidOpenTextDocumentParams =
+                        let mut doc: lsp_types::DidOpenTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
                         currently_open = doc.text_document.uri;
                         let mut slide_show = app.slide_show.write();
                         current_rope = ropey::Rope::from_str(&doc.text_document.text);
+                        if current_rope.len_lines() < 3 {
+                            const HELLO_WORLD: &str = include_str!("hello_world.grz");
+                            current_rope.insert(0, HELLO_WORLD);
+                            connection
+                                .sender
+                                .send(Message::Request(lsp_server::Request::new(
+                                    0.into(),
+                                    ApplyWorkspaceEdit::METHOD.to_string(),
+                                    ApplyWorkspaceEditParams {
+                                        label: None,
+                                        edit: WorkspaceEdit {
+                                            document_changes: Some(DocumentChanges::Edits(vec![
+                                                TextDocumentEdit {
+                                                    edits: vec![OneOf::Left(TextEdit {
+                                                        range: lsp_types::Range {
+                                                            start: Position {
+                                                                line: 0,
+                                                                character: 0,
+                                                            },
+                                                            end: Position {
+                                                                line: 0,
+                                                                character: 0,
+                                                            },
+                                                        },
+                                                        new_text: HELLO_WORLD.to_string(),
+                                                    })],
+                                                    text_document:
+                                                        OptionalVersionedTextDocumentIdentifier {
+                                                            uri: currently_open.clone(),
+                                                            version: Some(current_document_version),
+                                                        },
+                                                },
+                                            ])),
+                                            ..Default::default()
+                                        },
+                                    },
+                                )))
+                                .unwrap();
+                            doc.text_document.text = HELLO_WORLD.to_string();
+                        }
                         let mut tree_info = app.tree_info.lock();
                         let tree = parser.parse(&doc.text_document.text, None).unwrap();
                         let ast = crate::parser::parse_file(
