@@ -43,7 +43,7 @@ use tree_sitter::Tree;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::parser::highlighting::HelixCell;
-use crate::parser::objects::ResolvedObject;
+use crate::parser::{objects::ResolvedObject, ErrWithSource};
 
 mod layout;
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,7 +67,7 @@ struct Args {
 pub struct MyEguiApp {
     slide_show: Arc<RwLock<SlideShow>>,
     #[cfg(not(target_arch = "wasm32"))]
-    new_file: Arc<AtomicBool>,
+    clear_resolved: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
     slide_show_file: Arc<Mutex<Rope>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -104,7 +104,7 @@ pub struct SlideShow {
 const PRESENTATION: &[u8] = include_bytes!(env!("PRESENTATION"));
 
 impl MyEguiApp {
-    fn init_app(self, cc: &eframe::CreationContext<'_>) -> Self {
+    fn init_app(mut self, cc: &eframe::CreationContext<'_>) -> Self {
         let mut fonts = FontDefinitions::default();
 
         fonts.font_data.insert(
@@ -125,8 +125,9 @@ impl MyEguiApp {
             let watcher_context = cc.egui_ctx.clone();
             let watcher_file_name = self.file_name.clone();
             let watcher_slide_show_file = Arc::clone(&self.slide_show_file);
-            let watcher_new_file = Arc::clone(&self.new_file);
+            let watcher_new_file = Arc::clone(&self.clear_resolved);
             let watcher_parser = Arc::clone(&self.parser);
+            let watcher_slide_show = Arc::clone(&self.slide_show);
             let mut instant = Instant::now();
             let mut w = ManuallyDrop::new(
                 notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
@@ -142,13 +143,15 @@ impl MyEguiApp {
                                         std::fs::File::open(&watcher_file_name).unwrap(),
                                     )
                                     .unwrap();
-                                    let slide_show = watcher_slide_show_file.lock();
+                                    let mut slide_show_file = watcher_slide_show_file.lock();
                                     let mut tree_info = watcher_tree_info.lock();
                                     if let Some(info) = tree_info.as_mut() {
-                                        let transaction =
-                                            helix_core::diff::compare_ropes(&slide_show, &new_file);
+                                        let transaction = helix_core::diff::compare_ropes(
+                                            &slide_show_file,
+                                            &new_file,
+                                        );
                                         let edits = lsp::generate_edits(
-                                            slide_show.slice(..),
+                                            slide_show_file.slice(..),
                                             transaction.changes(),
                                         );
                                         for change in edits.iter().rev() {
@@ -172,9 +175,35 @@ impl MyEguiApp {
                                                 Some(&info.0),
                                             )
                                             .unwrap();
+
+                                        let mut slide_show = watcher_slide_show.write();
+
+                                        slide_show.viewboxes.clear();
+                                        slide_show.objects.clear();
+                                        let ast = parser::parse_file(
+                                            &info.0,
+                                            &info.1,
+                                            &mut self.helix_cell,
+                                            &mut slide_show,
+                                        );
+                                        match ast {
+                                            Ok(ast) => {
+                                                *slide_show_file = info.1.clone();
+                                                slide_show.slide_show = ast;
+                                                watcher_new_file.store(true, Ordering::Relaxed);
+                                            }
+                                            Err(error) => {
+                                                eprintln!(
+                                                    "{:?}",
+                                                    ErrWithSource {
+                                                        error,
+                                                        source_code: info.1.to_string()
+                                                    }
+                                                );
+                                            }
+                                        }
                                     }
 
-                                    watcher_new_file.store(true, Ordering::Relaxed);
                                     watcher_context.request_repaint();
                                 }
                             }
@@ -189,7 +218,10 @@ impl MyEguiApp {
             w.watch(self.file_name.as_ref(), notify::RecursiveMode::NonRecursive)
                 .unwrap();
         }
-        self
+        MyEguiApp {
+            helix_cell: None,
+            ..self
+        }
     }
     fn new(#[cfg(not(target_arch = "wasm32"))] args: &Args) -> Self {
         // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
@@ -257,7 +289,7 @@ impl MyEguiApp {
                         None,
                     )
                     .unwrap();
-                let ast = parser::parse_file(&file, &tree, &mut helix_cell, &mut slide_show);
+                let ast = parser::parse_file(&tree, &file, &mut helix_cell, &mut slide_show);
                 match ast {
                     Ok(ast) => {
                         *tree_info = Some((tree, Rope::new()));
@@ -265,8 +297,14 @@ impl MyEguiApp {
                         slide_show.slide_show = ast;
                         slide_show
                     }
-                    Err(e) => {
-                        println!("{:?}", e);
+                    Err(error) => {
+                        eprintln!(
+                            "{:?}",
+                            ErrWithSource {
+                                error,
+                                source_code: file.to_string()
+                            }
+                        );
                         std::process::exit(1);
                     }
                 }
@@ -287,7 +325,7 @@ impl MyEguiApp {
         Self {
             slide_show: Arc::new(RwLock::new(slide_show)),
             #[cfg(not(target_arch = "wasm32"))]
-            new_file,
+            clear_resolved: new_file,
             #[cfg(not(target_arch = "wasm32"))]
             slide_show_file,
             #[cfg(not(target_arch = "wasm32"))]
@@ -615,53 +653,13 @@ impl eframe::App for MyEguiApp {
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if self.new_file.load(Ordering::Relaxed) {
-                let mut slide_show = self.slide_show.write();
-                let ast = {
-                    let mut tree_info = self.tree_info.lock();
-                    let file = tree_info.as_mut().map_or_else(
-                        || {
-                            Rope::from_reader(std::fs::File::open(&self.file_name).unwrap())
-                                .unwrap()
-                        },
-                        |i| {
-                            if i.1.chars().next().is_some() {
-                                let mut new_rope = Rope::new();
-                                core::mem::swap(&mut new_rope, &mut i.1);
-                                new_rope
-                            } else {
-                                Rope::from_reader(std::fs::File::open(&self.file_name).unwrap())
-                                    .unwrap()
-                            }
-                        },
-                    );
-                    slide_show.viewboxes.clear();
-                    slide_show.objects.clear();
-                    let ast = parser::parse_file(
-                        &file,
-                        tree_info.as_ref().map(|t| &t.0).unwrap(),
-                        &mut self.helix_cell,
-                        &mut slide_show,
-                    );
-                    match ast {
-                        Ok(ast) => {
-                            self.delta = Instant::now();
-                            self.time = 0.0;
-                            *self.slide_show_file.lock() = file;
-                            ast
-                        }
-                        Err(e) => {
-                            println!("{:?}", e);
-                            std::process::exit(1);
-                        }
-                    }
-                };
-
+            if self.clear_resolved.load(Ordering::Relaxed) {
                 self.resolved_actions = None;
                 self.resolved_slide = None;
                 self.resolved_viewboxes.clear();
-                slide_show.slide_show = ast;
-                self.new_file.store(false, Ordering::Relaxed);
+                self.delta = Instant::now();
+                self.time = 0.0;
+                self.clear_resolved.store(false, Ordering::Relaxed);
             }
 
             #[cfg(not(target_arch = "wasm32"))]

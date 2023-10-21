@@ -65,33 +65,41 @@ pub fn parse_objects(
     source: &ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
-) -> (u64, Object) {
+) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
-    tree_cursor.goto_first_child();
+    use tree_sitter::Node;
+
+    tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());
-    tree_cursor.goto_next_sibling();
+    tree_cursor.goto_next_sibling()?;
     let obj_type: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-    tree_cursor.goto_next_sibling();
-    tree_cursor.goto_first_child();
-    let parameters = std::iter::from_fn(|| {
-        if tree_cursor.field_id() == Some(FieldName::Parameters as u16) {
-            let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-            tree_cursor.goto_next_sibling();
-            let value = match NodeKind::from(tree_cursor.node().kind_id()) {
-                NodeKind::StringLiteral => {
-                    let value = tree_cursor.node();
-                    value
+    tree_cursor.goto_next_sibling()?;
+    tree_cursor.goto_first_child()?;
+    let parameters = std::iter::from_fn(
+        || -> Option<Result<(Cow<'_, str>, Node<'_>), super::Error>> {
+            if tree_cursor.field_id() == Some(FieldName::Parameters as u16) {
+                let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+                if let Err(e) = tree_cursor.goto_next_sibling() {
+                    return Some(Err(e));
                 }
-                NodeKind::NumberLiteral => tree_cursor.node(),
-                _ => todo!(),
-            };
-            tree_cursor.goto_next_sibling();
-            Some((key, value))
-        } else {
-            None
-        }
-    });
+                let value = match NodeKind::from(tree_cursor.node().kind_id()) {
+                    NodeKind::StringLiteral => {
+                        let value = tree_cursor.node();
+                        value
+                    }
+                    NodeKind::NumberLiteral => tree_cursor.node(),
+                    _ => todo!(),
+                };
+                if let Err(e) = tree_cursor.goto_next_sibling() {
+                    return Some(Err(e));
+                }
+                Some(Ok((key, value)))
+            } else {
+                None
+            }
+        },
+    );
     let object = match obj_type.as_ref() {
         "Paragraph" | "Header" => {
             let mut text = None;
@@ -104,6 +112,7 @@ pub fn parse_objects(
             };
             let mut language = None;
             for parameter in parameters {
+                let parameter = parameter?;
                 let value: Cow<'_, str> = source
                     .byte_slice(
                         parameter
@@ -137,7 +146,7 @@ pub fn parse_objects(
                     helix_cell,
                     source,
                     hasher,
-                ),
+                )?,
                 _ => {
                     let mut layout_job = LayoutJob {
                         halign: align,
@@ -149,7 +158,7 @@ pub fn parse_objects(
                         ..Default::default()
                     };
                     let mut walker = GrzCursor::from_node(&text);
-                    walker.goto_first_child();
+                    walker.goto_first_child()?;
                     let mut options = pulldown_cmark::Options::empty();
                     options.insert(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
 
@@ -174,7 +183,7 @@ pub fn parse_objects(
                             }
                             _ => break,
                         }
-                        walker.goto_next_sibling();
+                        walker.goto_next_sibling()?;
                     }
 
                     let parser = pulldown_cmark::Parser::new_ext(&string_content, options);
@@ -251,7 +260,7 @@ pub fn parse_objects(
     };
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();
-    (
+    Ok((
         {
             let mut hasher = hasher.build_hasher();
             std::hash::Hash::hash(&name, &mut hasher);
@@ -262,5 +271,5 @@ pub fn parse_objects(
             viewbox: None,
             object,
         },
-    )
+    ))
 }

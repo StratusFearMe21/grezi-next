@@ -31,13 +31,13 @@ pub fn parse_actions(
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     slide_in_ast: usize,
-) -> AstObject {
+) -> Result<AstObject, super::Error> {
     use std::borrow::Cow;
 
-    tree_cursor.goto_first_child();
+    tree_cursor.goto_first_child()?;
     let mut actions = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
-        tree_cursor.goto_first_child();
+        tree_cursor.goto_first_child()?;
         let object_name = {
             let mut hasher = hasher.build_hasher();
             std::hash::Hash::hash(
@@ -46,29 +46,33 @@ pub fn parse_actions(
             );
             hasher.finish()
         };
-        let object = on_screen.get(&object_name).unwrap();
-        tree_cursor.goto_next_sibling();
+        let object = on_screen
+            .get(&object_name)
+            .ok_or_else(|| super::Error::NotFound(tree_cursor.node().range().into()))?;
+        tree_cursor.goto_next_sibling()?;
         let function_name = source.byte_slice(tree_cursor.node().byte_range());
 
         if function_name == "highlight" {
-            tree_cursor.goto_next_sibling();
+            tree_cursor.goto_next_sibling()?;
 
             let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
                 NodeKind::StringLiteral => {
-                    tree_cursor.goto_first_child();
+                    tree_cursor.goto_first_child()?;
                     let value: Cow<'_, str> =
                         source.byte_slice(tree_cursor.node().byte_range()).into();
+                    let (line, column) = value.split_once(':').ok_or_else(|| {
+                        super::Error::KnownMissingError(tree_cursor.node().range().into(), ":")
+                    })?;
                     tree_cursor.goto_parent();
-                    let (line, column) = value.split_once(':').unwrap();
                     let from = PCursor {
                         paragraph: line.parse().unwrap(),
                         offset: column.parse().unwrap(),
                         prefer_next_row: true,
                     };
-                    tree_cursor.goto_next_sibling();
+                    tree_cursor.goto_next_sibling()?;
                     let to = match NodeKind::from(tree_cursor.node().kind_id()) {
                         NodeKind::StringLiteral => {
-                            tree_cursor.goto_first_child();
+                            tree_cursor.goto_first_child()?;
                             let value: Cow<'_, str> =
                                 source.byte_slice(tree_cursor.node().byte_range()).into();
                             tree_cursor.goto_parent();
@@ -97,11 +101,11 @@ pub fn parse_actions(
         }
 
         tree_cursor.goto_parent();
-        tree_cursor.goto_next_sibling();
+        tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
-    AstObject::Action {
+    Ok(AstObject::Action {
         actions,
         slide_in_ast,
-    }
+    })
 }

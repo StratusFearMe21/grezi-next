@@ -33,27 +33,24 @@ pub struct ResolvedSlideObj {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn parse_slides<'a>(
+pub fn parse_slides(
     tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
-    source: &'a ropey::Rope,
-) -> Result<AstObject, super::Error<'a>> {
+    source: &ropey::Rope,
+) -> Result<AstObject, super::Error> {
+    use super::Error;
     use std::borrow::Cow;
 
-    use miette::SourceSpan;
-
-    use super::Error;
-
-    tree_cursor.goto_first_child();
-    tree_cursor.goto_first_child();
+    tree_cursor.goto_first_child()?;
+    tree_cursor.goto_first_child()?;
     let mut slide_objects = Vec::new();
     let mut slide_on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
-        let object_range = tree_cursor.node().byte_range();
-        tree_cursor.goto_first_child();
+        let object_range = tree_cursor.node().range();
+        tree_cursor.goto_first_child()?;
         let object_name = {
             let mut hasher = hasher.build_hasher();
             std::hash::Hash::hash(
@@ -62,18 +59,14 @@ pub fn parse_slides<'a>(
             );
             hasher.finish()
         };
-        let object = objects.get_mut(&object_name).ok_or_else(|| {
-            let node = tree_cursor.node().byte_range();
-            Error::NotFound(
-                SourceSpan::new(node.start.into(), (node.end - node.start).into()),
-                source.into(),
-            )
-        })?;
-        tree_cursor.goto_next_sibling();
+        let object = objects
+            .get_mut(&object_name)
+            .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
+        tree_cursor.goto_next_sibling()?;
         let viewbox = &source.byte_slice(tree_cursor.node().byte_range());
         let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
-        tree_cursor.goto_next_sibling();
-        tree_cursor.goto_first_child();
+        tree_cursor.goto_next_sibling()?;
+        tree_cursor.goto_first_child()?;
         let vb_index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         let vb_index: usize = vb_index.parse().unwrap();
         let viewbox = match viewbox_node {
@@ -86,21 +79,21 @@ pub fn parse_slides<'a>(
             _ => todo!(),
         };
         tree_cursor.goto_parent();
-        tree_cursor.goto_next_sibling();
+        tree_cursor.goto_next_sibling()?;
         let from: Option<ViewboxIn>;
         match NodeKind::from(tree_cursor.node().kind_id()) {
             NodeKind::SlideFrom => {
-                tree_cursor.goto_first_child();
+                tree_cursor.goto_first_child()?;
                 let viewbox = source.byte_slice(tree_cursor.node().byte_range());
                 let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
-                tree_cursor.goto_next_sibling();
-                tree_cursor.goto_first_child();
+                tree_cursor.goto_next_sibling()?;
+                tree_cursor.goto_first_child()?;
                 let vb_index: Cow<'_, str> =
                     source.byte_slice(tree_cursor.node().byte_range()).into();
                 let vb_index: usize = vb_index.parse().unwrap();
                 tree_cursor.goto_parent();
                 tree_cursor.goto_parent();
-                tree_cursor.goto_next_sibling();
+                tree_cursor.goto_next_sibling()?;
                 from = match viewbox_node {
                     NodeKind::Size => Some(ViewboxIn::Size),
                     NodeKind::Identifier => {
@@ -154,15 +147,9 @@ pub fn parse_slides<'a>(
                             line_up_now = lineup_first;
                             state = ObjectState::Exiting;
                             lineup_first_locations = {
-                                let lineup = object.position.ok_or_else(|| {
-                                    Error::BadExit(
-                                        SourceSpan::new(
-                                            object_range.start.into(),
-                                            (object_range.end - object_range.start).into(),
-                                        ),
-                                        source.into(),
-                                    )
-                                })?;
+                                let lineup = object
+                                    .position
+                                    .ok_or_else(|| Error::BadExit(object_range.into()))?;
                                 (lineup, viewbox_first)
                             };
                             (lineup_first, viewbox)
@@ -192,11 +179,11 @@ pub fn parse_slides<'a>(
             scaled_time: [0.0, 0.5],
         });
         tree_cursor.goto_parent();
-        tree_cursor.goto_next_sibling();
+        tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
-    tree_cursor.goto_next_sibling();
-    tree_cursor.goto_first_child();
+    tree_cursor.goto_next_sibling()?;
+    tree_cursor.goto_first_child()?;
     // Draws Entering objects first, then OnScreen, then Exiting
     slide_objects.sort_by_key(|obj| obj.state);
     for (index, slide_object) in slide_objects.iter().enumerate() {
@@ -205,11 +192,11 @@ pub fn parse_slides<'a>(
     let mut max_time = 1.0;
     let mut actions = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
-        tree_cursor.goto_first_child();
+        tree_cursor.goto_first_child()?;
         let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         match key.as_ref() {
             "stagger" => {
-                tree_cursor.goto_next_sibling();
+                tree_cursor.goto_next_sibling()?;
                 let scaler: Cow<'_, str> =
                     source.byte_slice(tree_cursor.node().byte_range()).into();
                 let scaler: f32 = scaler.parse().unwrap();
@@ -221,7 +208,7 @@ pub fn parse_slides<'a>(
                 }
             }
             "time" => {
-                tree_cursor.goto_next_sibling();
+                tree_cursor.goto_next_sibling()?;
                 let time: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
                 let time: f32 = (time.parse::<f32>().unwrap() - 0.5).abs();
                 max_time += time;
@@ -230,7 +217,7 @@ pub fn parse_slides<'a>(
                 }
             }
             "highlight" => {
-                tree_cursor.goto_next_sibling();
+                tree_cursor.goto_next_sibling()?;
                 let object = slide_on_screen
                     .get({
                         let mut hasher = hasher.build_hasher();
@@ -240,18 +227,12 @@ pub fn parse_slides<'a>(
                         );
                         &hasher.finish()
                     })
-                    .ok_or_else(|| {
-                        let node = tree_cursor.node().byte_range();
-                        Error::NotFound(
-                            SourceSpan::new(node.start.into(), (node.end - node.start).into()),
-                            source.into(),
-                        )
-                    })?;
-                tree_cursor.goto_next_sibling();
+                    .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
+                tree_cursor.goto_next_sibling()?;
 
                 let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
                     NodeKind::StringLiteral => {
-                        tree_cursor.goto_first_child();
+                        tree_cursor.goto_first_child()?;
                         let value: Cow<'_, str> =
                             source.byte_slice(tree_cursor.node().byte_range()).into();
                         tree_cursor.goto_parent();
@@ -261,10 +242,10 @@ pub fn parse_slides<'a>(
                             offset: column.parse().unwrap(),
                             prefer_next_row: true,
                         };
-                        tree_cursor.goto_next_sibling();
+                        tree_cursor.goto_next_sibling()?;
                         let to = match NodeKind::from(tree_cursor.node().kind_id()) {
                             NodeKind::StringLiteral => {
-                                tree_cursor.goto_first_child();
+                                tree_cursor.goto_first_child()?;
                                 let value: Cow<'_, str> =
                                     source.byte_slice(tree_cursor.node().byte_range()).into();
                                 tree_cursor.goto_parent();
@@ -292,7 +273,7 @@ pub fn parse_slides<'a>(
             _ => todo!(),
         }
         tree_cursor.goto_parent();
-        tree_cursor.goto_next_sibling();
+        tree_cursor.goto_next_sibling()?;
     }
     core::mem::swap(&mut slide_on_screen, on_screen);
     tree_cursor.goto_parent();

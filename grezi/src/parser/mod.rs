@@ -1,5 +1,3 @@
-#![allow(unreachable_patterns)]
-
 pub mod actions;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod highlighting;
@@ -8,9 +6,8 @@ pub mod slides;
 pub mod viewboxes;
 
 use std::{
-    borrow::Cow,
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Display},
     hash::{BuildHasherDefault, Hasher},
 };
 
@@ -18,6 +15,7 @@ use miette::{Diagnostic, GraphicalReportHandler, SourceSpan};
 use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tree_sitter::Range;
 #[cfg(not(target_arch = "wasm32"))]
 use tree_sitter::{Node, Tree, TreeCursor};
 
@@ -69,32 +67,124 @@ pub enum AstObject {
     },
 }
 
+pub struct PointFromRange(Range);
+
+impl From<&PointFromRange> for SourceSpan {
+    fn from(value: &PointFromRange) -> Self {
+        (value.0.start_byte, value.0.end_byte - value.0.start_byte).into()
+    }
+}
+
+impl From<Range> for PointFromRange {
+    fn from(value: Range) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Error, Diagnostic)]
-pub enum Error<'a> {
+pub enum Error {
     #[error("Bad Node")]
-    #[diagnostic(code(parser::parse_file))]
     BadNode(
-        #[label("here")] SourceSpan,
-        #[source_code] Cow<'a, str>,
-        #[help("Node is of kind: {}")] &'a str,
+        #[label("here")] PointFromRange,
+        #[help("Node is of kind: {}")] &'static str,
     ),
     #[error("Object is not on screen")]
-    #[diagnostic(code(parser::slide::parse_slide))]
-    BadExit(
-        #[label("Object cannot exit, as it is not currently on screen")] SourceSpan,
-        #[source_code] Cow<'a, str>,
-    ),
+    BadExit(#[label("Object cannot exit, as it is not currently on screen")] PointFromRange),
     #[error("Object could not be found")]
-    #[diagnostic(code(parser::slide::parse_slide))]
-    NotFound(
-        #[label("Object not found")] SourceSpan,
-        #[source_code] Cow<'a, str>,
+    NotFound(#[label("Object not found")] PointFromRange),
+    #[error("Syntax error")]
+    SyntaxError(#[label("Something is wrong here")] PointFromRange),
+    #[error("Missing error")]
+    MissingError(#[label("Something is missing here")] PointFromRange),
+    #[error("Missing error")]
+    KnownMissingError(
+        #[label("a {1} is missing here")] PointFromRange,
+        &'static str,
     ),
 }
 
-impl<'a> Debug for Error<'a> {
+impl Error {
+    pub fn range(&self) -> Range {
+        match self {
+            Error::BadExit(range) => range.0,
+            Error::BadNode(range, _) => range.0,
+            Error::KnownMissingError(range, _) => range.0,
+            Error::MissingError(range) => range.0,
+            Error::NotFound(range) => range.0,
+            Error::SyntaxError(range) => range.0,
+        }
+    }
+}
+
+impl Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         GraphicalReportHandler::new().render_report(f, self)
+    }
+}
+
+pub struct ErrWithSource {
+    pub error: Error,
+    pub source_code: String,
+}
+
+impl Diagnostic for ErrWithSource {
+    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        self.error.code()
+    }
+
+    fn diagnostic_source(&self) -> Option<&dyn Diagnostic> {
+        self.error.diagnostic_source()
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        self.error.help()
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
+        self.error.labels()
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn Diagnostic> + 'a>> {
+        self.error.related()
+    }
+
+    fn severity(&self) -> Option<miette::Severity> {
+        self.error.severity()
+    }
+
+    fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        Some(&self.source_code)
+    }
+
+    fn url<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        self.error.url()
+    }
+}
+
+#[allow(deprecated)]
+impl std::error::Error for ErrWithSource {
+    fn cause(&self) -> Option<&dyn std::error::Error> {
+        self.error.cause()
+    }
+
+    fn description(&self) -> &str {
+        self.error.description()
+    }
+
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.error.source()
+    }
+}
+
+impl Debug for ErrWithSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        GraphicalReportHandler::new().render_report(f, self)
+    }
+}
+
+impl Display for ErrWithSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "")
     }
 }
 
@@ -129,36 +219,60 @@ impl<'a> GrzCursor<'a> {
         }
     }
 
+    fn check_for_error(&self, result: bool) -> Result<bool, Error> {
+        if self.tree_cursor.node().is_error() {
+            return Err(Error::SyntaxError(self.tree_cursor.node().range().into()));
+        }
+
+        if self.tree_cursor.node().is_missing() {
+            return Err(Error::MissingError(self.tree_cursor.node().range().into()));
+        }
+
+        Ok(result)
+    }
+
     fn from_node(node: &'a Node<'a>) -> GrzCursor<'a> {
         GrzCursor {
             tree_cursor: node.walk(),
         }
     }
 
-    fn goto_first_child(&mut self) -> bool {
-        if !self.tree_cursor.goto_first_child() {
-            return false;
-        }
-
-        while !self.tree_cursor.node().is_named() || self.tree_cursor.node().is_extra() {
-            if !self.tree_cursor.goto_next_sibling() {
-                return false;
-            }
-        }
-        true
+    fn goto_first_impl(&mut self) -> Result<bool, Error> {
+        let result = self.tree_cursor.goto_first_child();
+        self.check_for_error(result)
     }
 
-    fn goto_next_sibling(&mut self) -> bool {
-        if !self.tree_cursor.goto_next_sibling() {
-            return false;
+    fn goto_next_impl(&mut self) -> Result<bool, Error> {
+        let result = self.tree_cursor.goto_next_sibling();
+        self.check_for_error(result)
+    }
+
+    fn goto_first_child(&mut self) -> Result<bool, Error> {
+        if !self.goto_first_impl()? {
+            return self.check_for_error(false);
         }
 
         while !self.tree_cursor.node().is_named() || self.tree_cursor.node().is_extra() {
-            if !self.tree_cursor.goto_next_sibling() {
-                return false;
+            if !self.goto_next_impl()? {
+                return self.check_for_error(false);
             }
         }
-        true
+
+        self.check_for_error(true)
+    }
+
+    fn goto_next_sibling(&mut self) -> Result<bool, Error> {
+        if !self.goto_next_impl()? {
+            return self.check_for_error(false);
+        }
+
+        while !self.tree_cursor.node().is_named() || self.tree_cursor.node().is_extra() {
+            if !self.goto_next_impl()? {
+                return self.check_for_error(false);
+            }
+        }
+
+        self.check_for_error(true)
     }
 
     fn goto_parent(&mut self) -> bool {
@@ -175,12 +289,12 @@ impl<'a> GrzCursor<'a> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn parse_file<'a>(
-    source: &'a ropey::Rope,
+pub fn parse_file(
     tree: &Tree,
+    source: &ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
-) -> Result<Vec<AstObject>, Error<'a>> {
+) -> Result<Vec<AstObject>, Error> {
     // let yoke = Yoke::<ParseError<'static>, String>::attach_to_cart(file, |source| {
     // let mut registers: AHashMap<&str, &str> = AHashMap::default();
 
@@ -190,7 +304,7 @@ pub fn parse_file<'a>(
     let mut last_slide: usize = 0;
     let mut tree_cursor = GrzCursor::new(&tree);
 
-    tree_cursor.goto_first_child();
+    tree_cursor.goto_first_child()?;
     let mut ast = Vec::new();
     loop {
         let node = tree_cursor.node();
@@ -206,23 +320,24 @@ pub fn parse_file<'a>(
                 )?);
             }
             NodeKind::Viewbox => {
-                let layout = viewboxes::parse_viewbox(&mut tree_cursor, &source, &hasher);
+                let layout = viewboxes::parse_viewbox(&mut tree_cursor, &source, &hasher)?;
 
                 slide_show.viewboxes.insert(layout.0, layout.1);
             }
             NodeKind::Obj => {
-                let object = objects::parse_objects(&mut tree_cursor, &source, helix_cell, &hasher);
+                let object =
+                    objects::parse_objects(&mut tree_cursor, &source, helix_cell, &hasher)?;
 
                 slide_show.objects.insert(object.0, object.1);
             }
             NodeKind::Register => {
-                tree_cursor.goto_first_child();
+                tree_cursor.goto_first_child()?;
                 let key = source.byte_slice(tree_cursor.node().byte_range());
-                tree_cursor.goto_next_sibling();
+                tree_cursor.goto_next_sibling()?;
                 let value = match NodeKind::from(tree_cursor.node().kind_id()) {
                     NodeKind::StringLiteral => {
-                        tree_cursor.goto_first_child();
-                        tree_cursor.goto_next_sibling();
+                        tree_cursor.goto_first_child()?;
+                        tree_cursor.goto_next_sibling()?;
                         let value = source.byte_slice(tree_cursor.node().byte_range());
                         tree_cursor.goto_parent();
                         value
@@ -240,21 +355,15 @@ pub fn parse_file<'a>(
                     &hasher,
                     &on_screen,
                     last_slide,
-                ));
+                )?);
             }
             _ => {
-                let range = tree_cursor.node().byte_range();
                 let kind: &'static str = node.kind();
-                drop(tree_cursor);
-                return Err(Error::BadNode(
-                    SourceSpan::new(range.start.into(), (range.end - range.start).into()),
-                    source.into(),
-                    kind,
-                ));
+                return Err(Error::BadNode(tree_cursor.node().range().into(), kind));
             }
         }
 
-        if !tree_cursor.goto_next_sibling() {
+        if !tree_cursor.goto_next_sibling()? {
             break;
         }
     }

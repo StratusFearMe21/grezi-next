@@ -43,7 +43,7 @@ pub fn highlight_text(
     helix_cell: &mut Option<HelixCell>,
     source: &Rope,
     hasher: &ahash::RandomState,
-) -> LayoutJob {
+) -> Result<LayoutJob, super::Error> {
     let mut layout_job = LayoutJob {
         halign: align,
         break_on_newline: true,
@@ -75,7 +75,7 @@ pub fn highlight_text(
     let mut rope = RopeBuilder::new();
 
     let mut walker = GrzCursor::from_node(&text);
-    walker.goto_first_child();
+    walker.goto_first_child()?;
 
     let mut slice: Cow<'_, str>;
     loop {
@@ -94,7 +94,7 @@ pub fn highlight_text(
             }),
             _ => break,
         }
-        walker.goto_next_sibling();
+        walker.goto_next_sibling()?;
     }
 
     let rope = rope.finish();
@@ -176,5 +176,5 @@ pub fn highlight_text(
             }
         }
     }
-    layout_job
+    Ok(layout_job)
 }

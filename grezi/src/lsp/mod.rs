@@ -1,22 +1,25 @@
 use std::sync::atomic::Ordering;
 
-use crate::parser::NodeKind;
+use crate::parser::{ErrWithSource, NodeKind};
 use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
+    notification::{Notification, PublishDiagnostics},
     request::{
         ApplyWorkspaceEdit, Completion, GotoDeclaration, PrepareRenameRequest, References, Rename,
         Request,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DeclarationCapability, DocumentChanges, GotoDefinitionParams,
-    GotoDefinitionResponse, Location, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
-    PrepareRenameResponse, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
+    CompletionTextEdit, DeclarationCapability, DiagnosticSeverity, DocumentChanges,
+    GotoDefinitionParams, GotoDefinitionResponse, Location, OneOf,
+    OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse,
+    PublishDiagnosticsParams, Range, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
     ServerCapabilities, TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
     WorkDoneProgressOptions, WorkspaceEdit,
 };
+use miette::{Diagnostic, Severity};
 use ropey::Rope;
 use tree_sitter::{Point, Query, QueryCursor};
 
@@ -483,7 +486,7 @@ pub fn start_lsp(
 
                 // ...
             }
-            Message::Response(resp) => {}
+            Message::Response(_) => {}
             Message::Notification(not) => {
                 match not.method.as_str() {
                     "textDocument/didOpen" => {
@@ -549,8 +552,8 @@ pub fn start_lsp(
                             )
                             .unwrap();
                         let ast = crate::parser::parse_file(
-                            &current_rope,
                             &tree,
+                            &current_rope,
                             &mut app.helix_cell,
                             &mut *slide_show,
                         );
@@ -560,13 +563,19 @@ pub fn start_lsp(
                                 *app.slide_show_file.lock() = current_rope.clone();
                                 slide_show.slide_show = ast;
                             }
-                            Err(e) => {
-                                println!("{:?}", e);
+                            Err(error) => {
+                                eprintln!(
+                                    "{:?}",
+                                    ErrWithSource {
+                                        error,
+                                        source_code: current_rope.to_string()
+                                    }
+                                );
                                 std::process::exit(1);
                             }
                         }
 
-                        app.new_file.store(false, Ordering::Relaxed);
+                        app.clear_resolved.store(false, Ordering::Relaxed);
                         current_thread.unpark();
                     }
                     "textDocument/didChange" => {
@@ -625,9 +634,84 @@ pub fn start_lsp(
                         let mut tree_info = app.tree_info.lock();
                         if let Some(info) = tree_info.as_mut() {
                             info.1 = current_rope.clone();
+
+                            let mut slide_show = app.slide_show.write();
+                            slide_show.viewboxes.clear();
+                            slide_show.objects.clear();
+                            let ast = super::parser::parse_file(
+                                &info.0,
+                                &info.1,
+                                &mut app.helix_cell,
+                                &mut slide_show,
+                            );
+                            match ast {
+                                Ok(ast) => {
+                                    *app.slide_show_file.lock() = info.1.clone();
+                                    slide_show.slide_show = ast;
+                                    connection
+                                        .sender
+                                        .send(Message::Notification(lsp_server::Notification::new(
+                                            PublishDiagnostics::METHOD.to_string(),
+                                            PublishDiagnosticsParams {
+                                                uri: currently_open.clone(),
+                                                diagnostics: vec![],
+                                                version: Some(current_document_version),
+                                            },
+                                        )))
+                                        .unwrap();
+                                    app.clear_resolved.store(true, Ordering::Relaxed);
+                                }
+                                Err(error) => {
+                                    let range = error.range();
+                                    connection
+                                        .sender
+                                        .send(Message::Notification(lsp_server::Notification::new(
+                                            PublishDiagnostics::METHOD.to_string(),
+                                            PublishDiagnosticsParams {
+                                                uri: currently_open.clone(),
+                                                diagnostics: vec![lsp_types::Diagnostic {
+                                                    range: Range {
+                                                        start: Position {
+                                                            line: range.start_point.row as u32,
+                                                            character: range.start_point.column
+                                                                as u32,
+                                                        },
+                                                        end: Position {
+                                                            line: range.end_point.row as u32,
+                                                            character: range.end_point.column
+                                                                as u32,
+                                                        },
+                                                    },
+                                                    severity: error.severity().map(|s| match s {
+                                                        Severity::Warning => {
+                                                            DiagnosticSeverity::WARNING
+                                                        }
+                                                        Severity::Advice => {
+                                                            DiagnosticSeverity::HINT
+                                                        }
+                                                        Severity::Error => {
+                                                            DiagnosticSeverity::ERROR
+                                                        }
+                                                    }),
+                                                    message: error.labels().unwrap().fold(
+                                                        String::new(),
+                                                        |mut message, label| {
+                                                            message
+                                                                .push_str(label.label().unwrap());
+                                                            message.push('\n');
+                                                            message
+                                                        },
+                                                    ),
+                                                    ..Default::default()
+                                                }],
+                                                version: Some(current_document_version),
+                                            },
+                                        )))
+                                        .unwrap();
+                                }
+                            }
                         }
 
-                        app.new_file.store(true, Ordering::Relaxed);
                         lsp_egui_ctx.request_repaint();
                     }
                     _ => {}
