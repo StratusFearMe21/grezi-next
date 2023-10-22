@@ -208,7 +208,7 @@ pub fn start_lsp(
                         if let Ok((rqid, completion)) =
                             req.extract::<CompletionParams>(Completion::METHOD)
                         {
-                            let mut items = vec![CompletionItem {
+                            let new_slide_item = CompletionItem {
                                 label: "New Slide".into(),
                                 kind: Some(CompletionItemKind::SNIPPET),
                                 preselect: Some(true),
@@ -232,7 +232,7 @@ pub fn start_lsp(
                                     new_text: "{}[]".to_string(),
                                 })),
                                 ..Default::default()
-                            }];
+                            };
                             let tree_info = app.tree_info.lock();
                             let tree_info = tree_info.as_ref().unwrap();
                             let mut new_text = String::from("{\n");
@@ -257,7 +257,7 @@ pub fn start_lsp(
                                     .sender
                                     .send(Message::Response(Response::new_ok(
                                         rqid,
-                                        Some(CompletionResponse::Array(items)),
+                                        Some(CompletionResponse::Array(vec![new_slide_item])),
                                     )))
                                     .unwrap();
                                 continue 'lsploop;
@@ -323,7 +323,7 @@ pub fn start_lsp(
                                 }
                             }
                             new_text.push_str("}[]");
-                            items.push(CompletionItem {
+                            let continue_slide_item = CompletionItem {
                                 label: "Continue Slide".into(),
                                 kind: Some(CompletionItemKind::SNIPPET),
                                 preselect: Some(true),
@@ -347,12 +347,15 @@ pub fn start_lsp(
                                     new_text,
                                 })),
                                 ..Default::default()
-                            });
+                            };
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    Some(CompletionResponse::Array(items)),
+                                    Some(CompletionResponse::Array(vec![
+                                        continue_slide_item,
+                                        new_slide_item,
+                                    ])),
                                 )))
                                 .unwrap();
                         }
