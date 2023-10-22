@@ -268,12 +268,19 @@ fn parse_slide_function(
         "time" => {
             tree_cursor.goto_next_sibling()?;
             let time: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-            let time: f32 = (time.parse::<f32>().unwrap() - 0.5).abs();
-            *max_time += time;
-            for object in slide_objects.iter_mut() {
-                object.scaled_time[1] += time;
+            match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::NumberLiteral => {
+                    let time: f32 = (time.parse::<f32>().unwrap() - 0.5).abs();
+                    *max_time += time;
+                    for object in slide_objects.iter_mut() {
+                        object.scaled_time[1] += time;
+                    }
+                    Ok(None)
+                }
+                _ => Err(super::Error::InvalidParameter(
+                    tree_cursor.node().range().into(),
+                )),
             }
-            Ok(None)
         }
         "highlight" => {
             tree_cursor.goto_next_sibling()?;
