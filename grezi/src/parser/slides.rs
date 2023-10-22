@@ -55,7 +55,6 @@ pub fn parse_slides(
             }
             Err(e) => errors_present.push(e),
         }
-        tree_cursor.goto_parent();
         tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
@@ -76,12 +75,12 @@ pub fn parse_slides(
             &mut slide_objects,
             &mut max_time,
             &slide_on_screen,
+            errors_present,
         ) {
             Ok(Some(slide_functions)) => actions.push(slide_functions),
             Err(e) => errors_present.push(e),
             _ => {}
         }
-        tree_cursor.goto_parent();
         tree_cursor.goto_next_sibling()?;
     }
     core::mem::swap(&mut slide_on_screen, on_screen);
@@ -173,8 +172,11 @@ pub fn parse_slide_object(
         let viewbox_first = from.unwrap_or_else(|| object.viewbox.unwrap_or(viewbox));
         let line_up_now;
         if &edges[..1] == "[" {
-            lineup_first = object.position.unwrap();
-            line_up_now = object.position.unwrap();
+            let object_position = object
+                .position
+                .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?;
+            lineup_first = object_position;
+            line_up_now = object_position;
             (
                 [(line_up_now, viewbox_first), (lineup_first, viewbox)],
                 line_up_now,
@@ -186,7 +188,9 @@ pub fn parse_slide_object(
                     (lineup_first, viewbox_first)
                 }
                 None => {
-                    lineup_first = object.position.unwrap();
+                    lineup_first = object
+                        .position
+                        .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?;
                     (lineup_first, viewbox_first)
                 }
             };
@@ -208,7 +212,9 @@ pub fn parse_slide_object(
                         (lineup_first, viewbox)
                     }
                     _ => {
-                        line_up_now = object.position.unwrap();
+                        line_up_now = object.position.ok_or_else(|| {
+                            Error::ImplicitEdge(tree_cursor.node().range().into())
+                        })?;
                         lineup_first_locations = (line_up_now, viewbox_first);
                         (lineup_first, viewbox)
                     }
@@ -240,6 +246,7 @@ fn parse_slide_function(
     slide_objects: &mut Vec<SlideObj>,
     max_time: &mut f32,
     slide_on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
+    errors_present: &mut Vec<super::Error>,
 ) -> Result<Option<Actions>, super::Error> {
     tree_cursor.goto_first_child()?;
     let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
@@ -282,34 +289,35 @@ fn parse_slide_function(
 
             let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
                 NodeKind::StringLiteral => {
-                    tree_cursor.goto_first_child()?;
-                    let value: Cow<'_, str> =
-                        source.byte_slice(tree_cursor.node().byte_range()).into();
-                    tree_cursor.goto_parent();
-                    let (line, column) = value.split_once(':').unwrap();
-                    let from = PCursor {
-                        paragraph: line.parse().unwrap(),
-                        offset: column.parse().unwrap(),
-                        prefer_next_row: true,
-                    };
-                    tree_cursor.goto_next_sibling()?;
-                    let to = match NodeKind::from(tree_cursor.node().kind_id()) {
-                        NodeKind::StringLiteral => {
-                            tree_cursor.goto_first_child()?;
-                            let value: Cow<'_, str> =
-                                source.byte_slice(tree_cursor.node().byte_range()).into();
-                            tree_cursor.goto_parent();
-                            let (line, column) = value.split_once(':').unwrap();
-                            PCursor {
-                                paragraph: line.parse().unwrap(),
-                                offset: column.parse().unwrap(),
-                                prefer_next_row: true,
+                    let from =
+                        match parse_highlight_location(tree_cursor.fork(), source).map_err(|_| {
+                            super::Error::InvalidParameter(tree_cursor.node().range().into())
+                        }) {
+                            Ok(from) => from,
+                            Err(e) => {
+                                errors_present.push(e);
+                                PCursor::default()
                             }
+                        };
+                    tree_cursor.goto_next_sibling()?;
+                    match NodeKind::from(tree_cursor.node().kind_id()) {
+                        NodeKind::StringLiteral => {
+                            let to = match parse_highlight_location(tree_cursor.fork(), source)
+                                .map_err(|_| {
+                                    super::Error::InvalidParameter(
+                                        tree_cursor.node().range().into(),
+                                    )
+                                }) {
+                                Ok(to) => to,
+                                Err(e) => {
+                                    errors_present.push(e);
+                                    PCursor::default()
+                                }
+                            };
+                            Some([from, to])
                         }
-                        // "number_literal" => &source[tree_cursor.node().byte_range()],
-                        _ => todo!(),
-                    };
-                    Some([from, to])
+                        _ => None,
+                    }
                 }
                 // "number_literal" => &source[tree_cursor.node().byte_range()],
                 _ => None,
@@ -322,4 +330,18 @@ fn parse_slide_function(
         }
         _ => todo!(),
     }
+}
+
+fn parse_highlight_location(
+    mut tree_cursor: GrzCursor<'_>,
+    source: &ropey::Rope,
+) -> Result<PCursor, ()> {
+    tree_cursor.goto_first_child().or(Err(()))?;
+    let value: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+    let (line, column) = value.split_once(':').ok_or(())?;
+    Ok(PCursor {
+        paragraph: line.parse().or(Err(()))?,
+        offset: column.parse().or(Err(()))?,
+        prefer_next_row: true,
+    })
 }

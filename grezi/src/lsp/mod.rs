@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use crate::parser::{ErrWithSource, NodeKind};
+use crate::parser::NodeKind;
 use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{

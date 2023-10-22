@@ -85,8 +85,12 @@ impl From<Range> for PointFromRange {
 pub enum Error {
     #[error("Object is not on screen")]
     BadExit(#[label("Object cannot exit, as it is not currently on screen")] PointFromRange),
+    #[error("Object is not on screen")]
+    ImplicitEdge(#[label("Implicit edge could not be resolved")] PointFromRange),
     #[error("Object could not be found")]
     NotFound(#[label("Object not found")] PointFromRange),
+    #[error("Invalid parameter")]
+    InvalidParameter(#[label("This parameter is not valid for this action")] PointFromRange),
     #[error("Syntax error")]
     SyntaxError(#[label("Something is wrong here")] PointFromRange),
     #[error("Missing error")]
@@ -137,10 +141,12 @@ impl Error {
     pub fn range(&self) -> Range {
         match self {
             Error::BadExit(range) => range.0,
+            Error::ImplicitEdge(range) => range.0,
             Error::KnownMissingError(range, _) => range.0,
             Error::MissingError(range) => range.0,
             Error::NotFound(range) => range.0,
             Error::SyntaxError(range) => range.0,
+            Error::InvalidParameter(range) => range.0,
         }
     }
 }
