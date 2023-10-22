@@ -241,6 +241,7 @@ pub fn parse_slide_object(
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_slide_function(
     mut tree_cursor: GrzCursor<'_>,
     hasher: &ahash::RandomState,
@@ -350,6 +351,7 @@ fn parse_slide_function(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_highlight_location(
     mut tree_cursor: GrzCursor<'_>,
     source: &ropey::Rope,

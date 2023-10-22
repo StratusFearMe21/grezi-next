@@ -11,7 +11,6 @@ use eframe::{
         Color32, FontFamily, FontId, Galley, Rect, Stroke, Vec2,
     },
 };
-use pulldown_cmark::Tag;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -68,6 +67,7 @@ pub fn parse_objects(
 ) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
+    use pulldown_cmark::Tag;
     use tree_sitter::Node;
 
     tree_cursor.goto_first_child()?;

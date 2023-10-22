@@ -43,7 +43,7 @@ use tree_sitter::Tree;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::parser::highlighting::HelixCell;
-use crate::parser::{objects::ResolvedObject, ErrWithSource};
+use crate::parser::objects::ResolvedObject;
 
 mod layout;
 #[cfg(not(target_arch = "wasm32"))]
@@ -196,7 +196,7 @@ impl MyEguiApp {
                                                 for error in errors {
                                                     eprintln!(
                                                         "{:?}",
-                                                        ErrWithSource {
+                                                        parser::ErrWithSource {
                                                             error,
                                                             source_code: info.1.to_string()
                                                         }
@@ -221,6 +221,7 @@ impl MyEguiApp {
                 .unwrap();
         }
         MyEguiApp {
+            #[cfg(not(target_arch = "wasm32"))]
             helix_cell: None,
             ..self
         }
@@ -303,7 +304,7 @@ impl MyEguiApp {
                         for error in errors {
                             eprintln!(
                                 "{:?}",
-                                ErrWithSource {
+                                parser::ErrWithSource {
                                     error,
                                     source_code: file.to_string()
                                 }

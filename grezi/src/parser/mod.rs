@@ -11,11 +11,12 @@ use std::{
     hash::{BuildHasherDefault, Hasher},
 };
 
+#[cfg(not(target_arch = "wasm32"))]
 use miette::{Diagnostic, GraphicalReportHandler, SourceSpan};
 use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use thiserror::Error;
-use tree_sitter::Range;
 #[cfg(not(target_arch = "wasm32"))]
 use tree_sitter::{Node, Tree, TreeCursor};
 
@@ -67,20 +68,24 @@ pub enum AstObject {
     },
 }
 
-pub struct PointFromRange(Range);
+#[cfg(not(target_arch = "wasm32"))]
+pub struct PointFromRange(tree_sitter::Range);
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<&PointFromRange> for SourceSpan {
     fn from(value: &PointFromRange) -> Self {
         (value.0.start_byte, value.0.end_byte - value.0.start_byte).into()
     }
 }
 
-impl From<Range> for PointFromRange {
-    fn from(value: Range) -> Self {
+#[cfg(not(target_arch = "wasm32"))]
+impl From<tree_sitter::Range> for PointFromRange {
+    fn from(value: tree_sitter::Range) -> Self {
         Self(value)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Error, Diagnostic)]
 pub enum Error {
     #[error("Object is not on screen")]
@@ -109,8 +114,9 @@ pub enum Error {
     ),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Error {
-    pub fn range(&self) -> Range {
+    pub fn range(&self) -> tree_sitter::Range {
         match self {
             Error::BadExit(range) => range.0,
             Error::ImplicitEdge(range) => range.0,
@@ -125,6 +131,7 @@ impl Error {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl From<Error> for lsp_types::Diagnostic {
     fn from(error: Error) -> Self {
         use lsp_types::{DiagnosticSeverity, Position, Range};
@@ -160,17 +167,20 @@ impl From<Error> for lsp_types::Diagnostic {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         GraphicalReportHandler::new().render_report(f, self)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct ErrWithSource {
     pub error: Error,
     pub source_code: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Diagnostic for ErrWithSource {
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
         self.error.code()
@@ -206,6 +216,7 @@ impl Diagnostic for ErrWithSource {
 }
 
 #[allow(deprecated)]
+#[cfg(not(target_arch = "wasm32"))]
 impl std::error::Error for ErrWithSource {
     fn cause(&self) -> Option<&dyn std::error::Error> {
         self.error.cause()
@@ -220,12 +231,14 @@ impl std::error::Error for ErrWithSource {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Debug for ErrWithSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         GraphicalReportHandler::new().render_report(f, self)
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Display for ErrWithSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "")
