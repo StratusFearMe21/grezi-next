@@ -9,6 +9,7 @@ Grezi allows you to write presentations using plain text. It's designed to make 
     - Rename symbol support
     - Goto declaration support
     - Goto reference support
+    - Errors and diagnostics support
     - Hot reloading on save
     - Snippet for copying down the previous slide and removing exited objects
     - Automatic "Hello World" boilerplate for empty files
