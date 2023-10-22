@@ -256,14 +256,21 @@ fn parse_slide_function(
         "stagger" => {
             tree_cursor.goto_next_sibling()?;
             let scaler: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-            let scaler: f32 = scaler.parse().unwrap();
-            let mut min_time = 0.0;
-            for object in slide_objects.iter_mut().skip(1) {
-                *max_time += scaler;
-                min_time += scaler;
-                object.scaled_time[0] = min_time;
+            match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::NumberLiteral => {
+                    let scaler: f32 = scaler.parse().unwrap();
+                    let mut min_time = 0.0;
+                    for object in slide_objects.iter_mut().skip(1) {
+                        *max_time += scaler;
+                        min_time += scaler;
+                        object.scaled_time[0] = min_time;
+                    }
+                    Ok(None)
+                }
+                _ => Err(super::Error::InvalidParameter(
+                    tree_cursor.node().range().into(),
+                )),
             }
-            Ok(None)
         }
         "time" => {
             tree_cursor.goto_next_sibling()?;
