@@ -118,6 +118,7 @@ pub fn parse_slide_object(
     tree_cursor.goto_next_sibling()?;
     let viewbox = source.byte_slice(tree_cursor.node().byte_range());
     let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
+    let viewbox_range = tree_cursor.node().range();
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
     let vb_index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
@@ -129,7 +130,7 @@ pub fn parse_slide_object(
             std::hash::Hash::hash(&viewbox, &mut hasher);
             ViewboxIn::Custom(hasher.finish(), vb_index)
         }
-        _ => todo!(),
+        kind => return Err(Error::BadNode(viewbox_range.into(), kind)),
     };
     tree_cursor.goto_parent();
     tree_cursor.goto_next_sibling()?;
@@ -137,6 +138,7 @@ pub fn parse_slide_object(
     match NodeKind::from(tree_cursor.node().kind_id()) {
         NodeKind::SlideFrom => {
             tree_cursor.goto_first_child()?;
+            let viewbox_range = tree_cursor.node().range();
             let viewbox = source.byte_slice(tree_cursor.node().byte_range());
             let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
             tree_cursor.goto_next_sibling()?;
@@ -153,7 +155,7 @@ pub fn parse_slide_object(
                     std::hash::Hash::hash(&viewbox, &mut hasher);
                     Some(ViewboxIn::Custom(hasher.finish(), vb_index))
                 }
-                _ => todo!(),
+                kind => return Err(Error::BadNode(viewbox_range.into(), kind)),
             };
         }
         _ => from = None,
@@ -328,7 +330,9 @@ fn parse_slide_function(
                 persist: true,
             }))
         }
-        _ => todo!(),
+        _ => Err(super::Error::ActionNotFound(
+            tree_cursor.node().range().into(),
+        )),
     }
 }
 

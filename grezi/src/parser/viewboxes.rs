@@ -143,7 +143,7 @@ pub fn parse_viewbox(
         let numerator: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         let numerator: f32 = numerator.parse().unwrap();
         // We want a char literal here
-        tree_cursor.tree_cursor.goto_next_sibling();
+        tree_cursor.goto_next_impl()?;
         let op: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         match op.as_ref() {
             "%" => constraints.push(Constraint::Percentage(numerator)),

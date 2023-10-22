@@ -87,6 +87,8 @@ pub enum Error {
     BadExit(#[label("Object cannot exit, as it is not currently on screen")] PointFromRange),
     #[error("Object is not on screen")]
     ImplicitEdge(#[label("Implicit edge could not be resolved")] PointFromRange),
+    #[error("Action not found")]
+    ActionNotFound(#[label("Action not found")] PointFromRange),
     #[error("Object could not be found")]
     NotFound(#[label("Object not found")] PointFromRange),
     #[error("Invalid parameter")]
@@ -100,6 +102,27 @@ pub enum Error {
         #[label("a {1} is missing here")] PointFromRange,
         &'static str,
     ),
+    #[error("Bad node")]
+    BadNode(
+        #[label("Invalid Node kind: {1:?} here")] PointFromRange,
+        NodeKind,
+    ),
+}
+
+impl Error {
+    pub fn range(&self) -> Range {
+        match self {
+            Error::BadExit(range) => range.0,
+            Error::ImplicitEdge(range) => range.0,
+            Error::ActionNotFound(range) => range.0,
+            Error::KnownMissingError(range, _) => range.0,
+            Error::MissingError(range) => range.0,
+            Error::NotFound(range) => range.0,
+            Error::SyntaxError(range) => range.0,
+            Error::InvalidParameter(range) => range.0,
+            Error::BadNode(range, _) => range.0,
+        }
+    }
 }
 
 impl From<Error> for lsp_types::Diagnostic {
@@ -133,20 +156,6 @@ impl From<Error> for lsp_types::Diagnostic {
                     message
                 }),
             ..Default::default()
-        }
-    }
-}
-
-impl Error {
-    pub fn range(&self) -> Range {
-        match self {
-            Error::BadExit(range) => range.0,
-            Error::ImplicitEdge(range) => range.0,
-            Error::KnownMissingError(range, _) => range.0,
-            Error::MissingError(range) => range.0,
-            Error::NotFound(range) => range.0,
-            Error::SyntaxError(range) => range.0,
-            Error::InvalidParameter(range) => range.0,
         }
     }
 }
@@ -417,7 +426,7 @@ pub fn parse_file(
                     Err(e) => errors_present.push(e),
                 }
             }
-            _ => {}
+            kind => errors_present.push(Error::BadNode(tree_cursor.node().range().into(), kind)),
         }
 
         loop {
