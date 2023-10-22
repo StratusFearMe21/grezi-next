@@ -61,7 +61,7 @@ pub enum ObjectState {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_objects(
-    tree_cursor: &mut GrzCursor<'_>,
+    mut tree_cursor: GrzCursor<'_>,
     source: &ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,

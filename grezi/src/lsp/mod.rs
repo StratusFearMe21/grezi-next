@@ -11,15 +11,13 @@ use lsp_types::{
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DeclarationCapability, DiagnosticSeverity, DocumentChanges,
-    GotoDefinitionParams, GotoDefinitionResponse, Location, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse,
-    PublishDiagnosticsParams, Range, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
-    ServerCapabilities, TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
-    WorkDoneProgressOptions, WorkspaceEdit,
+    CompletionTextEdit, DeclarationCapability, DocumentChanges, GotoDefinitionParams,
+    GotoDefinitionResponse, Location, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams,
+    SaveOptions, ServerCapabilities, TextDocumentEdit, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
 };
-use miette::{Diagnostic, Severity};
 use ropey::Rope;
 use tree_sitter::{Point, Query, QueryCursor};
 
@@ -557,26 +555,36 @@ pub fn start_lsp(
                             &mut app.helix_cell,
                             &mut *slide_show,
                         );
+                        *tree_info = Some((tree, Rope::new()));
+                        *app.slide_show_file.lock() = current_rope.clone();
                         match ast {
                             Ok(ast) => {
-                                *tree_info = Some((tree, Rope::new()));
-                                *app.slide_show_file.lock() = current_rope.clone();
                                 slide_show.slide_show = ast;
+                                current_thread.unpark();
                             }
-                            Err(error) => {
-                                eprintln!(
-                                    "{:?}",
-                                    ErrWithSource {
-                                        error,
-                                        source_code: current_rope.to_string()
-                                    }
-                                );
-                                std::process::exit(1);
+                            Err(errors) => {
+                                connection
+                                    .sender
+                                    .send(Message::Notification(lsp_server::Notification::new(
+                                        PublishDiagnostics::METHOD.to_string(),
+                                        PublishDiagnosticsParams {
+                                            uri: currently_open.clone(),
+                                            diagnostics: errors
+                                                .into_iter()
+                                                .map(|error| {
+                                                    let diagnostic: lsp_types::Diagnostic =
+                                                        error.into();
+                                                    diagnostic
+                                                })
+                                                .collect(),
+                                            version: Some(current_document_version),
+                                        },
+                                    )))
+                                    .unwrap();
                             }
                         }
 
                         app.clear_resolved.store(false, Ordering::Relaxed);
-                        current_thread.unpark();
                     }
                     "textDocument/didChange" => {
                         let changes: lsp_types::DidChangeTextDocumentParams =
@@ -660,50 +668,23 @@ pub fn start_lsp(
                                         )))
                                         .unwrap();
                                     app.clear_resolved.store(true, Ordering::Relaxed);
+                                    current_thread.unpark();
                                 }
-                                Err(error) => {
-                                    let range = error.range();
+                                Err(errors) => {
                                     connection
                                         .sender
                                         .send(Message::Notification(lsp_server::Notification::new(
                                             PublishDiagnostics::METHOD.to_string(),
                                             PublishDiagnosticsParams {
                                                 uri: currently_open.clone(),
-                                                diagnostics: vec![lsp_types::Diagnostic {
-                                                    range: Range {
-                                                        start: Position {
-                                                            line: range.start_point.row as u32,
-                                                            character: range.start_point.column
-                                                                as u32,
-                                                        },
-                                                        end: Position {
-                                                            line: range.end_point.row as u32,
-                                                            character: range.end_point.column
-                                                                as u32,
-                                                        },
-                                                    },
-                                                    severity: error.severity().map(|s| match s {
-                                                        Severity::Warning => {
-                                                            DiagnosticSeverity::WARNING
-                                                        }
-                                                        Severity::Advice => {
-                                                            DiagnosticSeverity::HINT
-                                                        }
-                                                        Severity::Error => {
-                                                            DiagnosticSeverity::ERROR
-                                                        }
-                                                    }),
-                                                    message: error.labels().unwrap().fold(
-                                                        String::new(),
-                                                        |mut message, label| {
-                                                            message
-                                                                .push_str(label.label().unwrap());
-                                                            message.push('\n');
-                                                            message
-                                                        },
-                                                    ),
-                                                    ..Default::default()
-                                                }],
+                                                diagnostics: errors
+                                                    .into_iter()
+                                                    .map(|error| {
+                                                        let diagnostic: lsp_types::Diagnostic =
+                                                            error.into();
+                                                        diagnostic
+                                                    })
+                                                    .collect(),
                                                 version: Some(current_document_version),
                                             },
                                         )))

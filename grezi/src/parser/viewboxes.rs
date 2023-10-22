@@ -108,7 +108,7 @@ impl FromStr for Direction {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox(
-    tree_cursor: &mut GrzCursor<'_>,
+    mut tree_cursor: GrzCursor<'_>,
     source: &ropey::Rope,
     hasher: &ahash::RandomState,
 ) -> Result<(u64, UnresolvedLayout), super::Error> {

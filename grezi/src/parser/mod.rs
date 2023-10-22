@@ -83,11 +83,6 @@ impl From<Range> for PointFromRange {
 
 #[derive(Error, Diagnostic)]
 pub enum Error {
-    #[error("Bad Node")]
-    BadNode(
-        #[label("here")] PointFromRange,
-        #[help("Node is of kind: {}")] &'static str,
-    ),
     #[error("Object is not on screen")]
     BadExit(#[label("Object cannot exit, as it is not currently on screen")] PointFromRange),
     #[error("Object could not be found")]
@@ -103,11 +98,45 @@ pub enum Error {
     ),
 }
 
+impl From<Error> for lsp_types::Diagnostic {
+    fn from(error: Error) -> Self {
+        use lsp_types::{DiagnosticSeverity, Position, Range};
+        use miette::Severity;
+        let range = error.range();
+
+        lsp_types::Diagnostic {
+            range: Range {
+                start: Position {
+                    line: range.start_point.row as u32,
+                    character: range.start_point.column as u32,
+                },
+                end: Position {
+                    line: range.end_point.row as u32,
+                    character: range.end_point.column as u32,
+                },
+            },
+            severity: error.severity().map(|s| match s {
+                Severity::Warning => DiagnosticSeverity::WARNING,
+                Severity::Advice => DiagnosticSeverity::HINT,
+                Severity::Error => DiagnosticSeverity::ERROR,
+            }),
+            message: error
+                .labels()
+                .unwrap()
+                .fold(String::new(), |mut message, label| {
+                    message.push_str(label.label().unwrap());
+                    message.push('\n');
+                    message
+                }),
+            ..Default::default()
+        }
+    }
+}
+
 impl Error {
     pub fn range(&self) -> Range {
         match self {
             Error::BadExit(range) => range.0,
-            Error::BadNode(range, _) => range.0,
             Error::KnownMissingError(range, _) => range.0,
             Error::MissingError(range) => range.0,
             Error::NotFound(range) => range.0,
@@ -219,6 +248,12 @@ impl<'a> GrzCursor<'a> {
         }
     }
 
+    fn fork<'b>(&'b self) -> GrzCursor<'b> {
+        GrzCursor {
+            tree_cursor: self.tree_cursor.node().walk(),
+        }
+    }
+
     fn check_for_error(&self, result: bool) -> Result<bool, Error> {
         if self.tree_cursor.node().is_error() {
             return Err(Error::SyntaxError(self.tree_cursor.node().range().into()));
@@ -294,43 +329,57 @@ pub fn parse_file(
     source: &ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
-) -> Result<Vec<AstObject>, Error> {
+) -> Result<Vec<AstObject>, Vec<Error>> {
     // let yoke = Yoke::<ParseError<'static>, String>::attach_to_cart(file, |source| {
     // let mut registers: AHashMap<&str, &str> = AHashMap::default();
 
+    let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
     let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
     let mut tree_cursor = GrzCursor::new(&tree);
 
-    tree_cursor.goto_first_child()?;
+    match tree_cursor.goto_first_child() {
+        Ok(_) => {}
+        Err(e) => return Err(vec![e]),
+    }
     let mut ast = Vec::new();
-    loop {
+    'parserloop: loop {
         let node = tree_cursor.node();
         match NodeKind::from(node.kind_id()) {
             NodeKind::Slide => {
                 last_slide = ast.len();
-                ast.push(slides::parse_slides(
-                    &mut tree_cursor,
+                match slides::parse_slides(
+                    tree_cursor.fork(),
                     &hasher,
                     &mut on_screen,
                     &mut slide_show.objects,
                     &source,
-                )?);
+                    &mut errors_present,
+                ) {
+                    Ok(slide) => ast.push(slide),
+                    Err(e) => errors_present.push(e),
+                }
             }
             NodeKind::Viewbox => {
-                let layout = viewboxes::parse_viewbox(&mut tree_cursor, &source, &hasher)?;
-
-                slide_show.viewboxes.insert(layout.0, layout.1);
+                match viewboxes::parse_viewbox(tree_cursor.fork(), &source, &hasher) {
+                    Ok(layout) => {
+                        slide_show.viewboxes.insert(layout.0, layout.1);
+                    }
+                    Err(e) => errors_present.push(e),
+                }
             }
             NodeKind::Obj => {
-                let object =
-                    objects::parse_objects(&mut tree_cursor, &source, helix_cell, &hasher)?;
-
-                slide_show.objects.insert(object.0, object.1);
+                match objects::parse_objects(tree_cursor.fork(), &source, helix_cell, &hasher) {
+                    Ok(object) => {
+                        slide_show.objects.insert(object.0, object.1);
+                    }
+                    Err(e) => errors_present.push(e),
+                }
             }
             NodeKind::Register => {
+                /*
                 tree_cursor.goto_first_child()?;
                 let key = source.byte_slice(tree_cursor.node().byte_range());
                 tree_cursor.goto_next_sibling()?;
@@ -346,27 +395,37 @@ pub fn parse_file(
                     _ => todo!(),
                 };
                 tree_cursor.goto_parent();
-                // ast.push(AstObject::Register { key, value });
+                ast.push(AstObject::Register { key, value });
+                */
             }
             NodeKind::Action => {
-                ast.push(actions::parse_actions(
-                    &mut tree_cursor,
+                match actions::parse_actions(
+                    tree_cursor.fork(),
                     &source,
                     &hasher,
                     &on_screen,
                     last_slide,
-                )?);
+                    &mut errors_present,
+                ) {
+                    Ok(action) => ast.push(action),
+                    Err(e) => errors_present.push(e),
+                }
             }
-            _ => {
-                let kind: &'static str = node.kind();
-                return Err(Error::BadNode(tree_cursor.node().range().into(), kind));
-            }
+            _ => {}
         }
 
-        if !tree_cursor.goto_next_sibling()? {
-            break;
+        loop {
+            match tree_cursor.goto_next_sibling() {
+                Ok(false) => break 'parserloop,
+                Ok(true) => break,
+                Err(e) => errors_present.push(e),
+            }
         }
     }
     drop(tree_cursor);
-    Ok(ast)
+    if errors_present.is_empty() {
+        Ok(ast)
+    } else {
+        Err(errors_present)
+    }
 }

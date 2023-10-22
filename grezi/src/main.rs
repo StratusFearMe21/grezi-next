@@ -192,14 +192,16 @@ impl MyEguiApp {
                                                 slide_show.slide_show = ast;
                                                 watcher_new_file.store(true, Ordering::Relaxed);
                                             }
-                                            Err(error) => {
-                                                eprintln!(
-                                                    "{:?}",
-                                                    ErrWithSource {
-                                                        error,
-                                                        source_code: info.1.to_string()
-                                                    }
-                                                );
+                                            Err(errors) => {
+                                                for error in errors {
+                                                    eprintln!(
+                                                        "{:?}",
+                                                        ErrWithSource {
+                                                            error,
+                                                            source_code: info.1.to_string()
+                                                        }
+                                                    );
+                                                }
                                             }
                                         }
                                     }
@@ -297,14 +299,16 @@ impl MyEguiApp {
                         slide_show.slide_show = ast;
                         slide_show
                     }
-                    Err(error) => {
-                        eprintln!(
-                            "{:?}",
-                            ErrWithSource {
-                                error,
-                                source_code: file.to_string()
-                            }
-                        );
+                    Err(errors) => {
+                        for error in errors {
+                            eprintln!(
+                                "{:?}",
+                                ErrWithSource {
+                                    error,
+                                    source_code: file.to_string()
+                                }
+                            );
+                        }
                         std::process::exit(1);
                     }
                 }
