@@ -12,13 +12,13 @@ module.exports = grammar({
     source_file: $ => repeat($._definition),
 
     _definition: $ =>
-        choice(
-          $.slide,
-          $.viewbox,
-          $.obj,
-          $.register,
-          $.action
-        ),
+      choice(
+        $.slide,
+        $.viewbox,
+        $.obj,
+        $.register,
+        $.action
+      ),
 
     // C Identifier
     identifier: _ =>
@@ -90,7 +90,7 @@ module.exports = grammar({
     ),
 
     slide_obj: $ => seq(
-      field('obj_w_viewbox', 
+      field('obj_w_viewbox',
         seq($.identifier, ':', $._vb_identifier)
       ),
       field('viewbox_index', $.index_parser),
@@ -146,16 +146,16 @@ module.exports = grammar({
       ']'
     ),
 
-    viewbox: $ => 
+    viewbox: $ =>
       seq(
-        $.identifier,
+        field('name', $.identifier),
         ':',
         $._vb_identifier,
         field('attached_box', $.index_parser),
         field('body', $.viewbox_inner)
       ),
 
-    obj_inner: $ => seq(      
+    obj_inner: $ => seq(
       '(',
       field('parameters', sep(seq($.identifier, ':', $._text_ident), ',')),
       optional(','),
@@ -163,7 +163,7 @@ module.exports = grammar({
     ),
 
     obj: $ => seq(
-      $.identifier,
+      field('name', $.identifier),
       ':',
       field('ty', $.identifier),
       $.obj_inner

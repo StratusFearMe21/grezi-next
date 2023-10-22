@@ -283,6 +283,10 @@ impl<'a> GrzCursor<'a> {
     }
 
     fn check_for_error(&self, result: bool) -> Result<bool, Error> {
+        if !result {
+            return Ok(false);
+        }
+
         if self.tree_cursor.node().is_error() {
             return Err(Error::SyntaxError(self.tree_cursor.node().range().into()));
         }
@@ -385,13 +389,19 @@ pub fn parse_file(
                     &mut slide_show.objects,
                     &source,
                     &mut errors_present,
+                    &slide_show.viewboxes,
                 ) {
                     Ok(slide) => ast.push(slide),
                     Err(e) => errors_present.push(e),
                 }
             }
             NodeKind::Viewbox => {
-                match viewboxes::parse_viewbox(tree_cursor.fork(), &source, &hasher) {
+                match viewboxes::parse_viewbox(
+                    tree_cursor.fork(),
+                    &source,
+                    &hasher,
+                    &slide_show.viewboxes,
+                ) {
                     Ok(layout) => {
                         slide_show.viewboxes.insert(layout.0, layout.1);
                     }

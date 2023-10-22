@@ -2,21 +2,25 @@ use std::sync::atomic::Ordering;
 
 use crate::parser::NodeKind;
 use helix_core::syntax::RopeProvider;
-use lsp_server::{Connection, Message, Response};
+use lsp_server::{Connection, ExtractError, Message, Response};
 use lsp_types::{
-    notification::{Notification, PublishDiagnostics},
+    notification::{Notification, PublishDiagnostics, ShowMessage},
     request::{
         ApplyWorkspaceEdit, Completion, GotoDeclaration, PrepareRenameRequest, References, Rename,
-        Request,
+        Request, SemanticTokensFullRequest, SemanticTokensRangeRequest,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
     CompletionTextEdit, DeclarationCapability, DocumentChanges, GotoDefinitionParams,
-    GotoDefinitionResponse, Location, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
-    PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams,
-    SaveOptions, ServerCapabilities, TextDocumentEdit, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
+    GotoDefinitionResponse, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
+    Position, PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions,
+    RenameParams, SaveOptions, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensParams, SemanticTokensRangeParams, SemanticTokensRangeResult,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams,
+    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 use ropey::Rope;
 use tree_sitter::{Point, Query, QueryCursor};
@@ -32,6 +36,25 @@ pub fn start_lsp(
     // also be implemented to use sockets or HTTP.
     let (connection, io_threads) = Connection::stdio();
 
+    let rename_query = Query::new(tree_sitter_grz::language(), "(identifier) @rename").unwrap();
+    let slide_complete_query = Query::new(tree_sitter_grz::language(), "(slide) @find").unwrap();
+    let top_level_search_query = Query::new(
+        tree_sitter_grz::language(),
+        "[\
+    (slide)\
+    (viewbox)\
+    (obj)\
+    (register)\
+    (action)\
+    ] @obj",
+    )
+    .unwrap();
+    let semantic_token_query = Query::new(
+        tree_sitter_grz::language(),
+        include_str!("semantic_tokens.scm"),
+    )
+    .unwrap();
+    let mut query_cursor = QueryCursor::new();
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -60,27 +83,57 @@ pub fn start_lsp(
         }),
         declaration_provider: Some(DeclarationCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: SemanticTokensLegend {
+                    token_types: semantic_token_query
+                        .capture_names()
+                        .iter()
+                        .map(|name| {
+                            SemanticTokenType::new(unsafe {
+                                std::mem::transmute::<&str, &'static str>(
+                                    name.split_once('.').unwrap_or((name.as_str(), "")).0,
+                                )
+                            })
+                        })
+                        .collect(),
+                    token_modifiers: semantic_token_query
+                        .capture_names()
+                        .iter()
+                        .filter_map(|name| {
+                            // Safe because string exists for lifetime of LSP
+                            unsafe { std::mem::transmute::<&String, &'static String>(name) }
+                                .split_once('.')
+                                .map(|name| SemanticTokenModifier::new(name.1))
+                        })
+                        .collect(),
+                },
+                range: Some(true),
+                full: Some(SemanticTokensFullOptions::Delta { delta: Some(false) }),
+                ..Default::default()
+            },
+        )),
         ..Default::default()
     })
     .unwrap();
     connection.initialize(server_capabilities).unwrap();
+    let panic_hook = std::panic::take_hook();
+    let hook_sender = connection.sender.clone();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        hook_sender
+            .send(Message::Notification(lsp_server::Notification::new(
+                ShowMessage::METHOD.to_string(),
+                ShowMessageParams {
+                    typ: MessageType::ERROR,
+                    message: format!("{:?}", panic_info),
+                },
+            )))
+            .unwrap();
+        (panic_hook)(panic_info)
+    }));
     let mut current_rope = ropey::Rope::new();
     let mut current_document_version = 0;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
-    let rename_query = Query::new(tree_sitter_grz::language(), "(identifier) @rename").unwrap();
-    let slide_complete_query = Query::new(tree_sitter_grz::language(), "(slide) @find").unwrap();
-    let top_level_search_query = Query::new(
-        tree_sitter_grz::language(),
-        "[\
-    (slide)\
-    (viewbox)\
-    (obj)\
-    (register)\
-    (action)\
-    ] @obj",
-    )
-    .unwrap();
-    let mut query_cursor = QueryCursor::new();
     'lsploop: for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {
@@ -134,6 +187,114 @@ pub fn start_lsp(
                                         }),
                                 )))
                                 .unwrap();
+                        }
+                    }
+                    SemanticTokensFullRequest::METHOD | SemanticTokensRangeRequest::METHOD => {
+                        let tree_info = app.tree_info.lock();
+                        let tree_info = tree_info.as_ref().unwrap();
+
+                        let start_node = tree_info.0.root_node();
+
+                        let iter = query_cursor.matches(
+                            &semantic_token_query,
+                            start_node,
+                            RopeProvider(current_rope.slice(..)),
+                        );
+
+                        let mut tokens = Vec::new();
+                        let mut last_range = tree_sitter::Range {
+                            start_byte: 0,
+                            end_byte: 0,
+                            start_point: Point { row: 0, column: 0 },
+                            end_point: Point { row: 0, column: 0 },
+                        };
+                        for query_match in iter {
+                            let capture = query_match.captures.last().unwrap();
+                            let range = capture.node.range();
+
+                            if last_range != range {
+                                let mut delta_line =
+                                    (range.start_point.row - last_range.end_point.row) as u32;
+                                let mut multiline = false;
+                                for line in range.start_point.row..=range.end_point.row {
+                                    tokens.push(SemanticToken {
+                                        delta_line,
+                                        delta_start: if multiline {
+                                            0
+                                        } else if delta_line == 0 {
+                                            (range.start_point.column
+                                                - last_range.start_point.column)
+                                                as u32
+                                        } else {
+                                            range.start_point.column as u32
+                                        },
+                                        length: if line == range.start_point.row {
+                                            if range.end_point.row - range.start_point.row > 0 {
+                                                current_rope
+                                                    .line(line)
+                                                    .slice(range.start_point.column..)
+                                                    .len_chars()
+                                                    as u32
+                                            } else {
+                                                (range.end_point.column - range.start_point.column)
+                                                    as u32
+                                            }
+                                        } else if line == range.end_point.row {
+                                            current_rope
+                                                .line(line)
+                                                .slice(..range.end_point.column)
+                                                .len_chars()
+                                                as u32
+                                        } else {
+                                            current_rope.line(line).len_chars() as u32
+                                        },
+                                        token_type: capture.index,
+                                        token_modifiers_bitset: if semantic_token_query
+                                            .capture_names()
+                                            [capture.index as usize]
+                                            .contains('.')
+                                        {
+                                            0b00000001
+                                        } else {
+                                            0
+                                        },
+                                    });
+                                    delta_line = 1;
+                                    multiline = true;
+                                }
+
+                                last_range = range;
+                            }
+                        }
+
+                        match req.extract::<SemanticTokensRangeParams>(
+                            SemanticTokensRangeRequest::METHOD,
+                        ) {
+                            Ok((rqid, _)) => {
+                                connection
+                                    .sender
+                                    .send(Message::Response(Response::new_ok(
+                                        rqid,
+                                        Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+                                            data: tokens,
+                                            ..Default::default()
+                                        })),
+                                    )))
+                                    .unwrap();
+                            }
+                            Err(ExtractError::MethodMismatch(req)) => {
+                                connection
+                                    .sender
+                                    .send(Message::Response(Response::new_ok(
+                                        req.id.clone(),
+                                        Some(SemanticTokensResult::Tokens(SemanticTokens {
+                                            data: tokens,
+                                            ..Default::default()
+                                        })),
+                                    )))
+                                    .unwrap();
+                            }
+                            Err(_) => {}
                         }
                     }
                     Rename::METHOD => {
@@ -211,7 +372,7 @@ pub fn start_lsp(
                             let new_slide_item = CompletionItem {
                                 label: "New Slide".into(),
                                 kind: Some(CompletionItemKind::SNIPPET),
-                                preselect: Some(true),
+                                preselect: None,
                                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                                     range: lsp_types::Range {
                                         start: Position {
@@ -226,7 +387,8 @@ pub fn start_lsp(
                                                         as usize,
                                                 )
                                                 .len_chars()
-                                                as u32,
+                                                as u32
+                                                - 1,
                                         },
                                     },
                                     new_text: "{}[]".to_string(),
@@ -326,7 +488,7 @@ pub fn start_lsp(
                             let continue_slide_item = CompletionItem {
                                 label: "Continue Slide".into(),
                                 kind: Some(CompletionItemKind::SNIPPET),
-                                preselect: Some(true),
+                                preselect: None,
                                 text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                                     range: lsp_types::Range {
                                         start: Position {
@@ -341,7 +503,8 @@ pub fn start_lsp(
                                                         as usize,
                                                 )
                                                 .len_chars()
-                                                as u32,
+                                                as u32
+                                                - 1,
                                         },
                                     },
                                     new_text,

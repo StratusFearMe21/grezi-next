@@ -5,6 +5,7 @@ use std::{
     str::FromStr,
 };
 
+use crate::layout::UnresolvedLayout;
 use eframe::epaint::text::cursor::PCursor;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -41,6 +42,7 @@ pub fn parse_slides(
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
     source: &ropey::Rope,
     errors_present: &mut Vec<super::Error>,
+    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<AstObject, super::Error> {
     tree_cursor.goto_first_child()?;
     tree_cursor.goto_first_child()?;
@@ -48,7 +50,14 @@ pub fn parse_slides(
     let mut slide_on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
-        match parse_slide_object(tree_cursor.fork(), hasher, on_screen, objects, source) {
+        match parse_slide_object(
+            tree_cursor.fork(),
+            hasher,
+            on_screen,
+            objects,
+            source,
+            viewboxes,
+        ) {
             Ok(object) => {
                 slide_on_screen.insert(object.object, slide_objects.len());
                 slide_objects.push(object);
@@ -100,6 +109,7 @@ pub fn parse_slide_object(
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
     source: &ropey::Rope,
+    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<SlideObj, super::Error> {
     use super::Error;
 
@@ -116,47 +126,21 @@ pub fn parse_slide_object(
         .get_mut(&object_name)
         .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
     tree_cursor.goto_next_sibling()?;
-    let viewbox = source.byte_slice(tree_cursor.node().byte_range());
-    let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
-    let viewbox_range = tree_cursor.node().range();
-    tree_cursor.goto_next_sibling()?;
-    tree_cursor.goto_first_child()?;
-    let vb_index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-    let vb_index: usize = vb_index.parse().unwrap();
-    let viewbox = match viewbox_node {
-        NodeKind::Size => ViewboxIn::Size,
-        NodeKind::Identifier => {
-            let mut hasher = hasher.build_hasher();
-            std::hash::Hash::hash(&viewbox, &mut hasher);
-            ViewboxIn::Custom(hasher.finish(), vb_index)
-        }
-        kind => return Err(Error::BadNode(viewbox_range.into(), kind)),
-    };
-    tree_cursor.goto_parent();
+    let viewbox =
+        super::viewboxes::parse_viewbox_ident(source, &mut tree_cursor, hasher, viewboxes)?;
     tree_cursor.goto_next_sibling()?;
     let from: Option<ViewboxIn>;
     match NodeKind::from(tree_cursor.node().kind_id()) {
         NodeKind::SlideFrom => {
             tree_cursor.goto_first_child()?;
-            let viewbox_range = tree_cursor.node().range();
-            let viewbox = source.byte_slice(tree_cursor.node().byte_range());
-            let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
-            tree_cursor.goto_next_sibling()?;
-            tree_cursor.goto_first_child()?;
-            let vb_index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-            let vb_index: usize = vb_index.parse().unwrap();
-            tree_cursor.goto_parent();
+            from = Some(super::viewboxes::parse_viewbox_ident(
+                source,
+                &mut tree_cursor,
+                hasher,
+                viewboxes,
+            )?);
             tree_cursor.goto_parent();
             tree_cursor.goto_next_sibling()?;
-            from = match viewbox_node {
-                NodeKind::Size => Some(ViewboxIn::Size),
-                NodeKind::Identifier => {
-                    let mut hasher = hasher.build_hasher();
-                    std::hash::Hash::hash(&viewbox, &mut hasher);
-                    Some(ViewboxIn::Custom(hasher.finish(), vb_index))
-                }
-                kind => return Err(Error::BadNode(viewbox_range.into(), kind)),
-            };
         }
         _ => from = None,
     }

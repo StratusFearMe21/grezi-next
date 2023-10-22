@@ -106,32 +106,20 @@ impl FromStr for Direction {
     }
 }
 
+use std::{borrow::Cow, collections::HashMap, hash::BuildHasherDefault};
+
+use super::PassThroughHasher;
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox(
     mut tree_cursor: GrzCursor<'_>,
     source: &ropey::Rope,
     hasher: &ahash::RandomState,
+    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<(u64, UnresolvedLayout), super::Error> {
-    use std::borrow::Cow;
-
     tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());
     tree_cursor.goto_next_sibling()?;
-    let attached_box = source.byte_slice(tree_cursor.node().byte_range());
-    let node_kind = NodeKind::from(tree_cursor.node().kind_id());
-    tree_cursor.goto_next_sibling()?;
-    tree_cursor.goto_first_child()?;
-    let attached_box = match node_kind {
-        NodeKind::Size => ViewboxIn::Size,
-        NodeKind::Identifier => {
-            let mut hasher = hasher.build_hasher();
-            std::hash::Hash::hash(&attached_box, &mut hasher);
-            let index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-            ViewboxIn::Custom(hasher.finish(), index.parse().unwrap())
-        }
-        _ => todo!(),
-    };
-    tree_cursor.goto_parent();
+    let attached_box = parse_viewbox_ident(source, &mut tree_cursor, hasher, viewboxes)?;
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
     let direction: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
@@ -175,4 +163,44 @@ pub fn parse_viewbox(
             split_on: attached_box,
         },
     ))
+}
+
+pub fn parse_viewbox_ident(
+    source: &ropey::Rope,
+    tree_cursor: &mut GrzCursor<'_>,
+    hasher: &ahash::RandomState,
+    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+) -> Result<ViewboxIn, super::Error> {
+    let viewbox = source.byte_slice(tree_cursor.node().byte_range());
+    let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
+    let viewbox_range = tree_cursor.node().range();
+
+    match viewbox_node {
+        NodeKind::Size => {
+            tree_cursor.goto_next_sibling()?;
+            Ok(ViewboxIn::Size)
+        }
+        NodeKind::Identifier => {
+            let mut hasher = hasher.build_hasher();
+            std::hash::Hash::hash(&viewbox, &mut hasher);
+            let name = hasher.finish();
+            if let Some(vb) = viewboxes.get(&name) {
+                tree_cursor.goto_next_sibling()?;
+                tree_cursor.goto_first_child()?;
+                let vb_index: Cow<'_, str> =
+                    source.byte_slice(tree_cursor.node().byte_range()).into();
+                let vb_index: usize = vb_index.parse().unwrap();
+                tree_cursor.goto_parent();
+
+                if vb.constraints.get(vb_index).is_none() {
+                    return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                }
+
+                Ok(ViewboxIn::Custom(name, vb_index))
+            } else {
+                return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+            }
+        }
+        kind => return Err(super::Error::BadNode(viewbox_range.into(), kind)),
+    }
 }
