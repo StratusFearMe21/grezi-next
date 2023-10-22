@@ -10,9 +10,10 @@ use lsp_types::{
         Request, SemanticTokensFullRequest, SemanticTokensRangeRequest,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
-    CompletionOptions, CompletionOptionsCompletionItem, CompletionParams, CompletionResponse,
-    CompletionTextEdit, DeclarationCapability, DocumentChanges, GotoDefinitionParams,
-    GotoDefinitionResponse, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
+    CompletionItemLabelDetails, CompletionOptions, CompletionOptionsCompletionItem,
+    CompletionParams, CompletionResponse, CompletionTextEdit, DeclarationCapability,
+    DocumentChanges, GotoDefinitionParams, GotoDefinitionResponse, InsertReplaceEdit,
+    InsertTextFormat, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
     Position, PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions,
     RenameParams, SaveOptions, SemanticToken, SemanticTokenModifier, SemanticTokenType,
     SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
@@ -77,7 +78,7 @@ pub fn start_lsp(
             resolve_provider: Some(false),
             trigger_characters: Some(vec!["{".to_string()]),
             completion_item: Some(CompletionOptionsCompletionItem {
-                label_details_support: Some(false),
+                label_details_support: Some(true),
             }),
             ..Default::default()
         }),
@@ -152,7 +153,6 @@ pub fn start_lsp(
                                 row: pos.position.line as usize,
                                 column: pos.position.character as usize,
                             };
-
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
@@ -369,30 +369,43 @@ pub fn start_lsp(
                         if let Ok((rqid, completion)) =
                             req.extract::<CompletionParams>(Completion::METHOD)
                         {
+                            let new_slide_range = lsp_types::Range {
+                                start: Position {
+                                    line: completion.text_document_position.position.line,
+                                    character: 0,
+                                },
+                                end: Position {
+                                    line: completion.text_document_position.position.line,
+                                    character: current_rope
+                                        .line(
+                                            completion.text_document_position.position.line
+                                                as usize,
+                                        )
+                                        .len_chars()
+                                        as u32
+                                        - 1,
+                                },
+                            };
                             let new_slide_item = CompletionItem {
-                                label: "New Slide".into(),
+                                label: "new".into(),
+                                label_details: Some(CompletionItemLabelDetails {
+                                    description: Some("Create a new slide".to_string()),
+                                    detail: None,
+                                }),
+                                deprecated: Some(false),
+                                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                sort_text: Some("ffffffef".to_string()),
+                                filter_text: Some("new".into()),
                                 kind: Some(CompletionItemKind::SNIPPET),
                                 preselect: None,
-                                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                                    range: lsp_types::Range {
-                                        start: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: 0,
-                                        },
-                                        end: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: current_rope
-                                                .line(
-                                                    completion.text_document_position.position.line
-                                                        as usize,
-                                                )
-                                                .len_chars()
-                                                as u32
-                                                - 1,
-                                        },
+                                text_edit: Some(CompletionTextEdit::InsertAndReplace(
+                                    InsertReplaceEdit {
+                                        new_text: "{}[]".to_string(),
+                                        insert: new_slide_range,
+                                        replace: new_slide_range,
                                     },
-                                    new_text: "{}[]".to_string(),
-                                })),
+                                )),
+                                additional_text_edits: Some(Vec::new()),
                                 ..Default::default()
                             };
                             let tree_info = app.tree_info.lock();
@@ -485,32 +498,46 @@ pub fn start_lsp(
                                 }
                             }
                             new_text.push_str("}[]");
+                            let continue_slide_range = lsp_types::Range {
+                                start: Position {
+                                    line: completion.text_document_position.position.line,
+                                    character: 0,
+                                },
+                                end: Position {
+                                    line: completion.text_document_position.position.line,
+                                    character: current_rope
+                                        .line(
+                                            completion.text_document_position.position.line
+                                                as usize,
+                                        )
+                                        .len_chars()
+                                        as u32
+                                        - 1,
+                                },
+                            };
                             let continue_slide_item = CompletionItem {
-                                label: "Continue Slide".into(),
+                                label: "continue".into(),
+                                label_details: Some(CompletionItemLabelDetails {
+                                    description: Some("Copy the previous slide here".to_string()),
+                                    detail: None,
+                                }),
                                 kind: Some(CompletionItemKind::SNIPPET),
                                 preselect: None,
-                                text_edit: Some(CompletionTextEdit::Edit(TextEdit {
-                                    range: lsp_types::Range {
-                                        start: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: 0,
-                                        },
-                                        end: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: current_rope
-                                                .line(
-                                                    completion.text_document_position.position.line
-                                                        as usize,
-                                                )
-                                                .len_chars()
-                                                as u32
-                                                - 1,
-                                        },
+                                deprecated: Some(false),
+                                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                                sort_text: Some("ffffffef".to_string()),
+                                filter_text: Some("continue".into()),
+                                text_edit: Some(CompletionTextEdit::InsertAndReplace(
+                                    InsertReplaceEdit {
+                                        new_text,
+                                        insert: continue_slide_range,
+                                        replace: continue_slide_range,
                                     },
-                                    new_text,
-                                })),
+                                )),
+                                additional_text_edits: Some(Vec::new()),
                                 ..Default::default()
                             };
+
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
