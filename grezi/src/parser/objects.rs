@@ -64,6 +64,7 @@ pub fn parse_objects(
     source: &ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
+    errors_present: &mut Vec<super::Error>,
 ) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
@@ -73,6 +74,7 @@ pub fn parse_objects(
     tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());
     tree_cursor.goto_next_sibling()?;
+    let obj_range = tree_cursor.node().range();
     let obj_type: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
@@ -89,7 +91,11 @@ pub fn parse_objects(
                         value
                     }
                     NodeKind::NumberLiteral => tree_cursor.node(),
-                    _ => todo!(),
+                    _ => {
+                        return Some(Err(super::Error::InvalidParameter(
+                            tree_cursor.node().range().into(),
+                        )))
+                    }
                 };
                 if let Err(e) = tree_cursor.goto_next_sibling() {
                     return Some(Err(e));
@@ -128,7 +134,11 @@ pub fn parse_objects(
                         "left" | "Left" => align = Align::LEFT,
                         "center" | "Center" => align = Align::Center,
                         "right" | "Right" => align = Align::RIGHT,
-                        _ => todo!(),
+                        _ => {
+                            errors_present
+                                .push(super::Error::InvalidParameter(parameter.1.range().into()));
+                            continue;
+                        }
                     },
                     "font_family" => font = FontFamily::Name(value.into()),
                     "font_size" => font_size = value.parse::<f32>().unwrap(),
@@ -256,7 +266,7 @@ pub fn parse_objects(
             };
             ObjectType::Text { layout_job }
         }
-        _ => todo!(),
+        _ => return Err(super::Error::NotFound(obj_range.into())),
     };
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();

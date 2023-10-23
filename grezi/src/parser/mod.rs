@@ -409,7 +409,13 @@ pub fn parse_file(
                 }
             }
             NodeKind::Obj => {
-                match objects::parse_objects(tree_cursor.fork(), &source, helix_cell, &hasher) {
+                match objects::parse_objects(
+                    tree_cursor.fork(),
+                    &source,
+                    helix_cell,
+                    &hasher,
+                    &mut errors_present,
+                ) {
                     Ok(object) => {
                         slide_show.objects.insert(object.0, object.1);
                     }

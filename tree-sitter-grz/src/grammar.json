@@ -31,6 +31,27 @@
         {
           "type": "SYMBOL",
           "name": "action"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "completion"
+        }
+      ]
+    },
+    "completion": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
+        },
+        {
+          "type": "STRING",
+          "value": "."
+        },
+        {
+          "type": "SYMBOL",
+          "name": "identifier"
         }
       ]
     },

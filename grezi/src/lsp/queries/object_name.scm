@@ -1,0 +1,2 @@
+(obj
+    name: (identifier) @name)

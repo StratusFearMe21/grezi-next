@@ -17,8 +17,12 @@ module.exports = grammar({
         $.viewbox,
         $.obj,
         $.register,
-        $.action
+        $.action,
+        // Only used in LSP
+        $.completion
       ),
+
+    completion: $ => seq($.identifier, '.', $.identifier),
 
     // C Identifier
     identifier: _ =>

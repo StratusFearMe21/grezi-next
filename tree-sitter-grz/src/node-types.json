@@ -49,6 +49,21 @@
     }
   },
   {
+    "type": "completion",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "index_parser",
     "named": true,
     "fields": {},
@@ -333,6 +348,10 @@
           "named": true
         },
         {
+          "type": "completion",
+          "named": true
+        },
+        {
           "type": "obj",
           "named": true
         },
@@ -504,6 +523,10 @@
   },
   {
     "type": ",",
+    "named": false
+  },
+  {
+    "type": ".",
     "named": false
   },
   {
