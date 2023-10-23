@@ -559,24 +559,19 @@
       "members": [
         {
           "type": "FIELD",
-          "name": "obj_w_viewbox",
+          "name": "object",
           "content": {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "SYMBOL",
-                "name": "identifier"
-              },
-              {
-                "type": "STRING",
-                "value": ":"
-              },
-              {
-                "type": "SYMBOL",
-                "name": "_vb_identifier"
-              }
-            ]
+            "type": "SYMBOL",
+            "name": "identifier"
           }
+        },
+        {
+          "type": "STRING",
+          "value": ":"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_vb_identifier"
         },
         {
           "type": "FIELD",
@@ -1253,8 +1248,12 @@
       "type": "SEQ",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "identifier"
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
         },
         {
           "type": "STRING",

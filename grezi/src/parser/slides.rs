@@ -157,7 +157,7 @@ pub fn parse_slide_object(
         let lineup_first;
         let viewbox_first = from.unwrap_or_else(|| object.viewbox.unwrap_or(viewbox));
         let line_up_now;
-        if &edges[..1] == "[" {
+        if &edges[..1] == "[" || &edges[..1] == "{" {
             let object_position = object
                 .position
                 .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?;

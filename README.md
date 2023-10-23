@@ -5,11 +5,12 @@ Grezi allows you to write presentations using plain text. It's designed to make 
 
 ## Features
 - IDE Support:
-    Grezi is designed to be used with an IDE ([Helix](https://github.com/helix-editor/helix) is what I've been using). Not only does the language have syntax highlighting and indentation hints thanks to the `tree-sitter` parser, but it also has a very basic language server that makes the process of making slideshows easier. Features of the LSP include
+    Grezi is designed to be used with an IDE ([Helix](https://github.com/helix-editor/helix) is what I've been using). Not only does the language have syntax highlighting and indentation hints thanks to the `tree-sitter` parser, but it also has an embedded language server that makes the process of making slideshows easier. Features of the LSP include
     - Rename symbol support
     - Goto declaration support
     - Goto reference support
     - Semantic tokens support (Syntax highlighting in non tree-sitter editors, eg. VSCode)
+    - Inlay hints for edges and slide numbers
     - Errors and diagnostics support
     - Hot reloading on save
     - Snippet for copying down the previous slide and removing exited objects

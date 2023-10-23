@@ -1,29 +1,32 @@
-use std::sync::atomic::Ordering;
+use std::{collections::HashMap, hash::BuildHasherDefault, sync::atomic::Ordering};
 
-use crate::parser::NodeKind;
+use crate::parser::{GrzCursor, NodeKind};
 use helix_core::syntax::RopeProvider;
-use lsp_server::{Connection, ExtractError, Message, Response};
+use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{Notification, PublishDiagnostics, ShowMessage},
     request::{
-        ApplyWorkspaceEdit, Completion, GotoDeclaration, PrepareRenameRequest, References, Rename,
-        Request, SemanticTokensFullRequest, SemanticTokensRangeRequest,
+        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, GotoDeclaration,
+        InlayHintRefreshRequest, InlayHintRequest, PrepareRenameRequest, References, Rename,
+        Request, SemanticTokensFullRequest,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
-    CompletionItemLabelDetails, CompletionOptions, CompletionOptionsCompletionItem,
+    CompletionItemLabelDetails, CompletionList, CompletionOptions, CompletionOptionsCompletionItem,
     CompletionParams, CompletionResponse, CompletionTextEdit, DeclarationCapability,
-    DocumentChanges, GotoDefinitionParams, GotoDefinitionResponse, InsertReplaceEdit,
+    DocumentChanges, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
+    GotoDefinitionParams, GotoDefinitionResponse, InlayHint, InlayHintKind, InlayHintLabel,
+    InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, InsertReplaceEdit,
     InsertTextFormat, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
     Position, PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions,
     RenameParams, SaveOptions, SemanticToken, SemanticTokenModifier, SemanticTokenType,
     SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensRangeParams, SemanticTokensRangeResult,
-    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams,
-    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
+    ServerCapabilities, ShowMessageParams, SymbolKind, TextDocumentEdit,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
     WorkspaceEdit,
 };
-use ropey::Rope;
+use ropey::{Rope, RopeSlice};
 use tree_sitter::{Point, Query, QueryCursor};
 
 pub fn start_lsp(
@@ -41,15 +44,18 @@ pub fn start_lsp(
     let slide_complete_query = Query::new(tree_sitter_grz::language(), "(slide) @find").unwrap();
     let top_level_search_query = Query::new(
         tree_sitter_grz::language(),
-        "[\
-    (slide)\
-    (viewbox)\
-    (obj)\
-    (register)\
-    (action)\
-    ] @obj",
+        "(viewbox\nname: (identifier) @obj)\
+    (obj\nname: (identifier) @obj)\
+    (register\nname: (identifier) @obj)",
     )
     .unwrap();
+    let inlay_edge_query = Query::new(
+        tree_sitter_grz::language(),
+        "(slide_obj\nobject: (identifier) @name)\
+        (edge_parser) @edge",
+    )
+    .unwrap();
+
     let semantic_token_query = Query::new(
         tree_sitter_grz::language(),
         include_str!("semantic_tokens.scm"),
@@ -84,6 +90,7 @@ pub fn start_lsp(
         }),
         declaration_provider: Some(DeclarationCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: SemanticTokensLegend {
@@ -109,11 +116,19 @@ pub fn start_lsp(
                         })
                         .collect(),
                 },
-                range: Some(true),
+                range: Some(false),
                 full: Some(SemanticTokensFullOptions::Delta { delta: Some(false) }),
                 ..Default::default()
             },
         )),
+        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
+            InlayHintOptions {
+                work_done_progress_options: WorkDoneProgressOptions {
+                    work_done_progress: Some(false),
+                },
+                resolve_provider: Some(false),
+            },
+        ))),
         ..Default::default()
     })
     .unwrap();
@@ -134,6 +149,7 @@ pub fn start_lsp(
     }));
     let mut current_rope = ropey::Rope::new();
     let mut current_document_version = 0;
+    let mut current_request_number = 0;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
     'lsploop: for msg in &connection.receiver {
         match msg {
@@ -189,112 +205,223 @@ pub fn start_lsp(
                                 .unwrap();
                         }
                     }
-                    SemanticTokensFullRequest::METHOD | SemanticTokensRangeRequest::METHOD => {
-                        let tree_info = app.tree_info.lock();
-                        let tree_info = tree_info.as_ref().unwrap();
+                    InlayHintRequest::METHOD => {
+                        if let Ok((rqid, inlay_hint)) =
+                            req.extract::<InlayHintParams>(InlayHintRequest::METHOD)
+                        {
+                            let tree_info = app.tree_info.lock();
+                            let tree_info = tree_info.as_ref().unwrap();
 
-                        let start_node = tree_info.0.root_node();
+                            let mut hints = Vec::new();
 
-                        let iter = query_cursor.matches(
-                            &semantic_token_query,
-                            start_node,
-                            RopeProvider(current_rope.slice(..)),
-                        );
+                            let slide_iter = query_cursor.matches(
+                                &slide_complete_query,
+                                tree_info.0.root_node(),
+                                RopeProvider(current_rope.slice(..)),
+                            );
 
-                        let mut tokens = Vec::new();
-                        let mut last_range = tree_sitter::Range {
-                            start_byte: 0,
-                            end_byte: 0,
-                            start_point: Point { row: 0, column: 0 },
-                            end_point: Point { row: 0, column: 0 },
-                        };
-                        for query_match in iter {
-                            let capture = query_match.captures.last().unwrap();
-                            let range = capture.node.range();
+                            let mut inlay_edge_map: HashMap<
+                                RopeSlice<'_>,
+                                RopeSlice<'_>,
+                                BuildHasherDefault<ahash::AHasher>,
+                            > = HashMap::default();
 
-                            if last_range != range {
-                                let mut delta_line =
-                                    (range.start_point.row - last_range.end_point.row) as u32;
-                                let mut multiline = false;
-                                for line in range.start_point.row..=range.end_point.row {
-                                    tokens.push(SemanticToken {
-                                        delta_line,
-                                        delta_start: if multiline {
-                                            0
-                                        } else if delta_line == 0 {
-                                            (range.start_point.column
-                                                - last_range.start_point.column)
-                                                as u32
+                            for (slide_num, query_match) in slide_iter.enumerate() {
+                                let range = query_match.captures[0].node.range();
+                                hints.push(InlayHint {
+                                    position: Position {
+                                        line: range.start_point.row as u32,
+                                        character: range.start_point.column as u32,
+                                    },
+                                    label: InlayHintLabel::String(format!(
+                                        "Slide {}:",
+                                        slide_num + 1
+                                    )),
+                                    kind: Some(InlayHintKind::PARAMETER),
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_right: Some(true),
+                                    padding_left: Some(false),
+                                    data: None,
+                                });
+                            }
+
+                            let mut edge_iter = query_cursor
+                                .matches(
+                                    &inlay_edge_query,
+                                    tree_info.0.root_node(),
+                                    RopeProvider(current_rope.slice(..)),
+                                )
+                                .peekable();
+
+                            while let Some(query_match) = edge_iter.next() {
+                                let query_node = query_match.captures[0].node;
+                                let query_slice = current_rope
+                                    .byte_slice(query_match.captures[0].node.byte_range());
+
+                                match edge_iter.peek() {
+                                    Some(edge_match)
+                                        if matches!(
+                                            NodeKind::from(edge_match.captures[0].node.kind_id()),
+                                            NodeKind::EdgeParser
+                                        ) =>
+                                    {
+                                        let edge_slice = current_rope
+                                            .byte_slice(edge_match.captures[0].node.byte_range());
+                                        if edge_slice.len_chars() == 2 {
+                                            if let Some(edge) = inlay_edge_map.get(&query_slice) {
+                                                let range = edge_match.captures[0].node.range();
+
+                                                hints.push(InlayHint {
+                                                    position: Position {
+                                                        line: range.start_point.row as u32,
+                                                        character: range.start_point.column as u32,
+                                                    },
+                                                    label: InlayHintLabel::String(format!(
+                                                        "{}",
+                                                        edge
+                                                    )),
+                                                    kind: Some(InlayHintKind::PARAMETER),
+                                                    text_edits: None,
+                                                    tooltip: None,
+                                                    padding_right: Some(false),
+                                                    padding_left: Some(false),
+                                                    data: None,
+                                                });
+                                            }
+                                            inlay_edge_map.insert(query_slice, edge_slice);
                                         } else {
-                                            range.start_point.column as u32
-                                        },
-                                        length: if line == range.start_point.row {
-                                            if range.end_point.row - range.start_point.row > 0 {
+                                            inlay_edge_map
+                                                .insert(query_slice, edge_slice.slice(2..));
+                                        }
+
+                                        edge_iter.next();
+                                    }
+                                    _ => {
+                                        if let Some(edge) = inlay_edge_map.get(&query_slice) {
+                                            let mut walker = query_node.parent().unwrap().walk();
+                                            while walker.goto_next_sibling() {}
+                                            let range = walker.node().range();
+
+                                            hints.push(InlayHint {
+                                                position: Position {
+                                                    line: range.end_point.row as u32,
+                                                    character: range.end_point.column as u32,
+                                                },
+                                                label: InlayHintLabel::String(format!(
+                                                    "{}{}",
+                                                    edge, edge
+                                                )),
+                                                kind: Some(InlayHintKind::PARAMETER),
+                                                text_edits: None,
+                                                tooltip: None,
+                                                padding_right: Some(false),
+                                                padding_left: Some(false),
+                                                data: None,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(rqid, Some(hints))))
+                                .unwrap();
+                        }
+                    }
+                    SemanticTokensFullRequest::METHOD => {
+                        if let Ok((rqid, _)) =
+                            req.extract::<SemanticTokensParams>(SemanticTokensFullRequest::METHOD)
+                        {
+                            let tree_info = app.tree_info.lock();
+                            let tree_info = tree_info.as_ref().unwrap();
+
+                            let start_node = tree_info.0.root_node();
+
+                            let iter = query_cursor.matches(
+                                &semantic_token_query,
+                                start_node,
+                                RopeProvider(current_rope.slice(..)),
+                            );
+
+                            let mut tokens = Vec::new();
+                            let mut last_range = tree_sitter::Range {
+                                start_byte: 0,
+                                end_byte: 0,
+                                start_point: Point { row: 0, column: 0 },
+                                end_point: Point { row: 0, column: 0 },
+                            };
+                            for query_match in iter {
+                                let capture = query_match.captures.last().unwrap();
+                                let range = capture.node.range();
+
+                                if last_range != range {
+                                    let mut delta_line =
+                                        (range.start_point.row - last_range.end_point.row) as u32;
+                                    let mut multiline = false;
+                                    for line in range.start_point.row..=range.end_point.row {
+                                        tokens.push(SemanticToken {
+                                            delta_line,
+                                            delta_start: if multiline {
+                                                0
+                                            } else if delta_line == 0 {
+                                                (range.start_point.column
+                                                    - last_range.start_point.column)
+                                                    as u32
+                                            } else {
+                                                range.start_point.column as u32
+                                            },
+                                            length: if line == range.start_point.row {
+                                                if range.end_point.row - range.start_point.row > 0 {
+                                                    current_rope
+                                                        .line(line)
+                                                        .slice(range.start_point.column..)
+                                                        .len_chars()
+                                                        as u32
+                                                } else {
+                                                    (range.end_point.column
+                                                        - range.start_point.column)
+                                                        as u32
+                                                }
+                                            } else if line == range.end_point.row {
                                                 current_rope
                                                     .line(line)
-                                                    .slice(range.start_point.column..)
+                                                    .slice(..range.end_point.column)
                                                     .len_chars()
                                                     as u32
                                             } else {
-                                                (range.end_point.column - range.start_point.column)
-                                                    as u32
-                                            }
-                                        } else if line == range.end_point.row {
-                                            current_rope
-                                                .line(line)
-                                                .slice(..range.end_point.column)
-                                                .len_chars()
-                                                as u32
-                                        } else {
-                                            current_rope.line(line).len_chars() as u32
-                                        },
-                                        token_type: capture.index,
-                                        token_modifiers_bitset: if semantic_token_query
-                                            .capture_names()
-                                            [capture.index as usize]
-                                            .contains('.')
-                                        {
-                                            0b00000001
-                                        } else {
-                                            0
-                                        },
-                                    });
-                                    delta_line = 1;
-                                    multiline = true;
+                                                current_rope.line(line).len_chars() as u32
+                                            },
+                                            token_type: capture.index,
+                                            token_modifiers_bitset: if semantic_token_query
+                                                .capture_names()
+                                                [capture.index as usize]
+                                                .contains('.')
+                                            {
+                                                0b00000001
+                                            } else {
+                                                0
+                                            },
+                                        });
+                                        delta_line = 1;
+                                        multiline = true;
+                                    }
+
+                                    last_range = range;
                                 }
+                            }
 
-                                last_range = range;
-                            }
-                        }
-
-                        match req.extract::<SemanticTokensRangeParams>(
-                            SemanticTokensRangeRequest::METHOD,
-                        ) {
-                            Ok((rqid, _)) => {
-                                connection
-                                    .sender
-                                    .send(Message::Response(Response::new_ok(
-                                        rqid,
-                                        Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
-                                            data: tokens,
-                                            ..Default::default()
-                                        })),
-                                    )))
-                                    .unwrap();
-                            }
-                            Err(ExtractError::MethodMismatch(req)) => {
-                                connection
-                                    .sender
-                                    .send(Message::Response(Response::new_ok(
-                                        req.id.clone(),
-                                        Some(SemanticTokensResult::Tokens(SemanticTokens {
-                                            data: tokens,
-                                            ..Default::default()
-                                        })),
-                                    )))
-                                    .unwrap();
-                            }
-                            Err(_) => {}
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(
+                                    rqid,
+                                    Some(SemanticTokensResult::Tokens(SemanticTokens {
+                                        data: tokens,
+                                        ..Default::default()
+                                    })),
+                                )))
+                                .unwrap();
                         }
                     }
                     Rename::METHOD => {
@@ -365,6 +492,208 @@ pub fn start_lsp(
                                 .unwrap();
                         }
                     }
+                    DocumentSymbolRequest::METHOD => {
+                        #[allow(deprecated)]
+                        if let Ok((rqid, _)) =
+                            req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
+                        {
+                            let tree_info = app.tree_info.lock();
+                            let tree_info = tree_info.as_ref().unwrap();
+
+                            let mut tree_cursor = GrzCursor::new(&tree_info.0);
+                            let mut symbols = Vec::new();
+
+                            let _ = tree_cursor.goto_first_child();
+                            let mut slide_num = 0;
+                            'parserloop: loop {
+                                let node = tree_cursor.node();
+                                let range = node.range();
+
+                                match NodeKind::from(node.kind_id()) {
+                                    NodeKind::Slide => {
+                                        slide_num += 1;
+
+                                        let _ = tree_cursor.goto_first_child();
+                                        let _ = tree_cursor.goto_first_child();
+                                        let selection_range = tree_cursor.node().range();
+                                        tree_cursor.goto_parent();
+                                        tree_cursor.goto_parent();
+
+                                        symbols.push(DocumentSymbol {
+                                            name: format!("Slide {}", slide_num),
+                                            kind: SymbolKind::FUNCTION,
+                                            range: lsp_types::Range {
+                                                start: Position {
+                                                    line: range.start_point.row as u32,
+                                                    character: range.start_point.column as u32,
+                                                },
+                                                end: Position {
+                                                    line: range.end_point.row as u32,
+                                                    character: range.end_point.column as u32,
+                                                },
+                                            },
+                                            detail: None,
+                                            selection_range: lsp_types::Range {
+                                                start: Position {
+                                                    line: selection_range.start_point.row as u32,
+                                                    character: selection_range.start_point.column
+                                                        as u32,
+                                                },
+                                                end: Position {
+                                                    line: selection_range.end_point.row as u32,
+                                                    character: selection_range.end_point.column
+                                                        as u32,
+                                                },
+                                            },
+                                            tags: None,
+                                            deprecated: None,
+                                            children: None,
+                                        })
+                                    }
+                                    NodeKind::Viewbox => {
+                                        let _ = tree_cursor.goto_first_child();
+                                        let selection_range = tree_cursor.node().range();
+                                        let byte_range = tree_cursor.node().byte_range();
+                                        let _ = tree_cursor.goto_next_sibling();
+                                        let name_range = tree_cursor.node().byte_range();
+                                        let _ = tree_cursor.goto_next_sibling();
+                                        let index_range = tree_cursor.node().byte_range();
+                                        tree_cursor.goto_parent();
+
+                                        symbols.push(DocumentSymbol {
+                                            name: current_rope.byte_slice(byte_range).to_string(),
+                                            kind: SymbolKind::VARIABLE,
+                                            range: lsp_types::Range {
+                                                start: Position {
+                                                    line: range.start_point.row as u32,
+                                                    character: range.start_point.column as u32,
+                                                },
+                                                end: Position {
+                                                    line: range.end_point.row as u32,
+                                                    character: range.end_point.column as u32,
+                                                },
+                                            },
+                                            detail: Some(format!(
+                                                "{}{}",
+                                                current_rope.slice(name_range),
+                                                current_rope.slice(index_range)
+                                            )),
+                                            selection_range: lsp_types::Range {
+                                                start: Position {
+                                                    line: selection_range.start_point.row as u32,
+                                                    character: selection_range.start_point.column
+                                                        as u32,
+                                                },
+                                                end: Position {
+                                                    line: selection_range.end_point.row as u32,
+                                                    character: selection_range.end_point.column
+                                                        as u32,
+                                                },
+                                            },
+                                            tags: None,
+                                            deprecated: None,
+                                            children: None,
+                                        })
+                                    }
+                                    NodeKind::Obj => {
+                                        let _ = tree_cursor.goto_first_child();
+                                        let selection_range = tree_cursor.node().range();
+                                        let byte_range = tree_cursor.node().byte_range();
+                                        let _ = tree_cursor.goto_next_sibling();
+                                        let name_range = tree_cursor.node().byte_range();
+                                        tree_cursor.goto_parent();
+
+                                        symbols.push(DocumentSymbol {
+                                            name: current_rope.byte_slice(byte_range).to_string(),
+                                            kind: SymbolKind::OBJECT,
+                                            range: lsp_types::Range {
+                                                start: Position {
+                                                    line: range.start_point.row as u32,
+                                                    character: range.start_point.column as u32,
+                                                },
+                                                end: Position {
+                                                    line: range.end_point.row as u32,
+                                                    character: range.end_point.column as u32,
+                                                },
+                                            },
+                                            detail: Some(
+                                                current_rope.slice(name_range).to_string(),
+                                            ),
+                                            selection_range: lsp_types::Range {
+                                                start: Position {
+                                                    line: selection_range.start_point.row as u32,
+                                                    character: selection_range.start_point.column
+                                                        as u32,
+                                                },
+                                                end: Position {
+                                                    line: selection_range.end_point.row as u32,
+                                                    character: selection_range.end_point.column
+                                                        as u32,
+                                                },
+                                            },
+                                            tags: None,
+                                            deprecated: None,
+                                            children: None,
+                                        })
+                                    }
+                                    NodeKind::Register => { /* todo */ }
+                                    NodeKind::Action => {
+                                        let _ = tree_cursor.goto_first_child();
+                                        let selection_range = tree_cursor.node().range();
+                                        tree_cursor.goto_parent();
+
+                                        symbols.push(DocumentSymbol {
+                                            name: "Actions".to_string(),
+                                            kind: SymbolKind::ARRAY,
+                                            range: lsp_types::Range {
+                                                start: Position {
+                                                    line: range.start_point.row as u32,
+                                                    character: range.start_point.column as u32,
+                                                },
+                                                end: Position {
+                                                    line: range.end_point.row as u32,
+                                                    character: range.end_point.column as u32,
+                                                },
+                                            },
+                                            detail: None,
+                                            selection_range: lsp_types::Range {
+                                                start: Position {
+                                                    line: selection_range.start_point.row as u32,
+                                                    character: selection_range.start_point.column
+                                                        as u32,
+                                                },
+                                                end: Position {
+                                                    line: selection_range.end_point.row as u32,
+                                                    character: selection_range.end_point.column
+                                                        as u32,
+                                                },
+                                            },
+                                            tags: None,
+                                            deprecated: None,
+                                            children: None,
+                                        })
+                                    }
+                                    _ => {}
+                                }
+
+                                loop {
+                                    match tree_cursor.goto_next_sibling() {
+                                        Ok(false) => break 'parserloop,
+                                        Ok(true) => break,
+                                        Err(_) => {}
+                                    }
+                                }
+                            }
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(
+                                    rqid,
+                                    Some(DocumentSymbolResponse::Nested(symbols)),
+                                )))
+                                .unwrap();
+                        }
+                    }
                     Completion::METHOD => {
                         if let Ok((rqid, completion)) =
                             req.extract::<CompletionParams>(Completion::METHOD)
@@ -397,7 +726,7 @@ pub fn start_lsp(
                                 sort_text: Some("ffffffef".to_string()),
                                 filter_text: Some("new".into()),
                                 kind: Some(CompletionItemKind::SNIPPET),
-                                preselect: None,
+                                preselect: Some(true),
                                 text_edit: Some(CompletionTextEdit::InsertAndReplace(
                                     InsertReplaceEdit {
                                         new_text: "{}[]".to_string(),
@@ -432,7 +761,10 @@ pub fn start_lsp(
                                     .sender
                                     .send(Message::Response(Response::new_ok(
                                         rqid,
-                                        Some(CompletionResponse::Array(vec![new_slide_item])),
+                                        Some(CompletionResponse::List(CompletionList {
+                                            is_incomplete: true,
+                                            items: vec![new_slide_item],
+                                        })),
                                     )))
                                     .unwrap();
                                 continue 'lsploop;
@@ -522,7 +854,7 @@ pub fn start_lsp(
                                     detail: None,
                                 }),
                                 kind: Some(CompletionItemKind::SNIPPET),
-                                preselect: None,
+                                preselect: Some(true),
                                 deprecated: Some(false),
                                 insert_text_format: Some(InsertTextFormat::SNIPPET),
                                 sort_text: Some("ffffffef".to_string()),
@@ -542,10 +874,10 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    Some(CompletionResponse::Array(vec![
-                                        continue_slide_item,
-                                        new_slide_item,
-                                    ])),
+                                    Some(CompletionResponse::List(CompletionList {
+                                        is_incomplete: true,
+                                        items: vec![continue_slide_item, new_slide_item],
+                                    })),
                                 )))
                                 .unwrap();
                         }
@@ -578,34 +910,31 @@ pub fn start_lsp(
                             );
 
                             for query_match in iter {
-                                if let Some(child) = query_match.captures[0].node.child(0) {
-                                    if current_rope.byte_slice(child.byte_range())
-                                        == current_rope.byte_slice(usage_node.byte_range())
-                                    {
-                                        let range = child.range();
-                                        connection
-                                            .sender
-                                            .send(Message::Response(Response::new_ok(
-                                                rqid,
-                                                Some(GotoDefinitionResponse::Scalar(Location {
-                                                    uri: currently_open.clone(),
-                                                    range: lsp_types::Range {
-                                                        start: Position {
-                                                            line: range.start_point.row as u32,
-                                                            character: range.start_point.column
-                                                                as u32,
-                                                        },
-                                                        end: Position {
-                                                            line: range.end_point.row as u32,
-                                                            character: range.end_point.column
-                                                                as u32,
-                                                        },
+                                if current_rope
+                                    .byte_slice(query_match.captures[0].node.byte_range())
+                                    == current_rope.byte_slice(usage_node.byte_range())
+                                {
+                                    let range = query_match.captures[0].node.range();
+                                    connection
+                                        .sender
+                                        .send(Message::Response(Response::new_ok(
+                                            rqid,
+                                            Some(GotoDefinitionResponse::Scalar(Location {
+                                                uri: currently_open.clone(),
+                                                range: lsp_types::Range {
+                                                    start: Position {
+                                                        line: range.start_point.row as u32,
+                                                        character: range.start_point.column as u32,
                                                     },
-                                                })),
-                                            )))
-                                            .unwrap();
-                                        continue 'lsploop;
-                                    }
+                                                    end: Position {
+                                                        line: range.end_point.row as u32,
+                                                        character: range.end_point.column as u32,
+                                                    },
+                                                },
+                                            })),
+                                        )))
+                                        .unwrap();
+                                    continue 'lsploop;
                                 }
                             }
 
@@ -692,7 +1021,7 @@ pub fn start_lsp(
                             connection
                                 .sender
                                 .send(Message::Request(lsp_server::Request::new(
-                                    0.into(),
+                                    current_request_number.into(),
                                     ApplyWorkspaceEdit::METHOD.to_string(),
                                     ApplyWorkspaceEditParams {
                                         label: None,
@@ -724,6 +1053,7 @@ pub fn start_lsp(
                                     },
                                 )))
                                 .unwrap();
+                            current_request_number += 1;
                             current_document_version += 1;
                         }
                         let mut tree_info = app.tree_info.lock();
@@ -860,6 +1190,15 @@ pub fn start_lsp(
                                             },
                                         )))
                                         .unwrap();
+                                    connection
+                                        .sender
+                                        .send(Message::Request(lsp_server::Request::new(
+                                            current_request_number.into(),
+                                            InlayHintRefreshRequest::METHOD.to_string(),
+                                            (),
+                                        )))
+                                        .unwrap();
+                                    current_request_number += 1;
                                     app.clear_resolved.store(true, Ordering::Relaxed);
                                     current_thread.unpark();
                                 }
@@ -904,7 +1243,7 @@ pub fn generate_edits(
     changeset: &helix_core::ChangeSet,
 ) -> Vec<tree_sitter::InputEdit> {
     use helix_core::{chars::char_is_line_ending, Operation::*, Tendril};
-    use ropey::RopeSlice;
+
     let mut old_pos = 0;
 
     let mut edits = Vec::new();

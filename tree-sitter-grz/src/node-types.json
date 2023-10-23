@@ -134,15 +134,22 @@
   {
     "type": "register",
     "named": true,
-    "fields": {},
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
+      "multiple": false,
       "required": true,
       "types": [
-        {
-          "type": "identifier",
-          "named": true
-        },
         {
           "type": "number_literal",
           "named": true
@@ -249,20 +256,12 @@
     "type": "slide_obj",
     "named": true,
     "fields": {
-      "obj_w_viewbox": {
-        "multiple": true,
+      "object": {
+        "multiple": false,
         "required": true,
         "types": [
           {
-            "type": ":",
-            "named": false
-          },
-          {
             "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "size",
             "named": true
           }
         ]
@@ -280,10 +279,18 @@
     },
     "children": {
       "multiple": true,
-      "required": false,
+      "required": true,
       "types": [
         {
           "type": "edge_parser",
+          "named": true
+        },
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "size",
           "named": true
         },
         {

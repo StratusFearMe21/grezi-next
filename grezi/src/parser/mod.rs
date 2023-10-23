@@ -270,13 +270,13 @@ pub struct GrzCursor<'a> {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'a> GrzCursor<'a> {
-    fn new(tree: &'a Tree) -> GrzCursor<'a> {
+    pub fn new(tree: &'a Tree) -> GrzCursor<'a> {
         GrzCursor {
             tree_cursor: tree.walk(),
         }
     }
 
-    fn fork<'b>(&'b self) -> GrzCursor<'b> {
+    pub fn fork<'b>(&'b self) -> GrzCursor<'b> {
         GrzCursor {
             tree_cursor: self.tree_cursor.node().walk(),
         }
@@ -298,7 +298,7 @@ impl<'a> GrzCursor<'a> {
         Ok(result)
     }
 
-    fn from_node(node: &'a Node<'a>) -> GrzCursor<'a> {
+    pub fn from_node(node: &'a Node<'a>) -> GrzCursor<'a> {
         GrzCursor {
             tree_cursor: node.walk(),
         }
@@ -314,7 +314,7 @@ impl<'a> GrzCursor<'a> {
         self.check_for_error(result)
     }
 
-    fn goto_first_child(&mut self) -> Result<bool, Error> {
+    pub fn goto_first_child(&mut self) -> Result<bool, Error> {
         if !self.goto_first_impl()? {
             return self.check_for_error(false);
         }
@@ -328,7 +328,7 @@ impl<'a> GrzCursor<'a> {
         self.check_for_error(true)
     }
 
-    fn goto_next_sibling(&mut self) -> Result<bool, Error> {
+    pub fn goto_next_sibling(&mut self) -> Result<bool, Error> {
         if !self.goto_next_impl()? {
             return self.check_for_error(false);
         }
@@ -342,7 +342,7 @@ impl<'a> GrzCursor<'a> {
         self.check_for_error(true)
     }
 
-    fn goto_parent(&mut self) -> bool {
+    pub fn goto_parent(&mut self) -> bool {
         self.tree_cursor.goto_parent()
     }
 
@@ -350,7 +350,7 @@ impl<'a> GrzCursor<'a> {
         self.tree_cursor.field_id()
     }
 
-    fn node(&self) -> Node<'a> {
+    pub fn node(&self) -> Node<'a> {
         self.tree_cursor.node()
     }
 }

@@ -90,9 +90,7 @@ module.exports = grammar({
     ),
 
     slide_obj: $ => seq(
-      field('obj_w_viewbox',
-        seq($.identifier, ':', $._vb_identifier)
-      ),
+      field('object', $.identifier), ':', $._vb_identifier,
       field('viewbox_index', $.index_parser),
       optional($.slide_from),
       optional($.edge_parser),
@@ -184,7 +182,7 @@ module.exports = grammar({
       ']'
     ),
 
-    register: $ => seq($.identifier, ':', $._text_ident),
+    register: $ => seq(field('name', $.identifier), ':', $._text_ident),
 
     comment: _ => token(choice(
       seq('//', /(\\+(.|\r?\n)|[^\\\n])*/),
