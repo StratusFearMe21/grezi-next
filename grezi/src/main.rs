@@ -617,7 +617,10 @@ impl eframe::App for MyEguiApp {
         let slide_show_cloned = Arc::clone(&self.slide_show);
         #[cfg(target_arch = "wasm32")]
         let slide_show = slide_show_cloned.read();
+        #[cfg(target_arch = "wasm32")]
         let mut button_hit = false;
+        #[cfg(not(target_arch = "wasm32"))]
+        let button_hit = false;
         #[cfg(target_arch = "wasm32")]
         egui::TopBottomPanel::bottom("controls")
             .exact_height(32.0)
