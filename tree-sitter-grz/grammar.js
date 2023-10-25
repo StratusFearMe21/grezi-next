@@ -11,7 +11,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($._definition),
 
-    whitespace: $ => /[\s|\\\r?\n]+/,
+    whitespace: $ => /(\s|\\\r?\n)+/,
 
     _definition: $ =>
       choice(
