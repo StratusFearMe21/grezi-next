@@ -2246,10 +2246,12 @@ impl<'a> FormattingCursor<'a> {
         };
         edit.range.end = pos;
         if self.tree_cursor.node().kind_id() == NodeKind::Whitespace as u16 {
+            let next;
             match whitespace_rule {
                 WhitespaceEdit::Delete => {
-                    self.edits.push(edit.clone());
+                    self.edits.push(edit);
                     self.edited = true;
+                    next = self.goto_next_impl()?;
                 }
                 WhitespaceEdit::Assert(assertion) => {
                     if current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte)
@@ -2259,21 +2261,16 @@ impl<'a> FormattingCursor<'a> {
                         self.edits.push(edit.clone());
                         self.edited = true;
                     }
+                    next = self.goto_next_impl()?;
                 }
-                WhitespaceEdit::Trailing(_) => {}
-            }
-
-            let next = self.goto_next_impl()?;
-
-            match whitespace_rule {
                 WhitespaceEdit::Trailing(trailing) => {
+                    next = self.goto_next_impl()?;
                     if current_rope.byte_slice(self.tree_cursor.node().byte_range()) != trailing {
                         edit.new_text = trailing.to_owned();
                     }
                     self.edits.push(edit.clone());
                     self.edited = true;
                 }
-                _ => {}
             }
 
             if !next {
@@ -2291,7 +2288,7 @@ impl<'a> FormattingCursor<'a> {
                     if current_rope.byte_slice(self.tree_cursor.node().byte_range()) != trailing {
                         edit.new_text = trailing.to_owned();
                         edit.range.end = edit.range.start;
-                        self.edits.push(edit.clone());
+                        self.edits.push(edit);
                         self.edited = true;
                     }
                 }
