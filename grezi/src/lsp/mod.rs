@@ -338,7 +338,7 @@ pub fn start_lsp(
                                     while parent_object.is_error() || parent_object.is_extra() {
                                         parent_object = parent_object.parent().unwrap();
                                     }
-                                    match dbg!(NodeKind::from(parent_object.kind_id())) {
+                                    match NodeKind::from(parent_object.kind_id()) {
                                         NodeKind::Viewbox
                                         | NodeKind::SlideObj
                                         | NodeKind::SlideObjects
@@ -2289,7 +2289,6 @@ pub struct FormattingCursor<'a> {
     pub edits: Vec<TextEdit>,
     pub last_range: tree_sitter::Range,
     pub edited: bool,
-    last_edit: WhitespaceEdit,
 }
 
 impl<'a> FormattingCursor<'a> {
@@ -2299,7 +2298,6 @@ impl<'a> FormattingCursor<'a> {
             edits: Vec::new(),
             last_range: tree.root_node().range(),
             edited: false,
-            last_edit: WhitespaceEdit::Delete,
         }
     }
 
@@ -2376,7 +2374,6 @@ impl<'a> FormattingCursor<'a> {
             new_text: String::new(),
         };
 
-        self.last_edit = whitespace_rule;
         self.edited = false;
         self.last_range = self.tree_cursor.node().range();
 
@@ -2476,24 +2473,17 @@ impl<'a> FormattingCursor<'a> {
             }
             WhitespaceEdit::Delete => {
                 if self.edited {
-                    match self.last_edit {
-                        WhitespaceEdit::Assert(_) => {
-                            if let Some(edit) = self.edits.last_mut() {
-                                if edit.range.start != edit.range.end {
-                                    edit.new_text.clear();
-                                } else {
-                                    self.edits.pop();
-                                }
-                            }
+                    if let Some(edit) = self.edits.last_mut() {
+                        if edit.range.start != edit.range.end {
+                            edit.new_text.clear();
+                        } else {
+                            self.edits.pop();
                         }
-                        WhitespaceEdit::Delete => {}
-                        kind => unimplemented!("{:?}", kind),
                     }
                 }
             }
             _ => unimplemented!(),
         }
-        self.last_edit = whitespace_rule;
     }
 
     pub fn goto_parent(&mut self) -> bool {
