@@ -169,6 +169,7 @@ pub fn parse_viewbox(
     ))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox_ident(
     source: &ropey::Rope,
     tree_cursor: &mut GrzCursor<'_>,
