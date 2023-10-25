@@ -230,7 +230,7 @@ fn parse_slide_function(
     mut tree_cursor: GrzCursor<'_>,
     hasher: &ahash::RandomState,
     source: &ropey::Rope,
-    slide_objects: &mut Vec<SlideObj>,
+    slide_objects: &mut [SlideObj],
     max_time: &mut f32,
     slide_on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     errors_present: &mut Vec<super::Error>,
@@ -291,9 +291,10 @@ fn parse_slide_function(
             let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
                 NodeKind::StringLiteral => {
                     let from =
-                        match parse_highlight_location(tree_cursor.fork(), source).map_err(|_| {
-                            super::Error::InvalidParameter(tree_cursor.node().range().into())
-                        }) {
+                        match super::actions::parse_highlight_location(tree_cursor.fork(), source)
+                            .map_err(|_| {
+                                super::Error::InvalidParameter(tree_cursor.node().range().into())
+                            }) {
                             Ok(from) => from,
                             Err(e) => {
                                 errors_present.push(e);
@@ -303,12 +304,13 @@ fn parse_slide_function(
                     tree_cursor.goto_next_sibling()?;
                     match NodeKind::from(tree_cursor.node().kind_id()) {
                         NodeKind::StringLiteral => {
-                            let to = match parse_highlight_location(tree_cursor.fork(), source)
-                                .map_err(|_| {
-                                    super::Error::InvalidParameter(
-                                        tree_cursor.node().range().into(),
-                                    )
-                                }) {
+                            let to = match super::actions::parse_highlight_location(
+                                tree_cursor.fork(),
+                                source,
+                            )
+                            .map_err(|_| {
+                                super::Error::InvalidParameter(tree_cursor.node().range().into())
+                            }) {
                                 Ok(to) => to,
                                 Err(e) => {
                                     errors_present.push(e);
@@ -333,19 +335,4 @@ fn parse_slide_function(
             tree_cursor.node().range().into(),
         )),
     }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn parse_highlight_location(
-    mut tree_cursor: GrzCursor<'_>,
-    source: &ropey::Rope,
-) -> Result<PCursor, ()> {
-    tree_cursor.goto_first_child().or(Err(()))?;
-    let value: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-    let (line, column) = value.split_once(':').ok_or(())?;
-    Ok(PCursor {
-        paragraph: line.parse().or(Err(()))?,
-        offset: column.parse().or(Err(()))?,
-        prefer_next_row: true,
-    })
 }

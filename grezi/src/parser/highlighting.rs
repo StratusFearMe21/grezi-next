@@ -107,9 +107,7 @@ pub fn highlight_text(
     let highlight_config = helix.loaded_syntaxes.entry(hash).or_insert_with(|| {
         helix
             .loader
-            .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(
-                lang.into(),
-            ))
+            .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(lang))
             .and_then(|config| config.highlight_config(helix.theme.scopes()))
             .unwrap()
     });

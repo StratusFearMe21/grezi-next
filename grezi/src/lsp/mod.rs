@@ -9,7 +9,10 @@ use crate::{
 use helix_core::syntax::RopeProvider;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    notification::{Notification, PublishDiagnostics, ShowMessage},
+    notification::{
+        DidChangeTextDocument, DidOpenTextDocument, DidSaveTextDocument, Notification,
+        PublishDiagnostics, ShowMessage,
+    },
     request::{
         ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, Formatting, GotoDeclaration,
         InlayHintRequest, PrepareRenameRequest, RangeFormatting, References, Rename, Request,
@@ -22,7 +25,7 @@ use lsp_types::{
     DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
     InlayHint, InlayHintKind, InlayHintLabel, InlayHintOptions, InlayHintParams,
     InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, Location, MessageType, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse,
+    OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind, PrepareRenameResponse,
     PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
     SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
     SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
@@ -122,7 +125,7 @@ pub fn start_lsp(
                         .map(|name| {
                             SemanticTokenType::new(unsafe {
                                 std::mem::transmute::<&str, &'static str>(
-                                    name.split_once('.').unwrap_or((name.as_str(), "")).0,
+                                    name.split_once('.').map(|split| split.0).unwrap_or(name),
                                 )
                             })
                         })
@@ -151,6 +154,7 @@ pub fn start_lsp(
                 resolve_provider: Some(false),
             },
         ))),
+        position_encoding: Some(PositionEncodingKind::UTF8),
         ..Default::default()
     })
     .unwrap();
@@ -177,8 +181,9 @@ pub fn start_lsp(
         RopeSlice<'_>,
         BuildHasherDefault<ahash::AHasher>,
     > = HashMap::default();
+    let mut last_inlay_len = 16;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
-    'lsploop: for msg in &connection.receiver {
+    for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req).unwrap() {
@@ -190,7 +195,8 @@ pub fn start_lsp(
                         if let Ok((rqid, _)) =
                             req.extract::<DocumentRangeFormattingParams>(RangeFormatting::METHOD)
                         {
-                            let edits: Option<Vec<TextEdit>> = format(&app, &current_rope).ok();
+                            let edits: Option<Vec<TextEdit>> =
+                                format_code(&app, &current_rope).ok();
 
                             connection
                                 .sender
@@ -202,7 +208,8 @@ pub fn start_lsp(
                         if let Ok((rqid, _)) =
                             req.extract::<DocumentFormattingParams>(Formatting::METHOD)
                         {
-                            let edits: Option<Vec<TextEdit>> = format(&app, &current_rope).ok();
+                            let edits: Option<Vec<TextEdit>> =
+                                format_code(&app, &current_rope).ok();
 
                             connection
                                 .sender
@@ -227,18 +234,18 @@ pub fn start_lsp(
                         if let Ok((rqid, _)) =
                             req.extract::<InlayHintParams>(InlayHintRequest::METHOD)
                         {
+                            let hints = inlay_hints(
+                                &app,
+                                &slide_complete_query,
+                                &inlay_edge_query,
+                                &mut inlay_edge_map,
+                                &current_rope,
+                                last_inlay_len,
+                            );
+                            last_inlay_len = hints.len();
                             connection
                                 .sender
-                                .send(Message::Response(Response::new_ok(
-                                    rqid,
-                                    Some(inlay_hints(
-                                        &app,
-                                        &slide_complete_query,
-                                        &inlay_edge_query,
-                                        &mut inlay_edge_map,
-                                        &current_rope,
-                                    )),
-                                )))
+                                .send(Message::Response(Response::new_ok(rqid, Some(hints))))
                                 .unwrap();
                         }
                     }
@@ -294,199 +301,11 @@ pub fn start_lsp(
                         if let Ok((rqid, _)) =
                             req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
                         {
-                            let tree_info = app.tree_info.lock();
-                            let tree_info = tree_info.as_ref().unwrap();
-
-                            let mut tree_cursor = GrzCursor::new(&tree_info.0);
-                            let mut symbols = Vec::new();
-
-                            let _ = tree_cursor.goto_first_child();
-                            let mut slide_num = 0;
-                            'parserloop: loop {
-                                let node = tree_cursor.node();
-                                let range = node.range();
-
-                                match NodeKind::from(node.kind_id()) {
-                                    NodeKind::Slide => {
-                                        slide_num += 1;
-
-                                        let _ = tree_cursor.goto_first_child();
-                                        let _ = tree_cursor.goto_first_child();
-                                        let selection_range = tree_cursor.node().range();
-                                        tree_cursor.goto_parent();
-                                        tree_cursor.goto_parent();
-
-                                        symbols.push(DocumentSymbol {
-                                            name: format!("Slide {}", slide_num),
-                                            kind: SymbolKind::FUNCTION,
-                                            range: lsp_types::Range {
-                                                start: Position {
-                                                    line: range.start_point.row as u32,
-                                                    character: range.start_point.column as u32,
-                                                },
-                                                end: Position {
-                                                    line: range.end_point.row as u32,
-                                                    character: range.end_point.column as u32,
-                                                },
-                                            },
-                                            detail: None,
-                                            selection_range: lsp_types::Range {
-                                                start: Position {
-                                                    line: selection_range.start_point.row as u32,
-                                                    character: selection_range.start_point.column
-                                                        as u32,
-                                                },
-                                                end: Position {
-                                                    line: selection_range.end_point.row as u32,
-                                                    character: selection_range.end_point.column
-                                                        as u32,
-                                                },
-                                            },
-                                            tags: None,
-                                            deprecated: None,
-                                            children: None,
-                                        })
-                                    }
-                                    NodeKind::Viewbox => {
-                                        let _ = tree_cursor.goto_first_child();
-                                        let selection_range = tree_cursor.node().range();
-                                        let byte_range = tree_cursor.node().byte_range();
-                                        let _ = tree_cursor.goto_next_sibling();
-                                        let name_range = tree_cursor.node().byte_range();
-                                        let _ = tree_cursor.goto_next_sibling();
-                                        let index_range = tree_cursor.node().byte_range();
-                                        tree_cursor.goto_parent();
-
-                                        symbols.push(DocumentSymbol {
-                                            name: current_rope.byte_slice(byte_range).to_string(),
-                                            kind: SymbolKind::VARIABLE,
-                                            range: lsp_types::Range {
-                                                start: Position {
-                                                    line: range.start_point.row as u32,
-                                                    character: range.start_point.column as u32,
-                                                },
-                                                end: Position {
-                                                    line: range.end_point.row as u32,
-                                                    character: range.end_point.column as u32,
-                                                },
-                                            },
-                                            detail: Some(format!(
-                                                "{}{}",
-                                                current_rope.slice(name_range),
-                                                current_rope.slice(index_range)
-                                            )),
-                                            selection_range: lsp_types::Range {
-                                                start: Position {
-                                                    line: selection_range.start_point.row as u32,
-                                                    character: selection_range.start_point.column
-                                                        as u32,
-                                                },
-                                                end: Position {
-                                                    line: selection_range.end_point.row as u32,
-                                                    character: selection_range.end_point.column
-                                                        as u32,
-                                                },
-                                            },
-                                            tags: None,
-                                            deprecated: None,
-                                            children: None,
-                                        })
-                                    }
-                                    NodeKind::Obj => {
-                                        let _ = tree_cursor.goto_first_child();
-                                        let selection_range = tree_cursor.node().range();
-                                        let byte_range = tree_cursor.node().byte_range();
-                                        let _ = tree_cursor.goto_next_sibling();
-                                        let name_range = tree_cursor.node().byte_range();
-                                        tree_cursor.goto_parent();
-
-                                        symbols.push(DocumentSymbol {
-                                            name: current_rope.byte_slice(byte_range).to_string(),
-                                            kind: SymbolKind::OBJECT,
-                                            range: lsp_types::Range {
-                                                start: Position {
-                                                    line: range.start_point.row as u32,
-                                                    character: range.start_point.column as u32,
-                                                },
-                                                end: Position {
-                                                    line: range.end_point.row as u32,
-                                                    character: range.end_point.column as u32,
-                                                },
-                                            },
-                                            detail: Some(
-                                                current_rope.slice(name_range).to_string(),
-                                            ),
-                                            selection_range: lsp_types::Range {
-                                                start: Position {
-                                                    line: selection_range.start_point.row as u32,
-                                                    character: selection_range.start_point.column
-                                                        as u32,
-                                                },
-                                                end: Position {
-                                                    line: selection_range.end_point.row as u32,
-                                                    character: selection_range.end_point.column
-                                                        as u32,
-                                                },
-                                            },
-                                            tags: None,
-                                            deprecated: None,
-                                            children: None,
-                                        })
-                                    }
-                                    NodeKind::Register => { /* todo */ }
-                                    NodeKind::Action => {
-                                        let _ = tree_cursor.goto_first_child();
-                                        let selection_range = tree_cursor.node().range();
-                                        tree_cursor.goto_parent();
-
-                                        symbols.push(DocumentSymbol {
-                                            name: "Actions".to_string(),
-                                            kind: SymbolKind::ARRAY,
-                                            range: lsp_types::Range {
-                                                start: Position {
-                                                    line: range.start_point.row as u32,
-                                                    character: range.start_point.column as u32,
-                                                },
-                                                end: Position {
-                                                    line: range.end_point.row as u32,
-                                                    character: range.end_point.column as u32,
-                                                },
-                                            },
-                                            detail: None,
-                                            selection_range: lsp_types::Range {
-                                                start: Position {
-                                                    line: selection_range.start_point.row as u32,
-                                                    character: selection_range.start_point.column
-                                                        as u32,
-                                                },
-                                                end: Position {
-                                                    line: selection_range.end_point.row as u32,
-                                                    character: selection_range.end_point.column
-                                                        as u32,
-                                                },
-                                            },
-                                            tags: None,
-                                            deprecated: None,
-                                            children: None,
-                                        })
-                                    }
-                                    _ => {}
-                                }
-
-                                loop {
-                                    match tree_cursor.goto_next_sibling() {
-                                        Ok(false) => break 'parserloop,
-                                        Ok(true) => break,
-                                        Err(_) => {}
-                                    }
-                                }
-                            }
-
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    Some(DocumentSymbolResponse::Nested(symbols)),
+                                    document_symbols(&app, &current_rope),
                                 )))
                                 .unwrap();
                         }
@@ -513,13 +332,13 @@ pub fn start_lsp(
                                 completion_node = completion_node.parent().unwrap();
                             }
 
-                            match dbg!(NodeKind::from(completion_node.kind_id())) {
+                            match NodeKind::from(completion_node.kind_id()) {
                                 NodeKind::Identifier => {
                                     let mut parent_object = completion_node.parent().unwrap();
                                     while parent_object.is_error() || parent_object.is_extra() {
                                         parent_object = parent_object.parent().unwrap();
                                     }
-                                    match NodeKind::from(parent_object.kind_id()) {
+                                    match dbg!(NodeKind::from(parent_object.kind_id())) {
                                         NodeKind::Viewbox
                                         | NodeKind::SlideObj
                                         | NodeKind::SlideObjects
@@ -651,7 +470,9 @@ pub fn start_lsp(
                                                 )))
                                                 .unwrap();
                                         }
-                                        NodeKind::SlideObjects | NodeKind::SlideObj => {
+                                        NodeKind::SlideObjects
+                                        | NodeKind::SlideObj
+                                        | NodeKind::Action => {
                                             let mut query_cursor = QueryCursor::new();
                                             let mut iter = query_cursor.matches(
                                                 &object_name_query,
@@ -1204,123 +1025,40 @@ pub fn start_lsp(
                         }
                     }
                     GotoDeclaration::METHOD => {
-                        if let Ok((rqid, goto_declaration)) =
+                        if let Ok((rqid, goto_params)) =
                             req.extract::<GotoDefinitionParams>(GotoDeclaration::METHOD)
                         {
-                            let tree_info = app.tree_info.lock();
-                            let tree_info = tree_info.as_ref().unwrap();
-                            let point = Point {
-                                row: goto_declaration.text_document_position_params.position.line
-                                    as usize,
-                                column: goto_declaration
-                                    .text_document_position_params
-                                    .position
-                                    .character as usize,
-                            };
-
-                            let usage_node = tree_info
-                                .0
-                                .root_node()
-                                .descendant_for_point_range(point, point)
-                                .unwrap();
-
-                            let mut query_cursor = QueryCursor::new();
-                            let iter = query_cursor.matches(
-                                &top_level_search_query,
-                                tree_info.0.root_node(),
-                                RopeProvider(current_rope.slice(..)),
-                            );
-
-                            for query_match in iter {
-                                if current_rope
-                                    .byte_slice(query_match.captures[0].node.byte_range())
-                                    == current_rope.byte_slice(usage_node.byte_range())
-                                {
-                                    let range = query_match.captures[0].node.range();
-                                    connection
-                                        .sender
-                                        .send(Message::Response(Response::new_ok(
-                                            rqid,
-                                            Some(GotoDefinitionResponse::Scalar(Location {
-                                                uri: currently_open.clone(),
-                                                range: lsp_types::Range {
-                                                    start: Position {
-                                                        line: range.start_point.row as u32,
-                                                        character: range.start_point.column as u32,
-                                                    },
-                                                    end: Position {
-                                                        line: range.end_point.row as u32,
-                                                        character: range.end_point.column as u32,
-                                                    },
-                                                },
-                                            })),
-                                        )))
-                                        .unwrap();
-                                    continue 'lsploop;
-                                }
-                            }
-
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    None::<GotoDefinitionResponse>,
+                                    goto_declaration(
+                                        &app,
+                                        goto_params,
+                                        &top_level_search_query,
+                                        &current_rope,
+                                        currently_open.clone(),
+                                    ),
                                 )))
                                 .unwrap();
                         }
                     }
                     References::METHOD => {
-                        if let Ok((rqid, references)) =
+                        if let Ok((rqid, reference_params)) =
                             req.extract::<ReferenceParams>(References::METHOD)
                         {
-                            let tree_info = app.tree_info.lock();
-                            let tree_info = tree_info.as_ref().unwrap();
-                            let point = Point {
-                                row: references.text_document_position.position.line as usize,
-                                column: references.text_document_position.position.character
-                                    as usize,
-                            };
-
-                            let reference_node = tree_info
-                                .0
-                                .root_node()
-                                .descendant_for_point_range(point, point)
-                                .unwrap();
-
-                            let mut query_cursor = QueryCursor::new();
-                            let iter = query_cursor.matches(
-                                &rename_query,
-                                tree_info.0.root_node(),
-                                RopeProvider(current_rope.slice(..)),
-                            );
-
-                            let mut locations = Vec::new();
-
-                            for query_match in iter {
-                                if current_rope
-                                    .byte_slice(query_match.captures[0].node.byte_range())
-                                    == current_rope.byte_slice(reference_node.byte_range())
-                                {
-                                    let range = query_match.captures[0].node.range();
-                                    locations.push(Location {
-                                        uri: currently_open.clone(),
-                                        range: lsp_types::Range {
-                                            start: Position {
-                                                line: range.start_point.row as u32,
-                                                character: range.start_point.column as u32,
-                                            },
-                                            end: Position {
-                                                line: range.end_point.row as u32,
-                                                character: range.end_point.column as u32,
-                                            },
-                                        },
-                                    });
-                                }
-                            }
-
                             connection
                                 .sender
-                                .send(Message::Response(Response::new_ok(rqid, Some(locations))))
+                                .send(Message::Response(Response::new_ok(
+                                    rqid,
+                                    references(
+                                        &app,
+                                        &rename_query,
+                                        &current_rope,
+                                        reference_params,
+                                        &currently_open,
+                                    ),
+                                )))
                                 .unwrap();
                         }
                     }
@@ -1332,7 +1070,7 @@ pub fn start_lsp(
             Message::Response(_) => {}
             Message::Notification(not) => {
                 match not.method.as_str() {
-                    "textDocument/didOpen" => {
+                    DidOpenTextDocument::METHOD => {
                         let doc: lsp_types::DidOpenTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
                         currently_open = doc.text_document.uri;
@@ -1398,7 +1136,7 @@ pub fn start_lsp(
                             &tree,
                             &current_rope,
                             &mut app.helix_cell,
-                            &mut *slide_show,
+                            &mut slide_show,
                         );
                         *tree_info = Some((tree, Rope::new()));
                         *app.slide_show_file.lock() = current_rope.clone();
@@ -1431,7 +1169,7 @@ pub fn start_lsp(
 
                         app.clear_resolved.store(false, Ordering::Relaxed);
                     }
-                    "textDocument/didChange" => {
+                    DidChangeTextDocument::METHOD => {
                         let changes: lsp_types::DidChangeTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
 
@@ -1448,7 +1186,7 @@ pub fn start_lsp(
                                         range: change.range.unwrap(),
                                         new_text: change.text,
                                     }],
-                                    helix_lsp::OffsetEncoding::Utf16,
+                                    helix_lsp::OffsetEncoding::Utf8,
                                 );
 
                                 let edits =
@@ -1482,7 +1220,7 @@ pub fn start_lsp(
                             }
                         }
                     }
-                    "textDocument/didSave" => {
+                    DidSaveTextDocument::METHOD => {
                         // let _: lsp_types::DidSaveTextDocumentParams =
                         //    serde_json::from_value(not.params).unwrap();
                         let mut tree_info = app.tree_info.lock();
@@ -1610,7 +1348,7 @@ fn rename(
 
     let mut query_cursor = QueryCursor::new();
     let iter = query_cursor.matches(
-        &rename_query,
+        rename_query,
         tree_info.0.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
@@ -1645,11 +1383,12 @@ fn inlay_hints(
     inlay_edge_query: &Query,
     inlay_edge_map: &mut HashMap<RopeSlice<'_>, RopeSlice<'_>, BuildHasherDefault<ahash::AHasher>>,
     current_rope: &Rope,
+    last_inlay_len: usize,
 ) -> Vec<InlayHint> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let mut hints = Vec::new();
+    let mut hints = Vec::with_capacity(last_inlay_len);
 
     let mut query_cursor = QueryCursor::new();
     let slide_iter = query_cursor.matches(
@@ -1677,7 +1416,7 @@ fn inlay_hints(
 
     let mut edge_iter = query_cursor
         .matches(
-            &inlay_edge_query,
+            inlay_edge_query,
             tree_info.0.root_node(),
             RopeProvider(current_rope.slice(..)),
         )
@@ -1778,7 +1517,7 @@ fn semantic_tokens(
 
     let mut query_cursor = QueryCursor::new();
     let iter = query_cursor.matches(
-        &semantic_token_query,
+        semantic_token_query,
         start_node,
         RopeProvider(current_rope.slice(..)),
     );
@@ -1888,7 +1627,7 @@ pub fn complete_source_file(
     let mut new_text = String::from("{\n");
     let mut query_cursor = QueryCursor::new();
     let iter = query_cursor.matches(
-        &slide_complete_query,
+        slide_complete_query,
         tree_info.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
@@ -2017,7 +1756,297 @@ pub fn complete_source_file(
     ]))
 }
 
-pub fn format(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Error> {
+pub fn references(
+    app: &MyEguiApp,
+    rename_query: &Query,
+    current_rope: &Rope,
+    references: ReferenceParams,
+    currently_open: &Url,
+) -> Option<Vec<Location>> {
+    let tree_info = app.tree_info.lock();
+    let tree_info = tree_info.as_ref().unwrap();
+    let point = Point {
+        row: references.text_document_position.position.line as usize,
+        column: references.text_document_position.position.character as usize,
+    };
+
+    let reference_node = tree_info
+        .0
+        .root_node()
+        .descendant_for_point_range(point, point)
+        .unwrap();
+
+    let mut query_cursor = QueryCursor::new();
+    let iter = query_cursor.matches(
+        rename_query,
+        tree_info.0.root_node(),
+        RopeProvider(current_rope.slice(..)),
+    );
+
+    let mut locations = Vec::new();
+
+    for query_match in iter {
+        if current_rope.byte_slice(query_match.captures[0].node.byte_range())
+            == current_rope.byte_slice(reference_node.byte_range())
+        {
+            let range = query_match.captures[0].node.range();
+            locations.push(Location {
+                uri: currently_open.clone(),
+                range: lsp_types::Range {
+                    start: Position {
+                        line: range.start_point.row as u32,
+                        character: range.start_point.column as u32,
+                    },
+                    end: Position {
+                        line: range.end_point.row as u32,
+                        character: range.end_point.column as u32,
+                    },
+                },
+            });
+        }
+    }
+
+    Some(locations)
+}
+
+pub fn goto_declaration(
+    app: &MyEguiApp,
+    goto_declaration: GotoDefinitionParams,
+    top_level_search_query: &Query,
+    current_rope: &Rope,
+    currently_open: Url,
+) -> Option<GotoDefinitionResponse> {
+    let tree_info = app.tree_info.lock();
+    let tree_info = tree_info.as_ref().unwrap();
+    let point = Point {
+        row: goto_declaration.text_document_position_params.position.line as usize,
+        column: goto_declaration
+            .text_document_position_params
+            .position
+            .character as usize,
+    };
+
+    let usage_node = tree_info
+        .0
+        .root_node()
+        .descendant_for_point_range(point, point)
+        .unwrap();
+
+    let mut query_cursor = QueryCursor::new();
+    let iter = query_cursor.matches(
+        top_level_search_query,
+        tree_info.0.root_node(),
+        RopeProvider(current_rope.slice(..)),
+    );
+
+    for query_match in iter {
+        if current_rope.byte_slice(query_match.captures[0].node.byte_range())
+            == current_rope.byte_slice(usage_node.byte_range())
+        {
+            let range = query_match.captures[0].node.range();
+            return Some(GotoDefinitionResponse::Scalar(Location {
+                uri: currently_open,
+                range: lsp_types::Range {
+                    start: Position {
+                        line: range.start_point.row as u32,
+                        character: range.start_point.column as u32,
+                    },
+                    end: Position {
+                        line: range.end_point.row as u32,
+                        character: range.end_point.column as u32,
+                    },
+                },
+            }));
+        }
+    }
+
+    None
+}
+
+#[allow(deprecated)]
+pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<DocumentSymbolResponse> {
+    let tree_info = app.tree_info.lock();
+    let tree_info = tree_info.as_ref().unwrap();
+
+    let mut tree_cursor = GrzCursor::new(&tree_info.0);
+    let mut symbols = Vec::new();
+
+    let _ = tree_cursor.goto_first_child();
+    let mut slide_num = 0;
+    'parserloop: loop {
+        let node = tree_cursor.node();
+        let range = node.range();
+
+        match NodeKind::from(node.kind_id()) {
+            NodeKind::Slide => {
+                slide_num += 1;
+
+                let _ = tree_cursor.goto_first_child();
+                let _ = tree_cursor.goto_first_child();
+                let selection_range = tree_cursor.node().range();
+                tree_cursor.goto_parent();
+                tree_cursor.goto_parent();
+
+                symbols.push(DocumentSymbol {
+                    name: format!("Slide {}", slide_num),
+                    kind: SymbolKind::FUNCTION,
+                    range: lsp_types::Range {
+                        start: Position {
+                            line: range.start_point.row as u32,
+                            character: range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: range.end_point.row as u32,
+                            character: range.end_point.column as u32,
+                        },
+                    },
+                    detail: None,
+                    selection_range: lsp_types::Range {
+                        start: Position {
+                            line: selection_range.start_point.row as u32,
+                            character: selection_range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: selection_range.end_point.row as u32,
+                            character: selection_range.end_point.column as u32,
+                        },
+                    },
+                    tags: None,
+                    deprecated: None,
+                    children: None,
+                })
+            }
+            NodeKind::Viewbox => {
+                let _ = tree_cursor.goto_first_child();
+                let selection_range = tree_cursor.node().range();
+                let byte_range = tree_cursor.node().byte_range();
+                let _ = tree_cursor.goto_next_sibling();
+                let name_range = tree_cursor.node().byte_range();
+                let _ = tree_cursor.goto_next_sibling();
+                let index_range = tree_cursor.node().byte_range();
+                tree_cursor.goto_parent();
+
+                symbols.push(DocumentSymbol {
+                    name: current_rope.byte_slice(byte_range).to_string(),
+                    kind: SymbolKind::VARIABLE,
+                    range: lsp_types::Range {
+                        start: Position {
+                            line: range.start_point.row as u32,
+                            character: range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: range.end_point.row as u32,
+                            character: range.end_point.column as u32,
+                        },
+                    },
+                    detail: Some(format!(
+                        "{}{}",
+                        current_rope.slice(name_range),
+                        current_rope.slice(index_range)
+                    )),
+                    selection_range: lsp_types::Range {
+                        start: Position {
+                            line: selection_range.start_point.row as u32,
+                            character: selection_range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: selection_range.end_point.row as u32,
+                            character: selection_range.end_point.column as u32,
+                        },
+                    },
+                    tags: None,
+                    deprecated: None,
+                    children: None,
+                })
+            }
+            NodeKind::Obj => {
+                let _ = tree_cursor.goto_first_child();
+                let selection_range = tree_cursor.node().range();
+                let byte_range = tree_cursor.node().byte_range();
+                let _ = tree_cursor.goto_next_sibling();
+                let name_range = tree_cursor.node().byte_range();
+                tree_cursor.goto_parent();
+
+                symbols.push(DocumentSymbol {
+                    name: current_rope.byte_slice(byte_range).to_string(),
+                    kind: SymbolKind::OBJECT,
+                    range: lsp_types::Range {
+                        start: Position {
+                            line: range.start_point.row as u32,
+                            character: range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: range.end_point.row as u32,
+                            character: range.end_point.column as u32,
+                        },
+                    },
+                    detail: Some(current_rope.slice(name_range).to_string()),
+                    selection_range: lsp_types::Range {
+                        start: Position {
+                            line: selection_range.start_point.row as u32,
+                            character: selection_range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: selection_range.end_point.row as u32,
+                            character: selection_range.end_point.column as u32,
+                        },
+                    },
+                    tags: None,
+                    deprecated: None,
+                    children: None,
+                })
+            }
+            NodeKind::Register => { /* todo */ }
+            NodeKind::Action => {
+                let _ = tree_cursor.goto_first_child();
+                let selection_range = tree_cursor.node().range();
+                tree_cursor.goto_parent();
+
+                symbols.push(DocumentSymbol {
+                    name: "Actions".to_string(),
+                    kind: SymbolKind::ARRAY,
+                    range: lsp_types::Range {
+                        start: Position {
+                            line: range.start_point.row as u32,
+                            character: range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: range.end_point.row as u32,
+                            character: range.end_point.column as u32,
+                        },
+                    },
+                    detail: None,
+                    selection_range: lsp_types::Range {
+                        start: Position {
+                            line: selection_range.start_point.row as u32,
+                            character: selection_range.start_point.column as u32,
+                        },
+                        end: Position {
+                            line: selection_range.end_point.row as u32,
+                            character: selection_range.end_point.column as u32,
+                        },
+                    },
+                    tags: None,
+                    deprecated: None,
+                    children: None,
+                })
+            }
+            _ => {}
+        }
+
+        loop {
+            match tree_cursor.goto_next_sibling() {
+                Ok(false) => break 'parserloop,
+                Ok(true) => break,
+                Err(_) => {}
+            }
+        }
+    }
+
+    Some(DocumentSymbolResponse::Nested(symbols))
+}
+
+pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Error> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
@@ -2033,30 +2062,72 @@ pub fn format(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Err
                 formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor
                     .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
-                while formatting_cursor.node().kind_id() == NodeKind::SlideObj as u16 {
-                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor
-                        .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_parent();
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_parent();
-                    formatting_cursor
-                        .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
-                    formatting_cursor
-                        .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                if formatting_cursor.node().kind_id() == NodeKind::SlideObj as u16 {
+                    while formatting_cursor.node().kind_id() == NodeKind::SlideObj as u16 {
+                        formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor.goto_parent();
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor.goto_parent();
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                    }
+                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                } else {
+                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
                 }
-
-                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
 
                 formatting_cursor.goto_parent();
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                // TODO: Edit inside slide functions
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor
+                    .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                if formatting_cursor.node().kind() != "]" {
+                    while formatting_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
+                        formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        loop {
+                            if formatting_cursor.goto_next_impl()? {
+                                formatting_cursor
+                                    .navigate_and_format(WhitespaceEdit::Delete, current_rope)?;
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                            } else {
+                                formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                                break;
+                            }
+                        }
+
+                        formatting_cursor.goto_parent();
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                    }
+                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                } else {
+                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                }
+
+                formatting_cursor.goto_parent();
                 formatting_cursor.goto_parent();
             }
             NodeKind::Viewbox => {
@@ -2114,7 +2185,47 @@ pub fn format(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Err
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
                 formatting_cursor.goto_parent();
             }
-            NodeKind::Action => {}
+            NodeKind::Action => {
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor
+                    .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                if formatting_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
+                    while formatting_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
+                        formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                        loop {
+                            if formatting_cursor.goto_next_impl()? {
+                                formatting_cursor
+                                    .navigate_and_format(WhitespaceEdit::Delete, current_rope)?;
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                            } else {
+                                formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                                break;
+                            }
+                        }
+
+                        formatting_cursor.goto_parent();
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                        formatting_cursor
+                            .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                    }
+                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                } else {
+                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                }
+
+                formatting_cursor.goto_parent();
+            }
             kind => {
                 return Err(Error::BadNode(
                     formatting_cursor.node().range().into(),
@@ -2127,6 +2238,40 @@ pub fn format(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Err
             if formatting_cursor.edited {
                 formatting_cursor.edits.pop();
             }
+            if current_rope.byte_slice(formatting_cursor.node().byte_range()) != "\n" {
+                let mut edit = TextEdit {
+                    range: lsp_types::Range {
+                        start: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 0,
+                        },
+                    },
+                    new_text: "\n".to_string(),
+                };
+
+                let pos = Position {
+                    line: formatting_cursor.last_range.end_point.row as u32,
+                    character: formatting_cursor.last_range.end_point.column as u32,
+                };
+                edit.range.end = pos;
+                edit.range.start = pos;
+
+                if formatting_cursor.edited
+                    && formatting_cursor.node().kind_id() == NodeKind::Whitespace as u16
+                {
+                    let pos = Position {
+                        line: formatting_cursor.last_range.start_point.row as u32,
+                        character: formatting_cursor.last_range.start_point.column as u32,
+                    };
+                    edit.range.start = pos;
+                }
+
+                formatting_cursor.edits.push(edit);
+            }
             break;
         }
     }
@@ -2134,7 +2279,7 @@ pub fn format(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Err
     Ok(formatting_cursor.edits)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum WhitespaceEdit {
     Delete,
     Trailing(&'static str),
@@ -2146,6 +2291,7 @@ pub struct FormattingCursor<'a> {
     pub edits: Vec<TextEdit>,
     pub last_range: tree_sitter::Range,
     pub edited: bool,
+    last_edit: WhitespaceEdit,
 }
 
 impl<'a> FormattingCursor<'a> {
@@ -2155,6 +2301,7 @@ impl<'a> FormattingCursor<'a> {
             edits: Vec::new(),
             last_range: tree.root_node().range(),
             edited: false,
+            last_edit: WhitespaceEdit::Delete,
         }
     }
 
@@ -2164,11 +2311,11 @@ impl<'a> FormattingCursor<'a> {
         }
 
         if self.tree_cursor.node().is_error() {
-            return Err(Error::SyntaxError(self.tree_cursor.node().range().into()));
+            return Err(Error::Syntax(self.tree_cursor.node().range().into()));
         }
 
         if self.tree_cursor.node().is_missing() {
-            return Err(Error::MissingError(self.tree_cursor.node().range().into()));
+            return Err(Error::Missing(self.tree_cursor.node().range().into()));
         }
 
         Ok(result)
@@ -2231,6 +2378,7 @@ impl<'a> FormattingCursor<'a> {
             new_text: String::new(),
         };
 
+        self.last_edit = whitespace_rule;
         self.edited = false;
         self.last_range = self.tree_cursor.node().range();
 
@@ -2306,9 +2454,9 @@ impl<'a> FormattingCursor<'a> {
                     != assertion
                 {
                     if self.edited {
-                        self.edits
-                            .last_mut()
-                            .map(|edit| edit.new_text = assertion.to_owned());
+                        if let Some(edit) = self.edits.last_mut() {
+                            edit.new_text = assertion.to_owned();
+                        }
                     } else {
                         self.edits.push(TextEdit {
                             range: lsp_types::Range {
@@ -2330,11 +2478,24 @@ impl<'a> FormattingCursor<'a> {
             }
             WhitespaceEdit::Delete => {
                 if self.edited {
-                    self.edits.last_mut().map(|f| f.new_text.clear());
+                    match self.last_edit {
+                        WhitespaceEdit::Assert(_) => {
+                            if let Some(edit) = self.edits.last_mut() {
+                                if edit.range.start != edit.range.end {
+                                    edit.new_text.clear();
+                                } else {
+                                    self.edits.pop();
+                                }
+                            }
+                        }
+                        WhitespaceEdit::Delete => {}
+                        kind => unimplemented!("{:?}", kind),
+                    }
                 }
             }
             _ => unimplemented!(),
         }
+        self.last_edit = whitespace_rule;
     }
 
     pub fn goto_parent(&mut self) -> bool {

@@ -99,11 +99,11 @@ pub enum Error {
     #[error("Invalid parameter")]
     InvalidParameter(#[label("This parameter is not valid for this action")] PointFromRange),
     #[error("Syntax error")]
-    SyntaxError(#[label("Something is wrong here")] PointFromRange),
+    Syntax(#[label("Something is wrong here")] PointFromRange),
     #[error("Missing error")]
-    MissingError(#[label("Something is missing here")] PointFromRange),
+    Missing(#[label("Something is missing here")] PointFromRange),
     #[error("Missing error")]
-    KnownMissingError(
+    KnownMissing(
         #[label("a {1} is missing here")] PointFromRange,
         &'static str,
     ),
@@ -121,10 +121,10 @@ impl Error {
             Error::BadExit(range) => range.0,
             Error::ImplicitEdge(range) => range.0,
             Error::ActionNotFound(range) => range.0,
-            Error::KnownMissingError(range, _) => range.0,
-            Error::MissingError(range) => range.0,
+            Error::KnownMissing(range, _) => range.0,
+            Error::Missing(range) => range.0,
             Error::NotFound(range) => range.0,
-            Error::SyntaxError(range) => range.0,
+            Error::Syntax(range) => range.0,
             Error::InvalidParameter(range) => range.0,
             Error::BadNode(range, _) => range.0,
         }
@@ -276,7 +276,7 @@ impl<'a> GrzCursor<'a> {
         }
     }
 
-    pub fn fork<'b>(&'b self) -> GrzCursor<'b> {
+    pub fn fork(&self) -> GrzCursor<'_> {
         GrzCursor {
             tree_cursor: self.tree_cursor.node().walk(),
         }
@@ -288,11 +288,11 @@ impl<'a> GrzCursor<'a> {
         }
 
         if self.tree_cursor.node().is_error() {
-            return Err(Error::SyntaxError(self.tree_cursor.node().range().into()));
+            return Err(Error::Syntax(self.tree_cursor.node().range().into()));
         }
 
         if self.tree_cursor.node().is_missing() {
-            return Err(Error::MissingError(self.tree_cursor.node().range().into()));
+            return Err(Error::Missing(self.tree_cursor.node().range().into()));
         }
 
         Ok(result)
@@ -398,7 +398,7 @@ pub fn parse_file(
     let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
-    let mut tree_cursor = GrzCursor::new(&tree);
+    let mut tree_cursor = GrzCursor::new(tree);
 
     match tree_cursor.goto_first_child() {
         Ok(_) => {}
@@ -415,7 +415,7 @@ pub fn parse_file(
                     &hasher,
                     &mut on_screen,
                     &mut slide_show.objects,
-                    &source,
+                    source,
                     &mut errors_present,
                     &slide_show.viewboxes,
                 ) {
@@ -426,7 +426,7 @@ pub fn parse_file(
             NodeKind::Viewbox => {
                 match viewboxes::parse_viewbox(
                     tree_cursor.fork(),
-                    &source,
+                    source,
                     &hasher,
                     &slide_show.viewboxes,
                 ) {
@@ -439,7 +439,7 @@ pub fn parse_file(
             NodeKind::Obj => {
                 match objects::parse_objects(
                     tree_cursor.fork(),
-                    &source,
+                    source,
                     helix_cell,
                     &hasher,
                     &mut errors_present,
@@ -473,7 +473,7 @@ pub fn parse_file(
             NodeKind::Action => {
                 match actions::parse_actions(
                     tree_cursor.fork(),
-                    &source,
+                    source,
                     &hasher,
                     &on_screen,
                     last_slide,

@@ -205,6 +205,6 @@ pub fn parse_viewbox_ident(
                 return Err(super::Error::NotFound(tree_cursor.node().range().into()));
             }
         }
-        kind => return Err(super::Error::BadNode(viewbox_range.into(), kind)),
+        kind => Err(super::Error::BadNode(viewbox_range.into(), kind)),
     }
 }

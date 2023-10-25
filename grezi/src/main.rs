@@ -133,87 +133,81 @@ impl MyEguiApp {
             let mut instant = Instant::now();
             let mut w = ManuallyDrop::new(
                 notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                    match res {
-                        Ok(event) => match event.kind {
-                            notify::EventKind::Modify(ModifyKind::Data(_)) => {
-                                if Instant::now().duration_since(instant)
-                                    > Duration::from_millis(250)
-                                {
-                                    std::thread::sleep(Duration::from_millis(250));
-                                    instant = Instant::now();
-                                    let new_file = Rope::from_reader(
-                                        std::fs::File::open(&watcher_file_name).unwrap(),
-                                    )
-                                    .unwrap();
-                                    let mut slide_show_file = watcher_slide_show_file.lock();
-                                    let mut tree_info = watcher_tree_info.lock();
-                                    if let Some(info) = tree_info.as_mut() {
-                                        let transaction = helix_core::diff::compare_ropes(
-                                            &slide_show_file,
-                                            &new_file,
-                                        );
-                                        let edits = lsp::generate_edits(
-                                            slide_show_file.slice(..),
-                                            transaction.changes(),
-                                        );
-                                        for change in edits.iter().rev() {
-                                            info.0.edit(change);
-                                        }
+                    if let Ok(event) = res {
+                        if let notify::EventKind::Modify(ModifyKind::Data(_)) = event.kind {
+                            if Instant::now().duration_since(instant) > Duration::from_millis(250) {
+                                std::thread::sleep(Duration::from_millis(250));
+                                instant = Instant::now();
+                                let new_file = Rope::from_reader(
+                                    std::fs::File::open(&watcher_file_name).unwrap(),
+                                )
+                                .unwrap();
+                                let mut slide_show_file = watcher_slide_show_file.lock();
+                                let mut tree_info = watcher_tree_info.lock();
+                                if let Some(info) = tree_info.as_mut() {
+                                    let transaction = helix_core::diff::compare_ropes(
+                                        &slide_show_file,
+                                        &new_file,
+                                    );
+                                    let edits = lsp::generate_edits(
+                                        slide_show_file.slice(..),
+                                        transaction.changes(),
+                                    );
+                                    for change in edits.iter().rev() {
+                                        info.0.edit(change);
+                                    }
 
-                                        info.1 = new_file;
-                                        info.0 = watcher_parser
-                                            .lock()
-                                            .parse_with(
-                                                &mut |byte, _| {
-                                                    if byte <= info.1.len_bytes() {
-                                                        let (chunk, start_byte, _, _) =
-                                                            info.1.chunk_at_byte(byte);
-                                                        &chunk.as_bytes()[byte - start_byte..]
-                                                    } else {
-                                                        // out of range
-                                                        &[]
-                                                    }
-                                                },
-                                                Some(&info.0),
-                                            )
-                                            .unwrap();
-
-                                        let mut slide_show = watcher_slide_show.write();
-
-                                        slide_show.viewboxes.clear();
-                                        slide_show.objects.clear();
-                                        let ast = parser::parse_file(
-                                            &info.0,
-                                            &info.1,
-                                            &mut self.helix_cell,
-                                            &mut slide_show,
-                                        );
-                                        match ast {
-                                            Ok(ast) => {
-                                                *slide_show_file = info.1.clone();
-                                                slide_show.slide_show = ast;
-                                                watcher_new_file.store(true, Ordering::Relaxed);
-                                            }
-                                            Err(errors) => {
-                                                for error in errors {
-                                                    eprintln!(
-                                                        "{:?}",
-                                                        parser::ErrWithSource {
-                                                            error,
-                                                            source_code: info.1.to_string()
-                                                        }
-                                                    );
+                                    info.1 = new_file;
+                                    info.0 = watcher_parser
+                                        .lock()
+                                        .parse_with(
+                                            &mut |byte, _| {
+                                                if byte <= info.1.len_bytes() {
+                                                    let (chunk, start_byte, _, _) =
+                                                        info.1.chunk_at_byte(byte);
+                                                    &chunk.as_bytes()[byte - start_byte..]
+                                                } else {
+                                                    // out of range
+                                                    &[]
                                                 }
+                                            },
+                                            Some(&info.0),
+                                        )
+                                        .unwrap();
+
+                                    let mut slide_show = watcher_slide_show.write();
+
+                                    slide_show.viewboxes.clear();
+                                    slide_show.objects.clear();
+                                    let ast = parser::parse_file(
+                                        &info.0,
+                                        &info.1,
+                                        &mut self.helix_cell,
+                                        &mut slide_show,
+                                    );
+                                    match ast {
+                                        Ok(ast) => {
+                                            *slide_show_file = info.1.clone();
+                                            slide_show.slide_show = ast;
+                                            watcher_new_file.store(true, Ordering::Relaxed);
+                                        }
+                                        Err(errors) => {
+                                            for error in errors {
+                                                eprintln!(
+                                                    "{:?}",
+                                                    parser::ErrWithSource {
+                                                        error,
+                                                        source_code: info.1.to_string()
+                                                    }
+                                                );
                                             }
                                         }
                                     }
-
-                                    watcher_context.request_repaint();
                                 }
+
+                                watcher_context.request_repaint();
                             }
-                            _ => {}
-                        },
-                        Err(_) => {}
+                        }
                     }
                 })
                 .unwrap(),
@@ -515,13 +509,13 @@ impl MyEguiApp {
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => size.shrink(15.0),
                 ViewboxIn::Custom(hash, index) => {
-                    self.resolve_layout(hash, index, size, &*slide_show)
+                    self.resolve_layout(hash, index, size, slide_show)
                 }
             };
             let second_viewbox = match object.locations[1].1 {
                 ViewboxIn::Size => size.shrink(15.0),
                 ViewboxIn::Custom(hash, index) => {
-                    self.resolve_layout(hash, index, size, &*slide_show)
+                    self.resolve_layout(hash, index, size, slide_show)
                 }
             };
             let obj = slide_show.objects.get(&object.object).unwrap();
@@ -696,7 +690,7 @@ impl eframe::App for MyEguiApp {
                                         self.window_size[0] as f32,
                                         self.window_size[1] as f32,
                                     ),
-                                    &*slide_show,
+                                    &slide_show,
                                 );
                                 self.resolved_actions =
                                     Some(self.resolve_actions(actions, &resolved_slide));
@@ -718,7 +712,7 @@ impl eframe::App for MyEguiApp {
                                                 self.window_size[0] as f32,
                                                 self.window_size[1] as f32,
                                             ),
-                                            &*slide_show,
+                                            &slide_show,
                                         );
                                         self.resolved_actions =
                                             Some(self.resolve_actions(actions, &resolved_slide));
@@ -851,8 +845,6 @@ impl eframe::App for MyEguiApp {
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
-    use std::io::{stdout, Write};
-
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let native_options = eframe::NativeOptions {
@@ -867,7 +859,7 @@ fn main() -> eframe::Result<()> {
 
     if args.fmt {
         let mut file = app.slide_show_file.lock();
-        match lsp::format(&app, &file) {
+        match lsp::format_code(&app, &file) {
             Ok(edits) => {
                 let transaction = helix_lsp::util::generate_transaction_from_edits(
                     &file,
@@ -876,7 +868,7 @@ fn main() -> eframe::Result<()> {
                 );
 
                 if transaction.apply(&mut file) {
-                    stdout().write_fmt(format_args!("{}", *file)).unwrap();
+                    println!("{}", *file);
                 } else {
                     panic!("Transaction could not be applied");
                 }
