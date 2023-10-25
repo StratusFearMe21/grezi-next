@@ -3,7 +3,7 @@ use std::{collections::HashMap, hash::BuildHasherDefault, sync::atomic::Ordering
 mod you_can;
 
 use crate::{
-    parser::{GrzCursor, NodeKind},
+    parser::{Error, FieldName, GrzCursor, NodeKind},
     MyEguiApp,
 };
 use helix_core::syntax::RopeProvider;
@@ -11,27 +11,28 @@ use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{Notification, PublishDiagnostics, ShowMessage},
     request::{
-        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, GotoDeclaration, InlayHintRequest,
-        PrepareRenameRequest, References, Rename, Request, SemanticTokensFullRequest,
+        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, Formatting, GotoDeclaration,
+        InlayHintRequest, PrepareRenameRequest, RangeFormatting, References, Rename, Request,
+        SemanticTokensFullRequest,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionItemLabelDetails, CompletionOptions, CompletionOptionsCompletionItem,
     CompletionParams, CompletionResponse, CompletionTextEdit, DeclarationCapability,
-    DocumentChanges, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    GotoDefinitionParams, GotoDefinitionResponse, InlayHint, InlayHintKind, InlayHintLabel,
-    InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, InsertReplaceEdit,
-    InsertTextFormat, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
-    Position, PrepareRenameResponse, PublishDiagnosticsParams, ReferenceParams, RenameOptions,
-    RenameParams, SaveOptions, SemanticToken, SemanticTokenModifier, SemanticTokenType,
-    SemanticTokens, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensResult, SemanticTokensServerCapabilities,
-    ServerCapabilities, ShowMessageParams, SymbolKind, TextDocumentEdit,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
-    WorkspaceEdit,
+    DocumentChanges, DocumentFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    InlayHint, InlayHintKind, InlayHintLabel, InlayHintOptions, InlayHintParams,
+    InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, Location, MessageType, OneOf,
+    OptionalVersionedTextDocumentIdentifier, Position, PrepareRenameResponse,
+    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
+    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams,
+    SymbolKind, TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
+    WorkDoneProgressOptions, WorkspaceEdit,
 };
 use ropey::{Rope, RopeSlice};
-use tree_sitter::{Point, Query, QueryCursor};
+use tree_sitter::{Node, Point, Query, QueryCursor, Tree, TreeCursor};
 
 pub fn start_lsp(
     mut app: crate::MyEguiApp,
@@ -110,6 +111,8 @@ pub fn start_lsp(
         declaration_provider: Some(DeclarationCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        document_range_formatting_provider: Some(OneOf::Left(true)),
+        document_formatting_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: SemanticTokensLegend {
@@ -153,6 +156,7 @@ pub fn start_lsp(
     .unwrap();
     connection.initialize(server_capabilities).unwrap();
     let panic_hook = std::panic::take_hook();
+
     let hook_sender = connection.sender.clone();
     std::panic::set_hook(Box::new(move |panic_info| {
         hook_sender
@@ -182,6 +186,30 @@ pub fn start_lsp(
                 }
 
                 match req.method.as_str() {
+                    RangeFormatting::METHOD => {
+                        if let Ok((rqid, _)) =
+                            req.extract::<DocumentRangeFormattingParams>(RangeFormatting::METHOD)
+                        {
+                            let edits: Option<Vec<TextEdit>> = format(&app, &current_rope).ok();
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(rqid, edits)))
+                                .unwrap();
+                        }
+                    }
+                    Formatting::METHOD => {
+                        if let Ok((rqid, _)) =
+                            req.extract::<DocumentFormattingParams>(Formatting::METHOD)
+                        {
+                            let edits: Option<Vec<TextEdit>> = format(&app, &current_rope).ok();
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(rqid, edits)))
+                                .unwrap();
+                        }
+                    }
                     PrepareRenameRequest::METHOD => {
                         if let Ok((rqid, pos)) =
                             req.extract::<TextDocumentPositionParams>(PrepareRenameRequest::METHOD)
@@ -475,16 +503,20 @@ pub fn start_lsp(
                                     as usize)
                                     .saturating_sub(1),
                             };
-                            let completion_node = tree_info
+                            let mut completion_node = tree_info
                                 .0
                                 .root_node()
                                 .descendant_for_point_range(completion_point, completion_point)
                                 .unwrap();
 
-                            match NodeKind::from(completion_node.kind_id()) {
+                            while completion_node.is_error() || completion_node.is_extra() {
+                                completion_node = completion_node.parent().unwrap();
+                            }
+
+                            match dbg!(NodeKind::from(completion_node.kind_id())) {
                                 NodeKind::Identifier => {
                                     let mut parent_object = completion_node.parent().unwrap();
-                                    while parent_object.is_error() {
+                                    while parent_object.is_error() || parent_object.is_extra() {
                                         parent_object = parent_object.parent().unwrap();
                                     }
                                     match NodeKind::from(parent_object.kind_id()) {
@@ -1154,197 +1186,17 @@ pub fn start_lsp(
                                     }
                                 }
                                 NodeKind::SourceFile => {
-                                    let new_slide_range = lsp_types::Range {
-                                        start: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: 0,
-                                        },
-                                        end: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: 0,
-                                        },
-                                    };
-                                    let new_slide_item = CompletionItem {
-                                        label: "new".into(),
-                                        label_details: Some(CompletionItemLabelDetails {
-                                            description: Some("Create a new slide".to_string()),
-                                            detail: None,
-                                        }),
-                                        deprecated: Some(false),
-                                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                                        sort_text: Some("ffffffef".to_string()),
-                                        filter_text: Some("new".into()),
-                                        kind: Some(CompletionItemKind::SNIPPET),
-                                        preselect: Some(true),
-                                        text_edit: Some(CompletionTextEdit::InsertAndReplace(
-                                            InsertReplaceEdit {
-                                                new_text: "{$0}[]".to_string(),
-                                                insert: new_slide_range,
-                                                replace: new_slide_range,
-                                            },
-                                        )),
-                                        additional_text_edits: Some(Vec::new()),
-                                        ..Default::default()
-                                    };
-
-                                    let mut new_text = String::from("{\n");
-                                    let mut query_cursor = QueryCursor::new();
-                                    let iter = query_cursor.matches(
-                                        &slide_complete_query,
-                                        tree_info.0.root_node(),
-                                        RopeProvider(current_rope.slice(..)),
-                                    );
-                                    let mut node = None;
-                                    for query_match in iter {
-                                        if query_match.captures[0].node.range().end_point.row
-                                            > completion.text_document_position.position.line
-                                                as usize
-                                        {
-                                            break;
-                                        }
-                                        node = Some(query_match.captures[0].node);
-                                    }
-                                    let mut walker = if let Some(n) = node {
-                                        n.walk()
-                                    } else {
-                                        connection
-                                            .sender
-                                            .send(Message::Response(Response::new_ok(
-                                                rqid,
-                                                Some(CompletionResponse::Array(vec![
-                                                    new_slide_item,
-                                                ])),
-                                            )))
-                                            .unwrap();
-                                        continue 'lsploop;
-                                    };
-
-                                    walker.goto_first_child();
-                                    walker.goto_first_child();
-                                    walker.goto_next_sibling();
-                                    let mut cursor_counter = 0;
-
-                                    loop {
-                                        let mut line = String::new();
-                                        walker.goto_first_child();
-                                        line.push_str("    ");
-                                        loop {
-                                            match NodeKind::from(walker.node().kind_id()) {
-                                                NodeKind::EdgeParser => {
-                                                    std::fmt::Write::write_fmt(
-                                                        &mut line,
-                                                        format_args!("${},\n", cursor_counter),
-                                                    )
-                                                    .unwrap();
-                                                    cursor_counter += 1;
-                                                    if !current_rope
-                                                        .byte_slice(walker.node().byte_range())
-                                                        .chunks()
-                                                        .any(|c| c.contains('|'))
-                                                    {
-                                                        new_text.push_str(&line);
-                                                    }
-                                                    break;
-                                                }
-                                                NodeKind::SlideFrom => {
-                                                    if !walker.goto_next_sibling() {
-                                                        std::fmt::Write::write_fmt(
-                                                            &mut line,
-                                                            format_args!("${},\n", cursor_counter),
-                                                        )
-                                                        .unwrap();
-                                                        cursor_counter += 1;
-                                                        new_text.push_str(&line);
-                                                        break;
-                                                    }
-                                                }
-                                                _ => {
-                                                    current_rope
-                                                        .byte_slice(walker.node().byte_range())
-                                                        .chunks()
-                                                        .for_each(|c| {
-                                                            line.push_str(c);
-                                                            if c == ":" {
-                                                                line.push(' ');
-                                                            }
-                                                        });
-
-                                                    if !walker.goto_next_sibling() {
-                                                        std::fmt::Write::write_fmt(
-                                                            &mut line,
-                                                            format_args!("${},\n", cursor_counter),
-                                                        )
-                                                        .unwrap();
-                                                        cursor_counter += 1;
-                                                        new_text.push_str(&line);
-                                                        break;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        walker.goto_parent();
-
-                                        walker.goto_next_sibling();
-                                        if !walker.goto_next_sibling() {
-                                            break;
-                                        }
-                                        if !matches!(
-                                            NodeKind::from(walker.node().kind_id()),
-                                            NodeKind::SlideObj
-                                        ) {
-                                            break;
-                                        }
-                                    }
-                                    new_text.push_str("}[]");
-                                    let continue_slide_range = lsp_types::Range {
-                                        start: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: 0,
-                                        },
-                                        end: Position {
-                                            line: completion.text_document_position.position.line,
-                                            character: current_rope
-                                                .line(
-                                                    completion.text_document_position.position.line
-                                                        as usize,
-                                                )
-                                                .len_chars()
-                                                as u32,
-                                        },
-                                    };
-                                    let continue_slide_item = CompletionItem {
-                                        label: "continue".into(),
-                                        label_details: Some(CompletionItemLabelDetails {
-                                            description: Some(
-                                                "Copy the previous slide here".to_string(),
-                                            ),
-                                            detail: None,
-                                        }),
-                                        kind: Some(CompletionItemKind::SNIPPET),
-                                        preselect: Some(true),
-                                        deprecated: Some(false),
-                                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                                        sort_text: Some("ffffffef".to_string()),
-                                        filter_text: Some("continue".into()),
-                                        text_edit: Some(CompletionTextEdit::InsertAndReplace(
-                                            InsertReplaceEdit {
-                                                new_text,
-                                                insert: continue_slide_range,
-                                                replace: continue_slide_range,
-                                            },
-                                        )),
-                                        additional_text_edits: Some(Vec::new()),
-                                        ..Default::default()
-                                    };
-
                                     connection
                                         .sender
                                         .send(Message::Response(Response::new_ok(
                                             rqid,
-                                            Some(CompletionResponse::Array(vec![
-                                                continue_slide_item,
-                                                new_slide_item,
-                                            ])),
+                                            complete_source_file(
+                                                completion,
+                                                &slide_complete_query,
+                                                &tree_info.0,
+                                                &current_rope,
+                                            )
+                                            .ok(),
                                         )))
                                         .unwrap();
                                 }
@@ -1584,50 +1436,52 @@ pub fn start_lsp(
                         let changes: lsp_types::DidChangeTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
 
+                        eprintln!("Apply change edits");
                         if current_document_version < changes.text_document.version {
                             current_document_version = changes.text_document.version;
 
                             let mut tree_info = app.tree_info.lock();
                             let tree_info = tree_info.as_mut().unwrap();
-                            let changes = changes
-                                .content_changes
-                                .into_iter()
-                                .map(|change| lsp_types::TextEdit {
-                                    range: change.range.unwrap(),
-                                    new_text: change.text,
-                                })
-                                .collect();
 
-                            let transaction = helix_lsp::util::generate_transaction_from_edits(
-                                &current_rope,
-                                changes,
-                                helix_lsp::OffsetEncoding::Utf8,
-                            );
-                            let edits =
-                                generate_edits(current_rope.slice(..), transaction.changes());
-                            transaction.apply(&mut current_rope);
-                            let source = current_rope.slice(..);
-                            for edit in edits.iter().rev() {
-                                tree_info.0.edit(edit);
+                            for change in changes.content_changes {
+                                let transaction = helix_lsp::util::generate_transaction_from_edits(
+                                    &current_rope,
+                                    vec![lsp_types::TextEdit {
+                                        range: change.range.unwrap(),
+                                        new_text: change.text,
+                                    }],
+                                    helix_lsp::OffsetEncoding::Utf16,
+                                );
+
+                                let edits =
+                                    generate_edits(current_rope.slice(..), transaction.changes());
+                                if transaction.apply(&mut current_rope) {
+                                    let source = current_rope.slice(..);
+                                    for edit in edits.iter().rev() {
+                                        tree_info.0.edit(edit);
+                                    }
+
+                                    // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
+                                    let tree = parser
+                                        .parse_with(
+                                            &mut |byte, _| {
+                                                if byte <= source.len_bytes() {
+                                                    let (chunk, start_byte, _, _) =
+                                                        source.chunk_at_byte(byte);
+                                                    &chunk.as_bytes()[byte - start_byte..]
+                                                } else {
+                                                    // out of range
+                                                    &[]
+                                                }
+                                            },
+                                            Some(&tree_info.0),
+                                        )
+                                        .unwrap();
+                                    tree_info.0 = tree;
+                                } else {
+                                    panic!("Transaction could not be applied");
+                                }
                             }
-
-                            // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
-                            let tree = parser
-                                .parse_with(
-                                    &mut |byte, _| {
-                                        if byte <= source.len_bytes() {
-                                            let (chunk, start_byte, _, _) =
-                                                source.chunk_at_byte(byte);
-                                            &chunk.as_bytes()[byte - start_byte..]
-                                        } else {
-                                            // out of range
-                                            &[]
-                                        }
-                                    },
-                                    Some(&tree_info.0),
-                                )
-                                .unwrap();
-                            tree_info.0 = tree;
                         }
                     }
                     "textDocument/didSave" => {
@@ -1994,6 +1848,507 @@ fn semantic_tokens(
         data: tokens,
         ..Default::default()
     })
+}
+
+pub fn complete_source_file(
+    completion: CompletionParams,
+    slide_complete_query: &Query,
+    tree_info: &Tree,
+    current_rope: &Rope,
+) -> Result<CompletionResponse, Error> {
+    let new_slide_range = lsp_types::Range {
+        start: Position {
+            line: completion.text_document_position.position.line,
+            character: 0,
+        },
+        end: Position {
+            line: completion.text_document_position.position.line,
+            character: 0,
+        },
+    };
+    let new_slide_item = CompletionItem {
+        label: "new".into(),
+        label_details: Some(CompletionItemLabelDetails {
+            description: Some("Create a new slide".to_string()),
+            detail: None,
+        }),
+        deprecated: Some(false),
+        insert_text_format: Some(InsertTextFormat::SNIPPET),
+        sort_text: Some("ffffffef".to_string()),
+        filter_text: Some("new".into()),
+        kind: Some(CompletionItemKind::SNIPPET),
+        preselect: Some(true),
+        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            new_text: "{$0}[]".to_string(),
+            insert: new_slide_range,
+            replace: new_slide_range,
+        })),
+        additional_text_edits: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    let mut new_text = String::from("{\n");
+    let mut query_cursor = QueryCursor::new();
+    let iter = query_cursor.matches(
+        &slide_complete_query,
+        tree_info.root_node(),
+        RopeProvider(current_rope.slice(..)),
+    );
+    let mut node = None;
+    for query_match in iter {
+        if query_match.captures[0].node.range().end_point.row
+            > completion.text_document_position.position.line as usize
+        {
+            break;
+        }
+        node = Some(query_match.captures[0].node);
+    }
+    let mut walker = if let Some(n) = node.as_ref() {
+        GrzCursor::from_node(n)
+    } else {
+        return Ok(CompletionResponse::Array(vec![new_slide_item]));
+    };
+
+    walker.goto_first_child_raw()?;
+    walker.goto_first_child_raw()?;
+    walker.goto_next_sibling_raw()?;
+    let mut cursor_counter = 0;
+
+    loop {
+        let mut line = String::new();
+        walker.goto_first_child_raw()?;
+        line.push_str("    ");
+        loop {
+            match NodeKind::from(walker.node().kind_id()) {
+                NodeKind::EdgeParser => {
+                    std::fmt::Write::write_fmt(&mut line, format_args!("${},\n", cursor_counter))
+                        .unwrap();
+                    cursor_counter += 1;
+                    if !current_rope
+                        .byte_slice(walker.node().byte_range())
+                        .chunks()
+                        .any(|c| c.contains('|'))
+                    {
+                        new_text.push_str(&line);
+                    }
+                    break;
+                }
+                NodeKind::SlideFrom => {
+                    if !walker.goto_next_sibling_raw()? {
+                        std::fmt::Write::write_fmt(
+                            &mut line,
+                            format_args!("${},\n", cursor_counter),
+                        )
+                        .unwrap();
+                        cursor_counter += 1;
+                        new_text.push_str(&line);
+                        break;
+                    }
+                }
+                _ => {
+                    current_rope
+                        .byte_slice(walker.node().byte_range())
+                        .chunks()
+                        .for_each(|c| {
+                            line.push_str(c);
+                            if c == ":" {
+                                line.push(' ');
+                            }
+                        });
+
+                    if !walker.goto_next_sibling_raw()? {
+                        std::fmt::Write::write_fmt(
+                            &mut line,
+                            format_args!("${},\n", cursor_counter),
+                        )
+                        .unwrap();
+                        cursor_counter += 1;
+                        new_text.push_str(&line);
+                        break;
+                    }
+                }
+            }
+        }
+        walker.goto_parent();
+
+        walker.goto_next_sibling_raw()?;
+        if !walker.goto_next_sibling_raw()? {
+            break;
+        }
+        if !matches!(NodeKind::from(walker.node().kind_id()), NodeKind::SlideObj) {
+            break;
+        }
+    }
+    new_text.push_str("}[]");
+    let continue_slide_range = lsp_types::Range {
+        start: Position {
+            line: completion.text_document_position.position.line,
+            character: 0,
+        },
+        end: Position {
+            line: completion.text_document_position.position.line,
+            character: current_rope
+                .line(completion.text_document_position.position.line as usize)
+                .len_chars() as u32,
+        },
+    };
+    let continue_slide_item = CompletionItem {
+        label: "continue".into(),
+        label_details: Some(CompletionItemLabelDetails {
+            description: Some("Copy the previous slide here".to_string()),
+            detail: None,
+        }),
+        kind: Some(CompletionItemKind::SNIPPET),
+        preselect: Some(true),
+        deprecated: Some(false),
+        insert_text_format: Some(InsertTextFormat::SNIPPET),
+        sort_text: Some("ffffffef".to_string()),
+        filter_text: Some("continue".into()),
+        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            new_text,
+            insert: continue_slide_range,
+            replace: continue_slide_range,
+        })),
+        additional_text_edits: Some(Vec::new()),
+        ..Default::default()
+    };
+
+    Ok(CompletionResponse::Array(vec![
+        continue_slide_item,
+        new_slide_item,
+    ]))
+}
+
+pub fn format(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Error> {
+    let tree_info = app.tree_info.lock();
+    let tree_info = tree_info.as_ref().unwrap();
+
+    let mut formatting_cursor = FormattingCursor::new(&tree_info.0);
+
+    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+
+    loop {
+        let node = formatting_cursor.node();
+        match NodeKind::from(node.kind_id()) {
+            NodeKind::Slide => {
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor
+                    .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                while formatting_cursor.node().kind_id() == NodeKind::SlideObj as u16 {
+                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_parent();
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_parent();
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                }
+
+                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+
+                formatting_cursor.goto_parent();
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                // TODO: Edit inside slide functions
+                formatting_cursor.goto_parent();
+            }
+            NodeKind::Viewbox => {
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_parent();
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor
+                    .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                while formatting_cursor.node().kind_id() == NodeKind::ViewboxObj as u16 {
+                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor.goto_parent();
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                }
+                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                formatting_cursor.goto_parent();
+                formatting_cursor.goto_parent();
+            }
+            NodeKind::Obj => {
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor
+                    .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                while formatting_cursor.tree_cursor.field_id() == Some(FieldName::Parameters as u16)
+                {
+                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                    formatting_cursor
+                        .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                }
+                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                formatting_cursor.goto_parent();
+                formatting_cursor.goto_parent();
+            }
+            NodeKind::Register => {
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                formatting_cursor.goto_parent();
+            }
+            NodeKind::Action => {}
+            kind => {
+                return Err(Error::BadNode(
+                    formatting_cursor.node().range().into(),
+                    kind,
+                ))
+            }
+        }
+
+        if !formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert("\n\n"), current_rope)? {
+            if formatting_cursor.edited {
+                formatting_cursor.edits.pop();
+            }
+            break;
+        }
+    }
+
+    Ok(formatting_cursor.edits)
+}
+
+#[derive(Debug)]
+pub enum WhitespaceEdit {
+    Delete,
+    Trailing(&'static str),
+    Assert(&'static str),
+}
+
+pub struct FormattingCursor<'a> {
+    tree_cursor: TreeCursor<'a>,
+    pub edits: Vec<TextEdit>,
+    pub last_range: tree_sitter::Range,
+    pub edited: bool,
+}
+
+impl<'a> FormattingCursor<'a> {
+    pub fn new(tree: &'a Tree) -> FormattingCursor<'a> {
+        FormattingCursor {
+            tree_cursor: tree.walk(),
+            edits: Vec::new(),
+            last_range: tree.root_node().range(),
+            edited: false,
+        }
+    }
+
+    fn check_for_error(&self, result: bool) -> Result<bool, Error> {
+        if !result {
+            return Ok(false);
+        }
+
+        if self.tree_cursor.node().is_error() {
+            return Err(Error::SyntaxError(self.tree_cursor.node().range().into()));
+        }
+
+        if self.tree_cursor.node().is_missing() {
+            return Err(Error::MissingError(self.tree_cursor.node().range().into()));
+        }
+
+        Ok(result)
+    }
+
+    fn goto_first_impl(&mut self) -> Result<bool, Error> {
+        let result = self.tree_cursor.goto_first_child();
+        self.check_for_error(result)
+    }
+
+    fn goto_next_impl(&mut self) -> Result<bool, Error> {
+        let result = self.tree_cursor.goto_next_sibling();
+        self.check_for_error(result)
+    }
+
+    pub fn goto_first_child(
+        &mut self,
+        whitespace_rule: WhitespaceEdit,
+        current_rope: &Rope,
+    ) -> Result<bool, Error> {
+        let result = self.goto_first_impl()?;
+
+        if !self.navigate_and_format(whitespace_rule, current_rope)? {
+            return self.check_for_error(false);
+        }
+
+        self.check_for_error(result)
+    }
+
+    pub fn goto_next_sibling(
+        &mut self,
+        whitespace_rule: WhitespaceEdit,
+        current_rope: &Rope,
+    ) -> Result<bool, Error> {
+        let result = self.goto_next_impl()?;
+
+        if !self.navigate_and_format(whitespace_rule, current_rope)? {
+            return self.check_for_error(false);
+        }
+
+        self.check_for_error(result)
+    }
+
+    pub fn navigate_and_format(
+        &mut self,
+        whitespace_rule: WhitespaceEdit,
+        current_rope: &Rope,
+    ) -> Result<bool, Error> {
+        let mut edit = TextEdit {
+            range: lsp_types::Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 0,
+                },
+            },
+            new_text: String::new(),
+        };
+
+        self.edited = false;
+        self.last_range = self.tree_cursor.node().range();
+
+        let pos = Position {
+            line: self.last_range.start_point.row as u32,
+            character: self.last_range.start_point.column as u32,
+        };
+        edit.range.start = pos;
+
+        let pos = Position {
+            line: self.last_range.end_point.row as u32,
+            character: self.last_range.end_point.column as u32,
+        };
+        edit.range.end = pos;
+        if self.tree_cursor.node().kind_id() == NodeKind::Whitespace as u16 {
+            match whitespace_rule {
+                WhitespaceEdit::Delete => {
+                    self.edits.push(edit.clone());
+                    self.edited = true;
+                }
+                WhitespaceEdit::Assert(assertion) => {
+                    if current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte)
+                        != assertion
+                    {
+                        edit.new_text = assertion.to_owned();
+                        self.edits.push(edit.clone());
+                        self.edited = true;
+                    }
+                }
+                WhitespaceEdit::Trailing(_) => {}
+            }
+
+            let next = self.goto_next_impl()?;
+
+            match whitespace_rule {
+                WhitespaceEdit::Trailing(trailing) => {
+                    if current_rope.byte_slice(self.tree_cursor.node().byte_range()) != trailing {
+                        edit.new_text = trailing.to_owned();
+                    }
+                    self.edits.push(edit.clone());
+                    self.edited = true;
+                }
+                _ => {}
+            }
+
+            if !next {
+                return self.check_for_error(false);
+            }
+        } else {
+            match whitespace_rule {
+                WhitespaceEdit::Assert(assertion) => {
+                    edit.new_text = assertion.to_owned();
+                    edit.range.end = edit.range.start;
+                    self.edits.push(edit);
+                    self.edited = true;
+                }
+                WhitespaceEdit::Trailing(trailing) => {
+                    if current_rope.byte_slice(self.tree_cursor.node().byte_range()) != trailing {
+                        edit.new_text = trailing.to_owned();
+                        edit.range.end = edit.range.start;
+                        self.edits.push(edit.clone());
+                        self.edited = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(true)
+    }
+
+    pub fn revisit(&mut self, whitespace_rule: WhitespaceEdit, current_rope: &Rope) {
+        match whitespace_rule {
+            WhitespaceEdit::Assert(assertion) => {
+                if current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte)
+                    != assertion
+                {
+                    if self.edited {
+                        self.edits
+                            .last_mut()
+                            .map(|edit| edit.new_text = assertion.to_owned());
+                    } else {
+                        self.edits.push(TextEdit {
+                            range: lsp_types::Range {
+                                start: Position {
+                                    line: self.last_range.start_point.row as u32,
+                                    character: self.last_range.start_point.column as u32,
+                                },
+                                end: Position {
+                                    line: self.last_range.end_point.row as u32,
+                                    character: self.last_range.end_point.column as u32,
+                                },
+                            },
+                            new_text: assertion.to_owned(),
+                        });
+                    }
+                } else {
+                    self.edits.pop();
+                }
+            }
+            WhitespaceEdit::Delete => {
+                if self.edited {
+                    self.edits.last_mut().map(|f| f.new_text.clear());
+                }
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    pub fn goto_parent(&mut self) -> bool {
+        self.tree_cursor.goto_parent()
+    }
+
+    pub fn node(&self) -> Node<'a> {
+        self.tree_cursor.node()
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

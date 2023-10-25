@@ -1,4 +1,3 @@
-//! [`#[you_can::turn_off_the_borrow_checker]`][turn_off_the_borrow_checker]
 #![allow(clippy::needless_doctest_main)]
 #![warn(unused_extern_crates)]
 #![deny(unsafe_op_in_unsafe_fn, rustdoc::broken_intra_doc_links)]

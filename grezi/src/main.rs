@@ -60,6 +60,8 @@ struct Args {
     dont_close: bool,
     #[clap(long)]
     lsp: bool,
+    #[clap(long)]
+    fmt: bool,
 }
 
 #[allow(dead_code)]
@@ -849,6 +851,8 @@ impl eframe::App for MyEguiApp {
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    use std::io::{stdout, Write};
+
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let native_options = eframe::NativeOptions {
@@ -860,6 +864,35 @@ fn main() -> eframe::Result<()> {
     let args: Args = clap::Parser::parse();
     let app = MyEguiApp::new(&args);
     let init_app = app.clone();
+
+    if args.fmt {
+        let mut file = app.slide_show_file.lock();
+        match lsp::format(&app, &file) {
+            Ok(edits) => {
+                let transaction = helix_lsp::util::generate_transaction_from_edits(
+                    &file,
+                    edits,
+                    helix_lsp::OffsetEncoding::Utf16,
+                );
+
+                if transaction.apply(&mut file) {
+                    stdout().write_fmt(format_args!("{}", *file)).unwrap();
+                } else {
+                    panic!("Transaction could not be applied");
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "{:?}",
+                    parser::ErrWithSource {
+                        error,
+                        source_code: file.to_string()
+                    }
+                );
+            }
+        }
+        return Ok(());
+    }
 
     eframe::run_native(
         "Grezi",

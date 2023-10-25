@@ -131,7 +131,7 @@ pub fn parse_viewbox(
         let numerator: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         let numerator: f32 = numerator.parse().unwrap();
         // We want a char literal here
-        tree_cursor.goto_next_impl()?;
+        tree_cursor.goto_next_sibling_raw()?;
         let op: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         match op.as_ref() {
             "%" => constraints.push(Constraint::Percentage(numerator)),
@@ -144,7 +144,11 @@ pub fn parse_viewbox(
                     source.byte_slice(tree_cursor.node().byte_range()).into();
                 constraints.push(Constraint::Ratio(numerator, denominator.parse().unwrap()));
             }
-            _ => todo!(),
+            _ => {
+                return Err(super::Error::InvalidParameter(
+                    tree_cursor.node().range().into(),
+                ))
+            }
         }
         tree_cursor.goto_parent();
         tree_cursor.goto_next_sibling()?;

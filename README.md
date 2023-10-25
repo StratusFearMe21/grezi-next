@@ -10,6 +10,7 @@ Grezi is designed to be used with an IDE ([Helix](https://github.com/helix-edito
 - Rename symbol support
 - Goto declaration support
 - Goto reference support
+- Code formatting
 - Semantic tokens support (Syntax highlighting in non tree-sitter editors, eg. VSCode)
 - Inlay hints for edges and slide numbers
 - Errors and diagnostics support

@@ -2,7 +2,7 @@ module.exports = grammar({
   name: 'grz',
 
   extras: $ => [
-    /\s|\\\r?\n/,
+    $.whitespace,
     $.comment
   ],
 
@@ -10,6 +10,8 @@ module.exports = grammar({
 
   rules: {
     source_file: $ => repeat($._definition),
+
+    whitespace: $ => /[\s|\\\r?\n]+/,
 
     _definition: $ =>
       choice(

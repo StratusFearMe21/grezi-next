@@ -328,12 +328,40 @@ impl<'a> GrzCursor<'a> {
         self.check_for_error(true)
     }
 
+    pub fn goto_first_child_raw(&mut self) -> Result<bool, Error> {
+        if !self.goto_first_impl()? {
+            return self.check_for_error(false);
+        }
+
+        while self.tree_cursor.node().is_extra() {
+            if !self.goto_next_impl()? {
+                return self.check_for_error(false);
+            }
+        }
+
+        self.check_for_error(true)
+    }
+
     pub fn goto_next_sibling(&mut self) -> Result<bool, Error> {
         if !self.goto_next_impl()? {
             return self.check_for_error(false);
         }
 
         while !self.tree_cursor.node().is_named() || self.tree_cursor.node().is_extra() {
+            if !self.goto_next_impl()? {
+                return self.check_for_error(false);
+            }
+        }
+
+        self.check_for_error(true)
+    }
+
+    pub fn goto_next_sibling_raw(&mut self) -> Result<bool, Error> {
+        if !self.goto_next_impl()? {
+            return self.check_for_error(false);
+        }
+
+        while self.tree_cursor.node().is_extra() {
             if !self.goto_next_impl()? {
                 return self.check_for_error(false);
             }

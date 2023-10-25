@@ -9,6 +9,10 @@
         "name": "_definition"
       }
     },
+    "whitespace": {
+      "type": "PATTERN",
+      "value": "[\\s|\\\\\\r?\\n]+"
+    },
     "_definition": {
       "type": "CHOICE",
       "members": [
@@ -1327,8 +1331,8 @@
   },
   "extras": [
     {
-      "type": "PATTERN",
-      "value": "\\s|\\\\\\r?\\n"
+      "type": "SYMBOL",
+      "name": "whitespace"
     },
     {
       "type": "SYMBOL",

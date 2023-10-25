@@ -594,6 +594,10 @@
     "named": false
   },
   {
+    "type": "whitespace",
+    "named": true
+  },
+  {
     "type": "{",
     "named": false
   },

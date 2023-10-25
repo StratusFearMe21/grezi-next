@@ -57,6 +57,9 @@ case = "1.0.0"
 [profile.dev.package."*"]
 opt-level = 3
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 lto = true
 codegen-units = 1
