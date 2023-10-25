@@ -1173,8 +1173,7 @@ pub fn start_lsp(
                                                 ))
                                                 .unwrap();
                                         }
-                                        kind => {
-                                            eprintln!("{:?}", kind);
+                                        _ => {
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
@@ -1436,7 +1435,6 @@ pub fn start_lsp(
                         let changes: lsp_types::DidChangeTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
 
-                        eprintln!("Apply change edits");
                         if current_document_version < changes.text_document.version {
                             current_document_version = changes.text_document.version;
 
