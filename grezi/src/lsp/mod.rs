@@ -2260,9 +2260,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                 edit.range.end = pos;
                 edit.range.start = pos;
 
-                if formatting_cursor.edited
-                    && formatting_cursor.node().kind_id() == NodeKind::Whitespace as u16
-                {
+                if formatting_cursor.node().kind_id() == NodeKind::Whitespace as u16 {
                     let pos = Position {
                         line: formatting_cursor.last_range.start_point.row as u32,
                         character: formatting_cursor.last_range.start_point.column as u32,
