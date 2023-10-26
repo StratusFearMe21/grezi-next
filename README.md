@@ -3,6 +3,8 @@ A re-done and re-factored verison of my old presentation software I wrote in 10t
 
 Grezi allows you to write presentations using plain text. It's designed to make presentations that are very engaging, with little effort on your part.
 
+**Note that:** Grezi depends on the Helix text editor for syntax highlighting. If you don't have Helix, you can find a binary [here](https://github.com/helix-editor/helix/releases/latest)
+
 ## Features
 
 ### IDE Support:
