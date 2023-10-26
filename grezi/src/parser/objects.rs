@@ -61,15 +61,15 @@ pub enum ObjectState {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_objects(
     mut tree_cursor: GrzCursor<'_>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
     errors_present: &mut Vec<super::Error>,
 ) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
+    use helix_core::tree_sitter::Node;
     use pulldown_cmark::Tag;
-    use tree_sitter::Node;
 
     tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());

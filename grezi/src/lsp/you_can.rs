@@ -2,7 +2,7 @@
 #![warn(unused_extern_crates)]
 #![deny(unsafe_op_in_unsafe_fn, rustdoc::broken_intra_doc_links)]
 
-use ropey::RopeSlice;
+use helix_core::ropey::RopeSlice;
 
 #[inline(always)]
 pub unsafe fn borrow_unchecked<

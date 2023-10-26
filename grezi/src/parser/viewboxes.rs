@@ -112,7 +112,7 @@ use super::PassThroughHasher;
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox(
     mut tree_cursor: GrzCursor<'_>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<(u64, UnresolvedLayout), super::Error> {
@@ -171,7 +171,7 @@ pub fn parse_viewbox(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox_ident(
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,

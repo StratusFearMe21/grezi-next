@@ -40,7 +40,7 @@ pub fn parse_slides(
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     errors_present: &mut Vec<super::Error>,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<AstObject, super::Error> {
@@ -108,7 +108,7 @@ pub fn parse_slide_object(
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<SlideObj, super::Error> {
     use super::Error;
@@ -229,7 +229,7 @@ pub fn parse_slide_object(
 fn parse_slide_function(
     mut tree_cursor: GrzCursor<'_>,
     hasher: &ahash::RandomState,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     slide_objects: &mut [SlideObj],
     max_time: &mut f32,
     slide_on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,

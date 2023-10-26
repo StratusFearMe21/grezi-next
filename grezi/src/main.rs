@@ -24,6 +24,10 @@ use eframe::{
         Color32, FontFamily, Pos2, Rounding, Vec2,
     },
 };
+#[cfg(not(target_arch = "wasm32"))]
+use helix_core::ropey::Rope;
+#[cfg(not(target_arch = "wasm32"))]
+use helix_core::tree_sitter::Tree;
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
 use layout::UnresolvedLayout;
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,11 +39,7 @@ use parser::{
     viewboxes::ViewboxIn,
     AstObject, PassThroughHasher,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use ropey::Rope;
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
-use tree_sitter::Tree;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::parser::highlighting::HelixCell;
@@ -92,7 +92,7 @@ pub struct MyEguiApp {
     #[cfg(not(target_arch = "wasm32"))]
     lsp: bool,
     #[cfg(not(target_arch = "wasm32"))]
-    parser: Arc<Mutex<tree_sitter::Parser>>,
+    parser: Arc<Mutex<helix_core::tree_sitter::Parser>>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -240,7 +240,7 @@ impl MyEguiApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut parser = {
-            let mut parser = tree_sitter::Parser::new();
+            let mut parser = helix_core::tree_sitter::Parser::new();
             parser.set_language(tree_sitter_grz::language()).unwrap();
             parser
         };

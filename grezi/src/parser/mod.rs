@@ -12,13 +12,13 @@ use std::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+use helix_core::tree_sitter::{Node, Tree, TreeCursor};
+#[cfg(not(target_arch = "wasm32"))]
 use miette::{Diagnostic, GraphicalReportHandler, SourceSpan};
 use num_enum::FromPrimitive;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use thiserror::Error;
-#[cfg(not(target_arch = "wasm32"))]
-use tree_sitter::{Node, Tree, TreeCursor};
 
 include!(concat!(env!("OUT_DIR"), "/kinds.rs"));
 
@@ -69,7 +69,7 @@ pub enum AstObject {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub struct PointFromRange(tree_sitter::Range);
+pub struct PointFromRange(helix_core::tree_sitter::Range);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl From<&PointFromRange> for SourceSpan {
@@ -79,8 +79,8 @@ impl From<&PointFromRange> for SourceSpan {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<tree_sitter::Range> for PointFromRange {
-    fn from(value: tree_sitter::Range) -> Self {
+impl From<helix_core::tree_sitter::Range> for PointFromRange {
+    fn from(value: helix_core::tree_sitter::Range) -> Self {
         Self(value)
     }
 }
@@ -116,7 +116,7 @@ pub enum Error {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Error {
-    pub fn range(&self) -> tree_sitter::Range {
+    pub fn range(&self) -> helix_core::tree_sitter::Range {
         match self {
             Error::BadExit(range) => range.0,
             Error::ImplicitEdge(range) => range.0,
@@ -386,7 +386,7 @@ impl<'a> GrzCursor<'a> {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file(
     tree: &Tree,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
 ) -> Result<Vec<AstObject>, Vec<Error>> {

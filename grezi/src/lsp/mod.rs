@@ -6,7 +6,9 @@ use crate::{
     parser::{Error, FieldName, GrzCursor, NodeKind},
     MyEguiApp,
 };
+use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
+use helix_core::tree_sitter::{Node, Point, Query, QueryCursor, Tree, TreeCursor};
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{
@@ -34,8 +36,6 @@ use lsp_types::{
     TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
     WorkDoneProgressOptions, WorkspaceEdit,
 };
-use ropey::{Rope, RopeSlice};
-use tree_sitter::{Node, Point, Query, QueryCursor, Tree, TreeCursor};
 
 pub fn start_lsp(
     mut app: crate::MyEguiApp,
@@ -48,6 +48,7 @@ pub fn start_lsp(
     // also be implemented to use sockets or HTTP.
     let (connection, io_threads) = Connection::stdio();
 
+    let mut query_cursor = QueryCursor::new();
     let rename_query = Query::new(
         tree_sitter_grz::language(),
         include_str!("queries/rename.scm"),
@@ -174,7 +175,7 @@ pub fn start_lsp(
             .unwrap();
         (panic_hook)(panic_info)
     }));
-    let mut current_rope = ropey::Rope::new();
+    let mut current_rope = helix_core::ropey::Rope::new();
     let mut current_document_version = 0;
     let mut inlay_edge_map: HashMap<
         RopeSlice<'_>,
@@ -241,6 +242,7 @@ pub fn start_lsp(
                                 &mut inlay_edge_map,
                                 &current_rope,
                                 last_inlay_len,
+                                &mut query_cursor,
                             );
                             last_inlay_len = hints.len();
                             connection
@@ -261,6 +263,7 @@ pub fn start_lsp(
                                         &app,
                                         &semantic_token_query,
                                         &current_rope,
+                                        &mut query_cursor,
                                     )),
                                 )))
                                 .unwrap();
@@ -287,6 +290,7 @@ pub fn start_lsp(
                                                     rename_params,
                                                     &current_rope,
                                                     &rename_query,
+                                                    &mut query_cursor,
                                                 ),
                                             },
                                         ])),
@@ -344,16 +348,15 @@ pub fn start_lsp(
                                         | NodeKind::SlideObjects
                                             if completion_node.prev_named_sibling().is_some() =>
                                         {
-                                            let mut query_cursor = QueryCursor::new();
-                                            let mut iter = query_cursor.matches(
+                                            query_cursor.set_point_range(
+                                                Point { row: 0, column: 0 }..completion_point,
+                                            );
+                                            let iter = query_cursor.matches(
                                                 &viewbox_name_query,
                                                 tree_info.0.root_node(),
                                                 RopeProvider(current_rope.slice(..)),
                                             );
 
-                                            iter.set_point_range(
-                                                Point { row: 0, column: 0 }..completion_point,
-                                            );
                                             let completion_range = completion_node.range();
 
                                             let mut completions = vec![CompletionItem {
@@ -473,15 +476,13 @@ pub fn start_lsp(
                                         NodeKind::SlideObjects
                                         | NodeKind::SlideObj
                                         | NodeKind::Action => {
-                                            let mut query_cursor = QueryCursor::new();
-                                            let mut iter = query_cursor.matches(
+                                            query_cursor.set_point_range(
+                                                Point { row: 0, column: 0 }..completion_point,
+                                            );
+                                            let iter = query_cursor.matches(
                                                 &object_name_query,
                                                 tree_info.0.root_node(),
                                                 RopeProvider(current_rope.slice(..)),
-                                            );
-
-                                            iter.set_point_range(
-                                                Point { row: 0, column: 0 }..completion_point,
                                             );
 
                                             let completions: Vec<CompletionItem> = iter
@@ -1015,6 +1016,7 @@ pub fn start_lsp(
                                                 &slide_complete_query,
                                                 &tree_info.0,
                                                 &current_rope,
+                                                &mut query_cursor,
                                             )
                                             .ok(),
                                         )))
@@ -1038,6 +1040,7 @@ pub fn start_lsp(
                                         &top_level_search_query,
                                         &current_rope,
                                         currently_open.clone(),
+                                        &mut query_cursor,
                                     ),
                                 )))
                                 .unwrap();
@@ -1057,6 +1060,7 @@ pub fn start_lsp(
                                         &current_rope,
                                         reference_params,
                                         &currently_open,
+                                        &mut query_cursor,
                                     ),
                                 )))
                                 .unwrap();
@@ -1075,7 +1079,7 @@ pub fn start_lsp(
                             serde_json::from_value(not.params).unwrap();
                         currently_open = doc.text_document.uri;
                         let mut slide_show = app.slide_show.write();
-                        current_rope = ropey::Rope::from_str(&doc.text_document.text);
+                        current_rope = helix_core::ropey::Rope::from_str(&doc.text_document.text);
                         if current_rope.len_lines() < 3 {
                             const HELLO_WORLD: &str = include_str!("hello_world.grz");
                             current_rope.insert(0, HELLO_WORLD);
@@ -1328,6 +1332,7 @@ fn rename(
     rename: RenameParams,
     current_rope: &Rope,
     rename_query: &Query,
+    query_cursor: &mut QueryCursor,
 ) -> Vec<OneOf<TextEdit, AnnotatedTextEdit>> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
@@ -1346,7 +1351,12 @@ fn rename(
     // identifiers cannot have new lines, so this should work
     let rename_name = current_rope.byte_slice(rename_node.byte_range());
 
-    let mut query_cursor = QueryCursor::new();
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
     let iter = query_cursor.matches(
         rename_query,
         tree_info.0.root_node(),
@@ -1384,13 +1394,19 @@ fn inlay_hints(
     inlay_edge_map: &mut HashMap<RopeSlice<'_>, RopeSlice<'_>, BuildHasherDefault<ahash::AHasher>>,
     current_rope: &Rope,
     last_inlay_len: usize,
+    query_cursor: &mut QueryCursor,
 ) -> Vec<InlayHint> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
     let mut hints = Vec::with_capacity(last_inlay_len);
 
-    let mut query_cursor = QueryCursor::new();
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
     let slide_iter = query_cursor.matches(
         slide_complete_query,
         tree_info.0.root_node(),
@@ -1509,13 +1525,19 @@ fn semantic_tokens(
     app: &MyEguiApp,
     semantic_token_query: &Query,
     current_rope: &Rope,
+    query_cursor: &mut QueryCursor,
 ) -> SemanticTokensResult {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
     let start_node = tree_info.0.root_node();
 
-    let mut query_cursor = QueryCursor::new();
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
     let iter = query_cursor.matches(
         semantic_token_query,
         start_node,
@@ -1523,7 +1545,7 @@ fn semantic_tokens(
     );
 
     let mut tokens = Vec::new();
-    let mut last_range = tree_sitter::Range {
+    let mut last_range = helix_core::tree_sitter::Range {
         start_byte: 0,
         end_byte: 0,
         start_point: Point { row: 0, column: 0 },
@@ -1592,6 +1614,7 @@ pub fn complete_source_file(
     slide_complete_query: &Query,
     tree_info: &Tree,
     current_rope: &Rope,
+    query_cursor: &mut QueryCursor,
 ) -> Result<CompletionResponse, Error> {
     let new_slide_range = lsp_types::Range {
         start: Position {
@@ -1625,7 +1648,12 @@ pub fn complete_source_file(
     };
 
     let mut new_text = String::from("{\n");
-    let mut query_cursor = QueryCursor::new();
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
     let iter = query_cursor.matches(
         slide_complete_query,
         tree_info.root_node(),
@@ -1762,6 +1790,7 @@ pub fn references(
     current_rope: &Rope,
     references: ReferenceParams,
     currently_open: &Url,
+    query_cursor: &mut QueryCursor,
 ) -> Option<Vec<Location>> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
@@ -1776,7 +1805,12 @@ pub fn references(
         .descendant_for_point_range(point, point)
         .unwrap();
 
-    let mut query_cursor = QueryCursor::new();
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
     let iter = query_cursor.matches(
         rename_query,
         tree_info.0.root_node(),
@@ -1815,6 +1849,7 @@ pub fn goto_declaration(
     top_level_search_query: &Query,
     current_rope: &Rope,
     currently_open: Url,
+    query_cursor: &mut QueryCursor,
 ) -> Option<GotoDefinitionResponse> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
@@ -1832,7 +1867,12 @@ pub fn goto_declaration(
         .descendant_for_point_range(point, point)
         .unwrap();
 
-    let mut query_cursor = QueryCursor::new();
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
     let iter = query_cursor.matches(
         top_level_search_query,
         tree_info.0.root_node(),
@@ -2287,7 +2327,7 @@ pub enum WhitespaceEdit {
 pub struct FormattingCursor<'a> {
     tree_cursor: TreeCursor<'a>,
     pub edits: Vec<TextEdit>,
-    pub last_range: tree_sitter::Range,
+    pub last_range: helix_core::tree_sitter::Range,
     pub edited: bool,
 }
 
@@ -2497,9 +2537,9 @@ impl<'a> FormattingCursor<'a> {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn generate_edits(
-    old_text: ropey::RopeSlice<'_>,
+    old_text: helix_core::ropey::RopeSlice<'_>,
     changeset: &helix_core::ChangeSet,
-) -> Vec<tree_sitter::InputEdit> {
+) -> Vec<helix_core::tree_sitter::InputEdit> {
     use helix_core::{chars::char_is_line_ending, Operation::*, Tendril};
 
     let mut old_pos = 0;
@@ -2556,7 +2596,7 @@ pub fn generate_edits(
                 let (old_end_byte, old_end_position) = point_at_pos(old_text, old_end);
 
                 // deletion
-                edits.push(tree_sitter::InputEdit {
+                edits.push(helix_core::tree_sitter::InputEdit {
                     start_byte,                       // old_pos to byte
                     old_end_byte,                     // old_end to byte
                     new_end_byte: start_byte,         // old_pos to byte
@@ -2576,7 +2616,7 @@ pub fn generate_edits(
                     iter.next();
 
                     // replacement
-                    edits.push(tree_sitter::InputEdit {
+                    edits.push(helix_core::tree_sitter::InputEdit {
                         start_byte,                                    // old_pos to byte
                         old_end_byte,                                  // old_end to byte
                         new_end_byte: start_byte + s.len(),            // old_pos to byte + s.len()
@@ -2586,7 +2626,7 @@ pub fn generate_edits(
                     });
                 } else {
                     // insert
-                    edits.push(tree_sitter::InputEdit {
+                    edits.push(helix_core::tree_sitter::InputEdit {
                         start_byte,                                    // old_pos to byte
                         old_end_byte: start_byte,                      // same
                         new_end_byte: start_byte + s.len(),            // old_pos + s.len()

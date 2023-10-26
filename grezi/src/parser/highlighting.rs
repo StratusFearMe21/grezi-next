@@ -12,14 +12,14 @@ use eframe::{
         Color32, FontId, Stroke,
     },
 };
+use helix_core::ropey::{Rope, RopeBuilder};
+use helix_core::tree_sitter::Node;
 use helix_core::{
     syntax::{HighlightConfiguration, HighlightEvent, InjectionLanguageMarker},
     Syntax,
 };
 use helix_view::theme::Color;
 use helix_view::theme::Modifier;
-use ropey::{Rope, RopeBuilder};
-use tree_sitter::Node;
 
 use super::{GrzCursor, NodeKind, PassThroughHasher};
 
@@ -113,7 +113,7 @@ pub fn highlight_text(
     });
 
     let syntax = Syntax::new(
-        &rope,
+        rope.slice(..),
         Arc::clone(highlight_config),
         Arc::clone(&helix.loader),
     )

@@ -19,14 +19,12 @@ log = "0.4.20"
 clap = { version = "4.4.6", features = ["derive"] }
 miette = { version = "5.10.0", features = ["fancy"] }
 pulldown-cmark = { version = "0.9.3", default-features = false }
-tree-sitter = "0.20.10"
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
-helix-core = { git = "https://github.com/helix-editor/helix", version = "0.6.0", rev = "7f5940b" }
-helix-loader = { git = "https://github.com/helix-editor/helix", version = "0.6.0", rev = "7f5940b" }
-helix-term = { git = "https://github.com/helix-editor/helix", version = "0.6.0", rev = "7f5940b" }
-helix-view = { git = "https://github.com/helix-editor/helix", version = "0.6.0", rev = "7f5940b" }
-helix-lsp = { git = "https://github.com/helix-editor/helix", version = "0.6.0", rev = "7f5940b" }
-ropey = "1.6.0"
+helix-core = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
+helix-loader = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
+helix-term = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
+helix-view = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
+helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 eframe = { version = "0.22.0", default-features = false, features = [
     "default_fonts",
     "glow",

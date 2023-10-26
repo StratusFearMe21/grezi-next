@@ -27,7 +27,7 @@ pub enum ResolvedActions {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_actions(
     mut tree_cursor: GrzCursor<'_>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     slide_in_ast: usize,
@@ -52,7 +52,7 @@ pub fn parse_actions(
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_single_action(
     mut action_walker: GrzCursor<'_>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<Actions, super::Error> {
@@ -114,7 +114,7 @@ fn parse_single_action(
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_highlight_location(
     mut tree_cursor: GrzCursor<'_>,
-    source: &ropey::Rope,
+    source: &helix_core::ropey::Rope,
 ) -> Result<PCursor, ()> {
     use std::borrow::Cow;
 
