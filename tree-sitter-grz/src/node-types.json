@@ -281,6 +281,20 @@
           }
         ]
       },
+      "viewbox": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "size",
+            "named": true
+          }
+        ]
+      },
       "viewbox_index": {
         "multiple": false,
         "required": true,
@@ -294,18 +308,10 @@
     },
     "children": {
       "multiple": true,
-      "required": true,
+      "required": false,
       "types": [
         {
           "type": "edge_parser",
-          "named": true
-        },
-        {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "size",
           "named": true
         },
         {

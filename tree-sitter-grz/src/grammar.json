@@ -595,8 +595,12 @@
           "value": ":"
         },
         {
-          "type": "SYMBOL",
-          "name": "_vb_identifier"
+          "type": "FIELD",
+          "name": "viewbox",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_vb_identifier"
+          }
         },
         {
           "type": "FIELD",

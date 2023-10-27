@@ -140,9 +140,18 @@ pub fn parse_objects(
                             continue;
                         }
                     },
-                    "font_family" => font = FontFamily::Name(value.into()),
+                    "font_family" => {
+                        if value == "Fira Code" {
+                            font = FontFamily::Name(value.into())
+                        }
+                    }
                     "font_size" => font_size = value.parse::<f32>().unwrap(),
-                    "language" => language = Some(value),
+                    "language" => {
+                        language = Some((
+                            value,
+                            parameter.1.child(1 /* second child */).unwrap().range(),
+                        ))
+                    }
                     _ => {}
                 }
             }

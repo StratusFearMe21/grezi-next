@@ -12,7 +12,7 @@
 #define ALIAS_COUNT 0
 #define TOKEN_COUNT 25
 #define EXTERNAL_TOKEN_COUNT 0
-#define FIELD_COUNT 13
+#define FIELD_COUNT 14
 #define MAX_ALIAS_SEQUENCE_LENGTH 8
 #define PRODUCTION_ID_COUNT 16
 
@@ -425,7 +425,8 @@ enum {
   field_parameters = 10,
   field_ty = 11,
   field_value = 12,
-  field_viewbox_index = 13,
+  field_viewbox = 13,
+  field_viewbox_index = 14,
 };
 
 static const char * const ts_field_names[] = {
@@ -442,6 +443,7 @@ static const char * const ts_field_names[] = {
   [field_parameters] = "parameters",
   [field_ty] = "ty",
   [field_value] = "value",
+  [field_viewbox] = "viewbox",
   [field_viewbox_index] = "viewbox_index",
 };
 
@@ -451,16 +453,16 @@ static const TSFieldMapSlice ts_field_map_slices[PRODUCTION_ID_COUNT] = {
   [3] = {.index = 2, .length = 2},
   [4] = {.index = 4, .length = 2},
   [5] = {.index = 6, .length = 3},
-  [6] = {.index = 9, .length = 2},
-  [7] = {.index = 11, .length = 1},
-  [8] = {.index = 12, .length = 1},
-  [9] = {.index = 13, .length = 1},
-  [10] = {.index = 14, .length = 2},
-  [11] = {.index = 16, .length = 2},
-  [12] = {.index = 18, .length = 3},
-  [13] = {.index = 21, .length = 3},
-  [14] = {.index = 24, .length = 3},
-  [15] = {.index = 27, .length = 4},
+  [6] = {.index = 9, .length = 3},
+  [7] = {.index = 12, .length = 1},
+  [8] = {.index = 13, .length = 1},
+  [9] = {.index = 14, .length = 1},
+  [10] = {.index = 15, .length = 2},
+  [11] = {.index = 17, .length = 2},
+  [12] = {.index = 19, .length = 3},
+  [13] = {.index = 22, .length = 3},
+  [14] = {.index = 25, .length = 3},
+  [15] = {.index = 28, .length = 4},
 };
 
 static const TSFieldMapEntry ts_field_map_entries[] = {
@@ -480,32 +482,33 @@ static const TSFieldMapEntry ts_field_map_entries[] = {
     {field_name, 0},
   [9] =
     {field_object, 0},
+    {field_viewbox, 2},
     {field_viewbox_index, 3},
-  [11] =
-    {field_function, 0},
   [12] =
-    {field_direction, 0},
+    {field_function, 0},
   [13] =
-    {field_function, 2},
+    {field_direction, 0},
   [14] =
+    {field_function, 2},
+  [15] =
     {field_operation, 1},
     {field_value, 0},
-  [16] =
+  [17] =
     {field_direction, 0},
     {field_parameters, 1},
-  [18] =
+  [19] =
     {field_parameters, 1},
     {field_parameters, 2},
     {field_parameters, 3},
-  [21] =
+  [22] =
     {field_denominator, 2},
     {field_operation, 1},
     {field_value, 0},
-  [24] =
+  [25] =
     {field_direction, 0},
     {field_parameters, 1},
     {field_parameters, 2},
-  [27] =
+  [28] =
     {field_parameters, 1},
     {field_parameters, 2},
     {field_parameters, 3},

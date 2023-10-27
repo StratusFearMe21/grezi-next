@@ -16,7 +16,7 @@ Grezi is designed to be used with an IDE ([Helix](https://github.com/helix-edito
 - Semantic tokens support (Syntax highlighting in non tree-sitter editors, eg. VSCode)
 - Inlay hints for edges and slide numbers
 - Errors and diagnostics support
-- Hot reloading on save
+- Hot reloading as you type
 - Snippet for copying down the previous slide and removing exited objects
 - Automatic "Hello World" boilerplate for empty files
 
@@ -29,5 +29,5 @@ Try [Helix](https://github.com/helix-editor/helix)
 
 ### Hot Reloading:
 Grezi allows you to hot reload your presentation *as* you create it. There are 2 hot reloading implementations
-- LSP (ideal): Just run the LSP
+- LSP (ideal): Just run the LSP, every keystroke you make will be reflected in the slideshow window.
 - Watching: When not in LSP mode, Grezi will watch the open presentation for changes. This implementation is slower than using the LSP hot reloading, but if you don't have an IDE, this should work for you. 

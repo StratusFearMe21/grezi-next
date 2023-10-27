@@ -12,8 +12,11 @@ use eframe::{
         Color32, FontId, Stroke,
     },
 };
-use helix_core::ropey::{Rope, RopeBuilder};
 use helix_core::tree_sitter::Node;
+use helix_core::{
+    ropey::{Rope, RopeBuilder},
+    tree_sitter::Range,
+};
 use helix_core::{
     syntax::{HighlightConfiguration, HighlightEvent, InjectionLanguageMarker},
     Syntax,
@@ -37,7 +40,7 @@ pub struct HelixCell {
 
 pub fn highlight_text(
     text: Node<'_>,
-    lang: Cow<'_, str>,
+    lang: (Cow<'_, str>, Range),
     align: Align,
     font_id: FontId,
     helix_cell: &mut Option<HelixCell>,
@@ -105,11 +108,21 @@ pub fn highlight_text(
         hasher.finish()
     };
     let highlight_config = helix.loaded_syntaxes.entry(hash).or_insert_with(|| {
-        helix
+        if let Some(highlight) = helix
             .loader
-            .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(lang))
+            .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(lang.0))
             .and_then(|config| config.highlight_config(helix.theme.scopes()))
-            .unwrap()
+        {
+            highlight
+        } else {
+            helix
+                .loader
+                .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(
+                    "markdown".into(),
+                ))
+                .and_then(|config| config.highlight_config(helix.theme.scopes()))
+                .unwrap()
+        }
     });
 
     let syntax = Syntax::new(

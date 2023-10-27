@@ -381,35 +381,58 @@ impl<'a> GrzCursor<'a> {
     pub fn node(&self) -> Node<'a> {
         self.tree_cursor.node()
     }
+
+    pub fn reset(&mut self, node: Node<'a>) {
+        self.tree_cursor.reset(node);
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file(
     tree: &Tree,
+    old_tree: Option<&Tree>,
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
-) -> Result<Vec<AstObject>, Vec<Error>> {
-    // let yoke = Yoke::<ParseError<'static>, String>::attach_to_cart(file, |source| {
-    // let mut registers: AHashMap<&str, &str> = AHashMap::default();
-
+) -> Result<(), Vec<Error>> {
+    let start = std::time::Instant::now();
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
     let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
-    let mut tree_cursor = GrzCursor::new(tree);
+    dbg!(tree.root_node().has_changes());
+    let mut is_new = false;
+    let mut tree_cursor = GrzCursor::new(if let Some(t) = old_tree {
+        if t.changed_ranges(tree).next().is_some() {
+            is_new = true;
+            tree
+        } else {
+            t
+        }
+    } else {
+        is_new = true;
+        tree
+    });
 
     match tree_cursor.goto_first_child() {
         Ok(_) => {}
         Err(e) => return Err(vec![e]),
     }
-    let mut ast = Vec::new();
+
+    slide_show.slide_show.clear();
+
+    if is_new {
+        slide_show.viewboxes.clear();
+        slide_show.objects.clear();
+    }
+
     'parserloop: loop {
         let node = tree_cursor.node();
         match NodeKind::from(node.kind_id()) {
             NodeKind::Slide => {
-                last_slide = ast.len();
+                last_slide = slide_show.slide_show.len();
+
                 match slides::parse_slides(
                     tree_cursor.fork(),
                     &hasher,
@@ -419,35 +442,39 @@ pub fn parse_file(
                     &mut errors_present,
                     &slide_show.viewboxes,
                 ) {
-                    Ok(slide) => ast.push(slide),
+                    Ok(slide) => slide_show.slide_show.push(slide),
                     Err(e) => errors_present.push(e),
                 }
             }
             NodeKind::Viewbox => {
-                match viewboxes::parse_viewbox(
-                    tree_cursor.fork(),
-                    source,
-                    &hasher,
-                    &slide_show.viewboxes,
-                ) {
-                    Ok(layout) => {
-                        slide_show.viewboxes.insert(layout.0, layout.1);
+                if node.has_changes() || is_new {
+                    match viewboxes::parse_viewbox(
+                        tree_cursor.fork(),
+                        source,
+                        &hasher,
+                        &slide_show.viewboxes,
+                    ) {
+                        Ok(layout) => {
+                            slide_show.viewboxes.insert(layout.0, layout.1);
+                        }
+                        Err(e) => errors_present.push(e),
                     }
-                    Err(e) => errors_present.push(e),
                 }
             }
             NodeKind::Obj => {
-                match objects::parse_objects(
-                    tree_cursor.fork(),
-                    source,
-                    helix_cell,
-                    &hasher,
-                    &mut errors_present,
-                ) {
-                    Ok(object) => {
-                        slide_show.objects.insert(object.0, object.1);
+                if node.has_changes() || is_new {
+                    match objects::parse_objects(
+                        tree_cursor.fork(),
+                        source,
+                        helix_cell,
+                        &hasher,
+                        &mut errors_present,
+                    ) {
+                        Ok(object) => {
+                            slide_show.objects.insert(object.0, object.1);
+                        }
+                        Err(e) => errors_present.push(e),
                     }
-                    Err(e) => errors_present.push(e),
                 }
             }
             NodeKind::Register => {
@@ -479,7 +506,9 @@ pub fn parse_file(
                     last_slide,
                     &mut errors_present,
                 ) {
-                    Ok(action) => ast.push(action),
+                    Ok(action) => {
+                        slide_show.slide_show.push(action);
+                    }
                     Err(e) => errors_present.push(e),
                 }
             }
@@ -495,8 +524,9 @@ pub fn parse_file(
         }
     }
     drop(tree_cursor);
+    dbg!(start.elapsed());
     if errors_present.is_empty() {
-        Ok(ast)
+        Ok(())
     } else {
         Err(errors_present)
     }

@@ -8,7 +8,7 @@ use std::{
     mem::ManuallyDrop,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -21,7 +21,7 @@ use eframe::{
     egui::{self, FontData, FontDefinitions, PointerButton, Rect, Ui},
     epaint::{
         mutex::{Mutex, RwLock},
-        Color32, FontFamily, Pos2, Rounding, Vec2,
+        Color32, FontFamily, Pos2, Rounding, Stroke, Vec2,
     },
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -71,6 +71,8 @@ pub struct MyEguiApp {
     #[cfg(not(target_arch = "wasm32"))]
     clear_resolved: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
+    restart_timer: Arc<AtomicBool>,
+    #[cfg(not(target_arch = "wasm32"))]
     slide_show_file: Arc<Mutex<Rope>>,
     #[cfg(not(target_arch = "wasm32"))]
     tree_info: Arc<Mutex<Option<(Tree, Rope)>>>,
@@ -78,7 +80,11 @@ pub struct MyEguiApp {
     file_name: String,
     #[cfg(not(target_arch = "wasm32"))]
     dont_exit: bool,
-    index: usize,
+    #[cfg(not(target_arch = "wasm32"))]
+    vb_dbg: Arc<AtomicU64>,
+    #[cfg(not(target_arch = "wasm32"))]
+    obj_dbg: Arc<AtomicU64>,
+    index: Arc<AtomicUsize>,
     #[cfg(not(target_arch = "wasm32"))]
     delta: Instant,
     #[cfg(not(target_arch = "wasm32"))]
@@ -128,6 +134,7 @@ impl MyEguiApp {
             let watcher_file_name = self.file_name.clone();
             let watcher_slide_show_file = Arc::clone(&self.slide_show_file);
             let watcher_new_file = Arc::clone(&self.clear_resolved);
+            let watcher_restart_timer = Arc::clone(&self.restart_timer);
             let watcher_parser = Arc::clone(&self.parser);
             let watcher_slide_show = Arc::clone(&self.slide_show);
             let mut instant = Instant::now();
@@ -158,7 +165,7 @@ impl MyEguiApp {
                                     }
 
                                     info.1 = new_file;
-                                    info.0 = watcher_parser
+                                    let tree = watcher_parser
                                         .lock()
                                         .parse_with(
                                             &mut |byte, _| {
@@ -177,19 +184,19 @@ impl MyEguiApp {
 
                                     let mut slide_show = watcher_slide_show.write();
 
-                                    slide_show.viewboxes.clear();
-                                    slide_show.objects.clear();
                                     let ast = parser::parse_file(
-                                        &info.0,
+                                        &tree,
+                                        Some(&info.0),
                                         &info.1,
                                         &mut self.helix_cell,
                                         &mut slide_show,
                                     );
+                                    info.0 = tree;
                                     match ast {
-                                        Ok(ast) => {
+                                        Ok(_) => {
                                             *slide_show_file = info.1.clone();
-                                            slide_show.slide_show = ast;
                                             watcher_new_file.store(true, Ordering::Relaxed);
+                                            watcher_restart_timer.store(true, Ordering::Relaxed);
                                         }
                                         Err(errors) => {
                                             for error in errors {
@@ -288,12 +295,11 @@ impl MyEguiApp {
                         None,
                     )
                     .unwrap();
-                let ast = parser::parse_file(&tree, &file, &mut helix_cell, &mut slide_show);
+                let ast = parser::parse_file(&tree, None, &file, &mut helix_cell, &mut slide_show);
                 match ast {
-                    Ok(ast) => {
+                    Ok(_) => {
                         *tree_info = Some((tree, Rope::new()));
                         *slide_show_file.lock() = file;
-                        slide_show.slide_show = ast;
                         slide_show
                     }
                     Err(errors) => {
@@ -328,6 +334,8 @@ impl MyEguiApp {
             #[cfg(not(target_arch = "wasm32"))]
             clear_resolved: new_file,
             #[cfg(not(target_arch = "wasm32"))]
+            restart_timer: Arc::new(true.into()),
+            #[cfg(not(target_arch = "wasm32"))]
             slide_show_file,
             #[cfg(not(target_arch = "wasm32"))]
             tree_info,
@@ -340,7 +348,11 @@ impl MyEguiApp {
                 .to_string(),
             #[cfg(not(target_arch = "wasm32"))]
             dont_exit: args.dont_close,
-            index: 0,
+            #[cfg(not(target_arch = "wasm32"))]
+            vb_dbg: Arc::new(0.into()),
+            #[cfg(not(target_arch = "wasm32"))]
+            obj_dbg: Arc::new(0.into()),
+            index: Arc::new(0.into()),
             #[cfg(not(target_arch = "wasm32"))]
             delta: Instant::now(),
             time: 0.0,
@@ -626,14 +638,14 @@ impl eframe::App for MyEguiApp {
             .exact_height(32.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(self.index != 0, egui::Button::new("⬅")).clicked() {
-                        self.index -= 1;
+                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("⬅")).clicked() {
+                        self.index.fetch_sub(1, Ordering::Relaxed);
                         self.resolved_actions = None;
                         self.resolved_slide = None;
                         button_hit = true;
                         self.time = 1000.0;
-                    } else if ui.add_enabled(self.index != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
-                        self.index += 1;
+                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
+                        self.index.fetch_add(1, Ordering::Relaxed);
                         self.resolved_actions = None;
                         self.resolved_slide = None;
                         button_hit = true;
@@ -662,8 +674,13 @@ impl eframe::App for MyEguiApp {
                 self.resolved_slide = None;
                 self.resolved_viewboxes.clear();
                 self.delta = Instant::now();
-                self.time = 0.0;
                 self.clear_resolved.store(false, Ordering::Relaxed);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if self.restart_timer.load(Ordering::Relaxed) {
+                self.delta = Instant::now();
+                self.time = 0.0;
+                self.restart_timer.store(false, Ordering::Relaxed);
             }
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -671,13 +688,15 @@ impl eframe::App for MyEguiApp {
             #[cfg(not(target_arch = "wasm32"))]
             let slide_show = slide_show_cloned.read();
 
+            let mut index = self.index.load(Ordering::Relaxed);
+            if index >= slide_show.slide_show.len() {
+                index = slide_show.slide_show.len() - 1;
+                self.index
+                    .store(slide_show.slide_show.len() - 1, Ordering::Relaxed);
+            }
             // This is safe because the resolution functions do not touch self.slide_show.slide_show
             let resolved_slide = {
-                if let Some(slide) = slide_show
-                    .slide_show
-                    .get(self.index)
-                    .or_else(|| slide_show.slide_show.last())
-                {
+                if let Some(slide) = slide_show.slide_show.get(index) {
                     let slide = slide as *const AstObject;
                     match &self.resolved_slide {
                         None => match unsafe { &*slide } {
@@ -732,11 +751,7 @@ impl eframe::App for MyEguiApp {
                     return;
                 }
             };
-            if let Some(slide) = slide_show
-                .slide_show
-                .get(self.index)
-                .or_else(|| slide_show.slide_show.last())
-            {
+            if let Some(slide) = slide_show.slide_show.get(index) {
                 let resolved_actions = match &self.resolved_actions {
                     None => unreachable!(),
                     Some(resolved) => resolved,
@@ -767,6 +782,22 @@ impl eframe::App for MyEguiApp {
                     }
                 }
 
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let vb_dbg = self.vb_dbg.load(Ordering::Relaxed);
+                    if vb_dbg > 0 {
+                        if let Some(vb) = self.resolved_viewboxes.get(&vb_dbg) {
+                            for rect in vb {
+                                ctx.debug_painter().rect_stroke(
+                                    *rect,
+                                    Rounding::none(),
+                                    Stroke::new(2.0, Color32::RED),
+                                );
+                            }
+                        }
+                    }
+                }
+
                 ctx.input(|input| {
                     for event in input.events.iter() {
                         match event {
@@ -780,17 +811,26 @@ impl eframe::App for MyEguiApp {
                                 pressed: false,
                                 ..
                             } if !button_hit => {
-                                if self.index == slide_show.slide_show.len() - 1 {
-                                    #[cfg(not(target_arch = "wasm32"))]
-                                    if !self.dont_exit {
-                                        frame.close();
-                                    }
-                                } else {
-                                    self.index += 1;
-                                    self.resolved_actions = None;
-                                    self.resolved_slide = None;
-                                    self.time = 0.0;
-                                }
+                                let _ = self.index.fetch_update(
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                    |index| {
+                                        if index == slide_show.slide_show.len() - 1 {
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            if !self.dont_exit {
+                                                frame.close();
+                                            }
+                                            None
+                                        } else {
+                                            self.resolved_actions = None;
+                                            self.resolved_slide = None;
+                                            self.time = 0.0;
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            self.vb_dbg.store(0, Ordering::Relaxed);
+                                            Some(index + 1)
+                                        }
+                                    },
+                                );
                             }
                             egui::Event::Key {
                                 key: egui::Key::ArrowLeft,
@@ -802,12 +842,21 @@ impl eframe::App for MyEguiApp {
                                 pressed: false,
                                 ..
                             } if !button_hit => {
-                                if self.index != 0 {
-                                    self.index -= 1;
-                                    self.resolved_actions = None;
-                                    self.resolved_slide = None;
-                                    self.time = 1000.0;
-                                }
+                                let _ = self.index.fetch_update(
+                                    Ordering::Relaxed,
+                                    Ordering::Relaxed,
+                                    |index| {
+                                        if index != 0 {
+                                            self.resolved_actions = None;
+                                            self.resolved_slide = None;
+                                            self.time = 1000.0;
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            self.vb_dbg.store(0, Ordering::Relaxed);
+                                            return Some(index - 1);
+                                        }
+                                        None
+                                    },
+                                );
                             }
                             egui::Event::Key {
                                 key: egui::Key::R,
@@ -815,13 +864,17 @@ impl eframe::App for MyEguiApp {
                                 ..
                             } => {
                                 self.time = 0.0;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.vb_dbg.store(0, Ordering::Relaxed);
                             }
                             egui::Event::Key {
                                 key: egui::Key::B,
                                 pressed: true,
                                 ..
                             } => {
-                                self.index = 0;
+                                self.index.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.vb_dbg.store(0, Ordering::Relaxed);
                                 self.resolved_actions = None;
                                 self.resolved_slide = None;
                             }

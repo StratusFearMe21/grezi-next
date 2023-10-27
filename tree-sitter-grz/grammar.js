@@ -96,7 +96,7 @@ module.exports = grammar({
     ),
 
     slide_obj: $ => seq(
-      field('object', $.identifier), ':', $._vb_identifier,
+      field('object', $.identifier), ':', field("viewbox", $._vb_identifier),
       field('viewbox_index', $.index_parser),
       optional($.slide_from),
       optional($.edge_parser),

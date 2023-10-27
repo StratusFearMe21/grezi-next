@@ -1,10 +1,16 @@
-use std::{collections::HashMap, hash::BuildHasherDefault, sync::atomic::Ordering};
+use std::{
+    collections::HashMap,
+    hash::Hash,
+    hash::{BuildHasher, BuildHasherDefault, Hasher},
+    process::Stdio,
+    sync::atomic::Ordering,
+};
 
 mod you_can;
 
 use crate::{
     parser::{Error, FieldName, GrzCursor, NodeKind},
-    MyEguiApp,
+    MyEguiApp, SlideShow,
 };
 use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
@@ -16,25 +22,26 @@ use lsp_types::{
         PublishDiagnostics, ShowMessage,
     },
     request::{
-        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, Formatting, GotoDeclaration,
-        InlayHintRequest, PrepareRenameRequest, RangeFormatting, References, Rename, Request,
-        SemanticTokensFullRequest,
+        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, ExecuteCommand, Formatting,
+        GotoDeclaration, InlayHintRequest, PrepareRenameRequest, RangeFormatting, References,
+        Rename, Request, SemanticTokensFullRequest,
     },
     AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
     CompletionItemLabelDetails, CompletionOptions, CompletionOptionsCompletionItem,
     CompletionParams, CompletionResponse, CompletionTextEdit, DeclarationCapability,
     DocumentChanges, DocumentFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    InlayHint, InlayHintKind, InlayHintLabel, InlayHintOptions, InlayHintParams,
-    InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, Location, MessageType, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind, PrepareRenameResponse,
-    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
-    SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
-    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams,
-    SymbolKind, TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url,
-    WorkDoneProgressOptions, WorkspaceEdit,
+    DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandOptions, ExecuteCommandParams,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, InlayHint, InlayHintKind, InlayHintLabel,
+    InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, InsertReplaceEdit,
+    InsertTextFormat, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
+    Position, PositionEncodingKind, PrepareRenameResponse, PublishDiagnosticsParams,
+    ReferenceParams, RenameOptions, RenameParams, SaveOptions, SemanticToken,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
+    SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams, SymbolKind,
+    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 
 pub fn start_lsp(
@@ -79,10 +86,19 @@ pub fn start_lsp(
         include_str!("queries/object_name.scm"),
     )
     .unwrap();
-
     let semantic_token_query = Query::new(
         tree_sitter_grz::language(),
         include_str!("queries/semantic_tokens.scm"),
+    )
+    .unwrap();
+    let vb_in_slide_query = Query::new(
+        tree_sitter_grz::language(),
+        include_str!("queries/vb_in_slide.scm"),
+    )
+    .unwrap();
+    let obj_in_slide_query = Query::new(
+        tree_sitter_grz::language(),
+        include_str!("queries/obj_in_slide.scm"),
     )
     .unwrap();
 
@@ -98,6 +114,10 @@ pub fn start_lsp(
                 ..Default::default()
             },
         )),
+        execute_command_provider: Some(ExecuteCommandOptions {
+            commands: vec!["tree_to_dot".to_string()],
+            ..Default::default()
+        }),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: WorkDoneProgressOptions {
@@ -1046,6 +1066,52 @@ pub fn start_lsp(
                                 .unwrap();
                         }
                     }
+                    ExecuteCommand::METHOD => {
+                        if let Ok((rqid, command)) =
+                            req.extract::<ExecuteCommandParams>(ExecuteCommand::METHOD)
+                        {
+                            match command.command.as_str() {
+                                "tree_to_dot" => {
+                                    if let Ok(process) = std::process::Command::new("dot")
+                                        .stdout(std::fs::File::create("out.dot").unwrap())
+                                        .stdin(Stdio::piped())
+                                        .spawn()
+                                    {
+                                        let tree_info = app.tree_info.lock();
+                                        let tree_info = tree_info.as_ref().unwrap();
+
+                                        tree_info.0.print_dot_graph(&process.stdin.unwrap());
+
+                                        connection
+                                            .sender
+                                            .send(Message::Response(Response::new_ok(
+                                                rqid,
+                                                None::<serde_json::Value>,
+                                            )))
+                                            .unwrap();
+                                    } else {
+                                        connection
+                                            .sender
+                                            .send(Message::Response(Response::new_err(
+                                                rqid,
+                                                500,
+                                                "graphviz is not installed".to_string(),
+                                            )))
+                                            .unwrap();
+                                    }
+                                }
+                                _ => {
+                                    connection
+                                        .sender
+                                        .send(Message::Response(Response::new_ok(
+                                            rqid,
+                                            None::<serde_json::Value>,
+                                        )))
+                                        .unwrap();
+                                }
+                            }
+                        }
+                    }
                     References::METHOD => {
                         if let Ok((rqid, reference_params)) =
                             req.extract::<ReferenceParams>(References::METHOD)
@@ -1138,6 +1204,7 @@ pub fn start_lsp(
                             .unwrap();
                         let ast = crate::parser::parse_file(
                             &tree,
+                            None,
                             &current_rope,
                             &mut app.helix_cell,
                             &mut slide_show,
@@ -1145,8 +1212,7 @@ pub fn start_lsp(
                         *tree_info = Some((tree, Rope::new()));
                         *app.slide_show_file.lock() = current_rope.clone();
                         match ast {
-                            Ok(ast) => {
-                                slide_show.slide_show = ast;
+                            Ok(_) => {
                                 current_thread.unpark();
                             }
                             Err(errors) => {
@@ -1183,13 +1249,22 @@ pub fn start_lsp(
                             let mut tree_info = app.tree_info.lock();
                             let tree_info = tree_info.as_mut().unwrap();
 
+                            let changes_len = changes.content_changes.len();
+
+                            let mut point = Point { row: 0, column: 0 };
                             for change in changes.content_changes {
+                                let edit = lsp_types::TextEdit {
+                                    range: change.range.unwrap(),
+                                    new_text: change.text,
+                                };
+                                point = Point {
+                                    row: edit.range.start.line as usize,
+                                    column: edit.range.start.character as usize,
+                                };
+
                                 let transaction = helix_lsp::util::generate_transaction_from_edits(
                                     &current_rope,
-                                    vec![lsp_types::TextEdit {
-                                        range: change.range.unwrap(),
-                                        new_text: change.text,
-                                    }],
+                                    vec![edit],
                                     helix_lsp::OffsetEncoding::Utf8,
                                 );
 
@@ -1217,10 +1292,48 @@ pub fn start_lsp(
                                             Some(&tree_info.0),
                                         )
                                         .unwrap();
+                                    if !tree.root_node().has_error() {
+                                        edit_slideshow(
+                                            &tree_info.0,
+                                            &tree,
+                                            &mut app.slide_show.write(),
+                                        );
+
+                                        tree_info.1 = current_rope.clone();
+
+                                        let mut slide_show = app.slide_show.write();
+
+                                        if super::parser::parse_file(
+                                            &tree,
+                                            Some(&tree_info.0),
+                                            &tree_info.1,
+                                            &mut app.helix_cell,
+                                            &mut slide_show,
+                                        )
+                                        .is_ok()
+                                        {
+                                            app.clear_resolved.store(true, Ordering::Relaxed);
+                                            lsp_egui_ctx.request_repaint();
+                                        }
+                                    }
                                     tree_info.0 = tree;
                                 } else {
                                     panic!("Transaction could not be applied");
                                 }
+                            }
+
+                            if changes_len == 1 {
+                                hover(
+                                    &app,
+                                    &tree_info.0,
+                                    &mut query_cursor,
+                                    &current_rope,
+                                    &slide_complete_query,
+                                    &vb_in_slide_query,
+                                    &obj_in_slide_query,
+                                    &lsp_egui_ctx,
+                                    point,
+                                );
                             }
                         }
                     }
@@ -1232,18 +1345,17 @@ pub fn start_lsp(
                             info.1 = current_rope.clone();
 
                             let mut slide_show = app.slide_show.write();
-                            slide_show.viewboxes.clear();
-                            slide_show.objects.clear();
+
                             let ast = super::parser::parse_file(
                                 &info.0,
+                                None,
                                 &info.1,
                                 &mut app.helix_cell,
                                 &mut slide_show,
                             );
                             match ast {
-                                Ok(ast) => {
+                                Ok(_) => {
                                     *app.slide_show_file.lock() = info.1.clone();
-                                    slide_show.slide_show = ast;
                                     connection
                                         .sender
                                         .send(Message::Notification(lsp_server::Notification::new(
@@ -1256,6 +1368,7 @@ pub fn start_lsp(
                                         )))
                                         .unwrap();
                                     app.clear_resolved.store(true, Ordering::Relaxed);
+                                    app.restart_timer.store(true, Ordering::Relaxed);
                                     current_thread.unpark();
                                 }
                                 Err(errors) => {
@@ -2084,6 +2197,199 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
     }
 
     Some(DocumentSymbolResponse::Nested(symbols))
+}
+
+pub fn edit_slideshow(old_tree: &Tree, new_tree: &Tree, slideshow: &mut SlideShow) {
+    for range in old_tree.changed_ranges(&new_tree) {
+        let mut node = old_tree
+            .root_node()
+            .descendant_for_point_range(range.start_point, range.start_point);
+        if let Some(mut node) = node {
+            while node.is_extra() {
+                if let Some(next_sibling) = node.next_named_sibling() {
+                    node = next_sibling;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    eprintln!();
+}
+
+pub fn hover(
+    app: &MyEguiApp,
+    tree_info: &Tree,
+    query_cursor: &mut QueryCursor,
+    current_rope: &Rope,
+    slide_complete_query: &Query,
+    vb_in_slide_query: &Query,
+    obj_in_slide_query: &Query,
+    lsp_egui_ctx: &eframe::egui::Context,
+    point: Point,
+) -> Option<Hover> {
+    let changed_point = tree_info
+        .root_node()
+        .descendant_for_point_range(point, point);
+
+    if let Some(mut node) = changed_point {
+        if node.kind_id() == NodeKind::EdgeParser as u16 {
+            app.restart_timer.store(true, Ordering::Relaxed);
+        }
+
+        while node.kind_id() != NodeKind::Slide as u16
+            && node.kind_id() != NodeKind::Viewbox as u16
+            && node.kind_id() != NodeKind::Obj as u16
+        {
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                if app.vb_dbg.swap(0, Ordering::Relaxed) != 0
+                    || app.obj_dbg.swap(0, Ordering::Relaxed) != 0
+                {
+                    lsp_egui_ctx.request_repaint();
+                }
+                return None;
+            }
+        }
+
+        match NodeKind::from(node.kind_id()) {
+            NodeKind::Slide => {
+                query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
+
+                let iter = query_cursor.matches(
+                    &slide_complete_query,
+                    tree_info.root_node(),
+                    RopeProvider(current_rope.slice(..)),
+                );
+
+                let slide_num = iter.count().saturating_sub(1);
+
+                if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
+                    app.vb_dbg.store(0, Ordering::Relaxed);
+                    app.obj_dbg.store(0, Ordering::Relaxed);
+                    app.clear_resolved.store(true, Ordering::Relaxed);
+                    lsp_egui_ctx.request_repaint();
+                }
+            }
+            NodeKind::Viewbox => {
+                if let Some(name_node) = node.named_child(0) {
+                    let vb_name = current_rope.byte_slice(name_node.byte_range());
+                    let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
+                    let mut hasher = hasher.build_hasher();
+                    vb_name.hash(&mut hasher);
+                    let hashed_vb = hasher.finish();
+                    if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
+                        query_cursor.set_point_range(
+                            name_node.range().start_point..Point {
+                                row: usize::MAX,
+                                column: usize::MAX,
+                            },
+                        );
+
+                        let mut iter = query_cursor.matches(
+                            &vb_in_slide_query,
+                            tree_info.root_node(),
+                            RopeProvider(current_rope.slice(..)),
+                        );
+
+                        let on_slide = iter.find(|query_match| {
+                            current_rope.byte_slice(query_match.captures[0].node.byte_range())
+                                == vb_name
+                        });
+
+                        if let Some(mut on_slide) = on_slide.map(|q_match| q_match.captures[0].node)
+                        {
+                            while on_slide.kind_id() != NodeKind::Slide as u16 {
+                                if let Some(parent) = on_slide.parent() {
+                                    on_slide = parent;
+                                } else {
+                                    return None;
+                                }
+                            }
+                            let range = on_slide.range();
+
+                            query_cursor
+                                .set_point_range(Point { row: 0, column: 0 }..range.end_point);
+
+                            let iter = query_cursor.matches(
+                                &slide_complete_query,
+                                tree_info.root_node(),
+                                RopeProvider(current_rope.slice(..)),
+                            );
+
+                            let slide_num = iter.count() - 1;
+
+                            app.index.store(slide_num, Ordering::Relaxed);
+                            app.obj_dbg.store(0, Ordering::Relaxed);
+
+                            app.clear_resolved.store(true, Ordering::Relaxed);
+                            lsp_egui_ctx.request_repaint();
+                        }
+                    }
+                }
+            }
+            NodeKind::Obj => {
+                if let Some(name_node) = node.named_child(0) {
+                    let obj_name = current_rope.byte_slice(name_node.byte_range());
+                    let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
+                    let mut hasher = hasher.build_hasher();
+                    obj_name.hash(&mut hasher);
+                    let hashed_obj = hasher.finish();
+                    if app.obj_dbg.swap(hashed_obj, Ordering::Relaxed) != hashed_obj {
+                        query_cursor.set_point_range(
+                            name_node.range().start_point..Point {
+                                row: usize::MAX,
+                                column: usize::MAX,
+                            },
+                        );
+
+                        let mut iter = query_cursor.matches(
+                            &obj_in_slide_query,
+                            tree_info.root_node(),
+                            RopeProvider(current_rope.slice(..)),
+                        );
+
+                        let on_slide = iter.find(|query_match| {
+                            current_rope.byte_slice(query_match.captures[0].node.byte_range())
+                                == obj_name
+                        });
+
+                        if let Some(mut on_slide) = on_slide.map(|q_match| q_match.captures[0].node)
+                        {
+                            while on_slide.kind_id() != NodeKind::Slide as u16 {
+                                if let Some(parent) = on_slide.parent() {
+                                    on_slide = parent;
+                                } else {
+                                    return None;
+                                }
+                            }
+                            let range = on_slide.range();
+
+                            query_cursor
+                                .set_point_range(Point { row: 0, column: 0 }..range.end_point);
+
+                            let iter = query_cursor.matches(
+                                &slide_complete_query,
+                                tree_info.root_node(),
+                                RopeProvider(current_rope.slice(..)),
+                            );
+
+                            let slide_num = iter.count() - 1;
+
+                            app.index.store(slide_num, Ordering::Relaxed);
+                            app.vb_dbg.store(0, Ordering::Relaxed);
+
+                            app.clear_resolved.store(true, Ordering::Relaxed);
+                            lsp_egui_ctx.request_repaint();
+                        }
+                    }
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+    None
 }
 
 pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Error> {

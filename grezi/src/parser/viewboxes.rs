@@ -123,7 +123,8 @@ pub fn parse_viewbox(
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
     let direction: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-    let direction = Direction::from_str(direction.as_ref()).unwrap();
+    let direction = Direction::from_str(direction.as_ref())
+        .map_err(|_| super::Error::InvalidParameter(tree_cursor.node().range().into()))?;
     tree_cursor.goto_next_sibling()?;
     let mut constraints = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::ViewboxObj as u16 {
