@@ -401,7 +401,39 @@ pub fn parse_file(
     let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
-    let is_new = old_tree.is_none() || old_tree.unwrap().changed_ranges(tree).next().is_some();
+    let mut is_new = old_tree.is_none();
+
+    if !is_new {
+        let old_tree = old_tree.unwrap();
+        for range in old_tree.changed_ranges(tree) {
+            let node = tree
+                .root_node()
+                .descendant_for_point_range(range.start_point, range.end_point);
+
+            if let Some(mut n) = node {
+                if n.is_extra()
+                    && n.parent().map(|n| n.kind_id()) == Some(NodeKind::SourceFile as u16)
+                {
+                    continue;
+                }
+
+                while n.is_extra() {
+                    if let Some(parent) = n.parent() {
+                        n = parent;
+                    } else {
+                        break;
+                    }
+                }
+
+                if matches!(
+                    NodeKind::from(n.kind_id()),
+                    NodeKind::Slide | NodeKind::Action
+                ) {
+                    is_new = true;
+                }
+            }
+        }
+    }
 
     let mut old_tree_cursor = GrzCursor::new(if let Some(t) = old_tree { t } else { tree });
     let mut new_tree_cursor = GrzCursor::new(tree);
@@ -414,33 +446,58 @@ pub fn parse_file(
         (Err(e), _) | (_, Err(e)) => return Err(vec![e]),
     }
 
-    slide_show.slide_show.clear();
-
-    if dbg!(is_new) {
+    if is_new {
+        slide_show.slide_show.clear();
         slide_show.viewboxes.clear();
         slide_show.objects.clear();
     }
 
+    let mut ast_object_at = 0;
+    let mut last_slide_changed = false;
     'parserloop: loop {
         let node = old_tree_cursor.node();
         match NodeKind::from(new_tree_cursor.node().kind_id()) {
             NodeKind::Slide => {
-                last_slide = slide_show.slide_show.len();
+                last_slide = ast_object_at;
 
-                new_tree_cursor.fork(|cursor| {
-                    match slides::parse_slides(
-                        cursor,
-                        &hasher,
-                        &mut on_screen,
-                        &mut slide_show.objects,
-                        source,
-                        &mut errors_present,
-                        &slide_show.viewboxes,
-                    ) {
-                        Ok(slide) => slide_show.slide_show.push(slide),
-                        Err(e) => errors_present.push(e),
+                if node.has_changes() || is_new || last_slide_changed {
+                    new_tree_cursor.fork(|cursor| {
+                        match slides::parse_slides(
+                            cursor,
+                            &hasher,
+                            &mut on_screen,
+                            &mut slide_show.objects,
+                            source,
+                            &mut errors_present,
+                            &slide_show.viewboxes,
+                        ) {
+                            Ok(slide) => {
+                                if is_new {
+                                    slide_show.slide_show.push(slide)
+                                } else {
+                                    slide_show.slide_show[ast_object_at] = slide;
+                                }
+                            }
+                            Err(e) => errors_present.push(e),
+                        }
+                    });
+                    last_slide_changed = node.has_changes();
+                } else {
+                    on_screen.clear();
+                    match slide_show.slide_show.get_mut(ast_object_at) {
+                        Some(AstObject::Slide { objects, .. }) => {
+                            for (index, obj) in objects.iter_mut().enumerate() {
+                                on_screen.insert(obj.object, index);
+                                if let Some(object) = slide_show.objects.get_mut(&obj.object) {
+                                    object.viewbox = Some(obj.locations[1].1);
+                                    object.position = Some(obj.locations[1].0);
+                                }
+                            }
+                        }
+                        _ => unreachable!(),
                     }
-                });
+                }
+                ast_object_at += 1;
             }
             NodeKind::Viewbox => {
                 if node.has_changes() || is_new {
@@ -498,19 +555,28 @@ pub fn parse_file(
                 */
             }
             NodeKind::Action => {
-                new_tree_cursor.fork(|cursor| {
-                    match actions::parse_actions(
-                        cursor,
-                        source,
-                        &hasher,
-                        &on_screen,
-                        last_slide,
-                        &mut errors_present,
-                    ) {
-                        Ok(action) => slide_show.slide_show.push(action),
-                        Err(e) => errors_present.push(e),
-                    }
-                });
+                if node.has_changes() || is_new || last_slide_changed {
+                    new_tree_cursor.fork(|cursor| {
+                        match actions::parse_actions(
+                            cursor,
+                            source,
+                            &hasher,
+                            &on_screen,
+                            last_slide,
+                            &mut errors_present,
+                        ) {
+                            Ok(action) => {
+                                if is_new {
+                                    slide_show.slide_show.push(action)
+                                } else {
+                                    slide_show.slide_show[ast_object_at] = action;
+                                }
+                            }
+                            Err(e) => errors_present.push(e),
+                        }
+                    });
+                }
+                ast_object_at += 1;
             }
             kind => {
                 errors_present.push(Error::BadNode(new_tree_cursor.node().range().into(), kind))

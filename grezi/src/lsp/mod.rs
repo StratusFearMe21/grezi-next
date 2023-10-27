@@ -180,7 +180,7 @@ pub fn start_lsp(
     })
     .unwrap();
     connection.initialize(server_capabilities).unwrap();
-    /*
+
     let panic_hook = std::panic::take_hook();
 
     let hook_sender = connection.sender.clone();
@@ -196,7 +196,7 @@ pub fn start_lsp(
             .unwrap();
         (panic_hook)(panic_info)
     }));
-    */
+
     let mut current_rope = helix_core::ropey::Rope::new();
     let mut current_document_version = 0;
     let mut inlay_edge_map: HashMap<
@@ -205,7 +205,7 @@ pub fn start_lsp(
         BuildHasherDefault<ahash::AHasher>,
     > = HashMap::default();
     let mut last_inlay_len = 16;
-    let mut last_change_was_error = true;
+    let mut error_tree = None;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
     for msg in &connection.receiver {
         match msg {
@@ -235,6 +235,7 @@ pub fn start_lsp(
                             let edits: Option<Vec<TextEdit>> =
                                 format_code(&app, &current_rope).ok();
 
+                            /*
                             if let Some(edits) = edits.clone() {
                                 current_document_version += 1;
 
@@ -278,6 +279,7 @@ pub fn start_lsp(
                                     panic!("Transaction could not be applied");
                                 }
                             }
+                            */
 
                             connection
                                 .sender
@@ -1420,11 +1422,9 @@ pub fn start_lsp(
 
                                         if super::parser::parse_file(
                                             &tree,
-                                            if last_change_was_error {
-                                                None
-                                            } else {
-                                                Some(&tree_info.0)
-                                            },
+                                            Some(
+                                                error_tree.take().as_ref().unwrap_or(&tree_info.0),
+                                            ),
                                             &tree_info.1,
                                             &mut app.helix_cell,
                                             &mut slide_show,
@@ -1434,9 +1434,10 @@ pub fn start_lsp(
                                             app.clear_resolved.store(true, Ordering::Relaxed);
                                             lsp_egui_ctx.request_repaint();
                                         }
-                                        last_change_was_error = false;
                                     } else {
-                                        last_change_was_error = true;
+                                        if error_tree.is_none() {
+                                            error_tree = Some(tree.clone());
+                                        }
                                     }
 
                                     tree_info.0 = tree;

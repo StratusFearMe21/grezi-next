@@ -827,6 +827,8 @@ impl eframe::App for MyEguiApp {
                                             self.time = 0.0;
                                             #[cfg(not(target_arch = "wasm32"))]
                                             self.vb_dbg.store(0, Ordering::Relaxed);
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            self.obj_dbg.store(0, Ordering::Relaxed);
                                             Some(index + 1)
                                         }
                                     },
@@ -852,6 +854,8 @@ impl eframe::App for MyEguiApp {
                                             self.time = 1000.0;
                                             #[cfg(not(target_arch = "wasm32"))]
                                             self.vb_dbg.store(0, Ordering::Relaxed);
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            self.obj_dbg.store(0, Ordering::Relaxed);
                                             return Some(index - 1);
                                         }
                                         None
@@ -866,6 +870,8 @@ impl eframe::App for MyEguiApp {
                                 self.time = 0.0;
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.vb_dbg.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.obj_dbg.store(0, Ordering::Relaxed);
                             }
                             egui::Event::Key {
                                 key: egui::Key::B,
@@ -875,6 +881,8 @@ impl eframe::App for MyEguiApp {
                                 self.index.store(0, Ordering::Relaxed);
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.vb_dbg.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.obj_dbg.store(0, Ordering::Relaxed);
                                 self.resolved_actions = None;
                                 self.resolved_slide = None;
                             }
