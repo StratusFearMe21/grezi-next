@@ -87,7 +87,7 @@ module.exports = grammar({
     _text_ident: $ => choice($.string_literal, $.number_literal),
     index_parser: $ => seq('[', $.number_literal, ']'),
 
-    edge_parser: _ => /[><^_.|]{2,4}/,
+    edge_parser: _ => /[><^_.|]+/,
 
     _vb_identifier: $ => choice(alias('Size', $.size), $.identifier),
 

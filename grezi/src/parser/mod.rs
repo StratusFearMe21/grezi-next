@@ -276,10 +276,9 @@ impl<'a> GrzCursor<'a> {
         }
     }
 
-    pub fn fork(&self) -> GrzCursor<'_> {
-        GrzCursor {
-            tree_cursor: self.tree_cursor.node().walk(),
-        }
+    // TODO: Reduce allocations in here by reusing current tree_cursor
+    pub fn fork<T>(&mut self, mut callback: impl FnMut(&mut Self) -> T) -> T {
+        callback(&mut GrzCursor::from_node(self.tree_cursor.node()))
     }
 
     fn check_for_error(&self, result: bool) -> Result<bool, Error> {
@@ -298,7 +297,7 @@ impl<'a> GrzCursor<'a> {
         Ok(result)
     }
 
-    pub fn from_node(node: &'a Node<'a>) -> GrzCursor<'a> {
+    pub fn from_node(node: Node<'a>) -> GrzCursor<'a> {
         GrzCursor {
             tree_cursor: node.walk(),
         }
@@ -382,9 +381,11 @@ impl<'a> GrzCursor<'a> {
         self.tree_cursor.node()
     }
 
+    /*
     pub fn reset(&mut self, node: Node<'a>) {
         self.tree_cursor.reset(node);
     }
+    */
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -395,86 +396,85 @@ pub fn parse_file(
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
 ) -> Result<(), Vec<Error>> {
-    let start = std::time::Instant::now();
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
     let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
-    dbg!(tree.root_node().has_changes());
-    let mut is_new = false;
-    let mut tree_cursor = GrzCursor::new(if let Some(t) = old_tree {
-        if t.changed_ranges(tree).next().is_some() {
-            is_new = true;
-            tree
-        } else {
-            t
-        }
-    } else {
-        is_new = true;
-        tree
-    });
+    let is_new = old_tree.is_none() || old_tree.unwrap().changed_ranges(tree).next().is_some();
 
-    match tree_cursor.goto_first_child() {
-        Ok(_) => {}
-        Err(e) => return Err(vec![e]),
+    let mut old_tree_cursor = GrzCursor::new(if let Some(t) = old_tree { t } else { tree });
+    let mut new_tree_cursor = GrzCursor::new(tree);
+
+    match (
+        old_tree_cursor.goto_first_child(),
+        new_tree_cursor.goto_first_child(),
+    ) {
+        (Ok(_), Ok(_)) => {}
+        (Err(e), _) | (_, Err(e)) => return Err(vec![e]),
     }
 
     slide_show.slide_show.clear();
 
-    if is_new {
+    if dbg!(is_new) {
         slide_show.viewboxes.clear();
         slide_show.objects.clear();
     }
 
     'parserloop: loop {
-        let node = tree_cursor.node();
-        match NodeKind::from(node.kind_id()) {
+        let node = old_tree_cursor.node();
+        match NodeKind::from(new_tree_cursor.node().kind_id()) {
             NodeKind::Slide => {
                 last_slide = slide_show.slide_show.len();
 
-                match slides::parse_slides(
-                    tree_cursor.fork(),
-                    &hasher,
-                    &mut on_screen,
-                    &mut slide_show.objects,
-                    source,
-                    &mut errors_present,
-                    &slide_show.viewboxes,
-                ) {
-                    Ok(slide) => slide_show.slide_show.push(slide),
-                    Err(e) => errors_present.push(e),
-                }
+                new_tree_cursor.fork(|cursor| {
+                    match slides::parse_slides(
+                        cursor,
+                        &hasher,
+                        &mut on_screen,
+                        &mut slide_show.objects,
+                        source,
+                        &mut errors_present,
+                        &slide_show.viewboxes,
+                    ) {
+                        Ok(slide) => slide_show.slide_show.push(slide),
+                        Err(e) => errors_present.push(e),
+                    }
+                });
             }
             NodeKind::Viewbox => {
                 if node.has_changes() || is_new {
-                    match viewboxes::parse_viewbox(
-                        tree_cursor.fork(),
-                        source,
-                        &hasher,
-                        &slide_show.viewboxes,
-                    ) {
-                        Ok(layout) => {
-                            slide_show.viewboxes.insert(layout.0, layout.1);
+                    new_tree_cursor.fork(|cursor| {
+                        match viewboxes::parse_viewbox(
+                            cursor,
+                            source,
+                            &hasher,
+                            &slide_show.viewboxes,
+                        ) {
+                            Ok(layout) => {
+                                slide_show.viewboxes.insert(layout.0, layout.1);
+                            }
+                            Err(e) => errors_present.push(e),
                         }
-                        Err(e) => errors_present.push(e),
-                    }
+                    })
                 }
             }
             NodeKind::Obj => {
                 if node.has_changes() || is_new {
-                    match objects::parse_objects(
-                        tree_cursor.fork(),
-                        source,
-                        helix_cell,
-                        &hasher,
-                        &mut errors_present,
-                    ) {
-                        Ok(object) => {
-                            slide_show.objects.insert(object.0, object.1);
+                    new_tree_cursor.fork(|cursor| {
+                        match objects::parse_objects(
+                            cursor,
+                            source,
+                            helix_cell,
+                            &hasher,
+                            &mut errors_present,
+                        ) {
+                            Ok(object) => {
+                                slide_show.objects.insert(object.0, object.1);
+                            }
+                            Err(e) => errors_present.push(e),
                         }
-                        Err(e) => errors_present.push(e),
-                    }
+                    })
                 }
             }
             NodeKind::Register => {
@@ -498,33 +498,41 @@ pub fn parse_file(
                 */
             }
             NodeKind::Action => {
-                match actions::parse_actions(
-                    tree_cursor.fork(),
-                    source,
-                    &hasher,
-                    &on_screen,
-                    last_slide,
-                    &mut errors_present,
-                ) {
-                    Ok(action) => {
-                        slide_show.slide_show.push(action);
+                new_tree_cursor.fork(|cursor| {
+                    match actions::parse_actions(
+                        cursor,
+                        source,
+                        &hasher,
+                        &on_screen,
+                        last_slide,
+                        &mut errors_present,
+                    ) {
+                        Ok(action) => slide_show.slide_show.push(action),
+                        Err(e) => errors_present.push(e),
                     }
-                    Err(e) => errors_present.push(e),
-                }
+                });
             }
-            kind => errors_present.push(Error::BadNode(tree_cursor.node().range().into(), kind)),
+            kind => {
+                errors_present.push(Error::BadNode(new_tree_cursor.node().range().into(), kind))
+            }
         }
 
         loop {
-            match tree_cursor.goto_next_sibling() {
+            let _ = old_tree_cursor.goto_next_sibling();
+            match new_tree_cursor.goto_next_sibling() {
                 Ok(false) => break 'parserloop,
                 Ok(true) => break,
                 Err(e) => errors_present.push(e),
             }
         }
     }
-    drop(tree_cursor);
-    dbg!(start.elapsed());
+    if is_new {
+        slide_show.viewboxes.shrink_to_fit();
+        slide_show.objects.shrink_to_fit();
+    }
+    drop(old_tree_cursor);
+    drop(new_tree_cursor);
+
     if errors_present.is_empty() {
         Ok(())
     } else {

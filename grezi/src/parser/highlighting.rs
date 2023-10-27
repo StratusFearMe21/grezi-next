@@ -77,7 +77,7 @@ pub fn highlight_text(
 
     let mut rope = RopeBuilder::new();
 
-    let mut walker = GrzCursor::from_node(&text);
+    let mut walker = GrzCursor::from_node(text);
     walker.goto_first_child()?;
 
     let mut slice: Cow<'_, str>;

@@ -26,7 +26,7 @@ pub enum ResolvedActions {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_actions(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
@@ -36,10 +36,12 @@ pub fn parse_actions(
     tree_cursor.goto_first_child()?;
     let mut actions = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
-        match parse_single_action(tree_cursor.fork(), source, hasher, on_screen) {
-            Ok(action) => actions.push(action),
-            Err(e) => errors_present.push(e),
-        }
+        tree_cursor.fork(
+            |cursor| match parse_single_action(cursor, source, hasher, on_screen) {
+                Ok(action) => actions.push(action),
+                Err(e) => errors_present.push(e),
+            },
+        );
         tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
@@ -51,7 +53,7 @@ pub fn parse_actions(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_single_action(
-    mut action_walker: GrzCursor<'_>,
+    action_walker: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
@@ -76,17 +78,18 @@ fn parse_single_action(
 
         let locations = match NodeKind::from(action_walker.node().kind_id()) {
             NodeKind::StringLiteral => {
-                let from =
-                    parse_highlight_location(action_walker.fork(), source).map_err(|_| {
+                let from = action_walker
+                    .fork(|cursor| parse_highlight_location(cursor, source))
+                    .map_err(|_| {
                         super::Error::InvalidParameter(action_walker.node().range().into())
                     })?;
                 action_walker.goto_next_sibling()?;
                 let to = match NodeKind::from(action_walker.node().kind_id()) {
-                    NodeKind::StringLiteral => {
-                        parse_highlight_location(action_walker.fork(), source).map_err(|_| {
+                    NodeKind::StringLiteral => action_walker
+                        .fork(|cursor| parse_highlight_location(cursor, source))
+                        .map_err(|_| {
                             super::Error::InvalidParameter(action_walker.node().range().into())
-                        })?
-                    }
+                        })?,
                     // "number_literal" => &source[tree_cursor.node().byte_range()],
                     _ => {
                         return Err(super::Error::InvalidParameter(
@@ -113,7 +116,7 @@ fn parse_single_action(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_highlight_location(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
 ) -> Result<PCursor, ()> {
     use std::borrow::Cow;

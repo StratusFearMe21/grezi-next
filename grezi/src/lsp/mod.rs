@@ -10,7 +10,7 @@ mod you_can;
 
 use crate::{
     parser::{Error, FieldName, GrzCursor, NodeKind},
-    MyEguiApp, SlideShow,
+    MyEguiApp,
 };
 use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
@@ -115,7 +115,7 @@ pub fn start_lsp(
             },
         )),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec!["tree_to_dot".to_string()],
+            commands: vec!["tree_to_dot".to_string(), "full_reparse".to_string()],
             ..Default::default()
         }),
         rename_provider: Some(OneOf::Right(RenameOptions {
@@ -180,6 +180,7 @@ pub fn start_lsp(
     })
     .unwrap();
     connection.initialize(server_capabilities).unwrap();
+    /*
     let panic_hook = std::panic::take_hook();
 
     let hook_sender = connection.sender.clone();
@@ -195,6 +196,7 @@ pub fn start_lsp(
             .unwrap();
         (panic_hook)(panic_info)
     }));
+    */
     let mut current_rope = helix_core::ropey::Rope::new();
     let mut current_document_version = 0;
     let mut inlay_edge_map: HashMap<
@@ -203,6 +205,7 @@ pub fn start_lsp(
         BuildHasherDefault<ahash::AHasher>,
     > = HashMap::default();
     let mut last_inlay_len = 16;
+    let mut last_change_was_error = true;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
     for msg in &connection.receiver {
         match msg {
@@ -231,6 +234,50 @@ pub fn start_lsp(
                         {
                             let edits: Option<Vec<TextEdit>> =
                                 format_code(&app, &current_rope).ok();
+
+                            if let Some(edits) = edits.clone() {
+                                current_document_version += 1;
+
+                                let mut tree_info = app.tree_info.lock();
+                                let tree_info = tree_info.as_mut().unwrap();
+
+                                let transaction = helix_lsp::util::generate_transaction_from_edits(
+                                    &current_rope,
+                                    edits,
+                                    helix_lsp::OffsetEncoding::Utf8,
+                                );
+
+                                let edits =
+                                    generate_edits(current_rope.slice(..), transaction.changes());
+                                if transaction.apply(&mut current_rope) {
+                                    let source = current_rope.slice(..);
+                                    for edit in edits.iter().rev() {
+                                        tree_info.0.edit(edit);
+                                    }
+
+                                    // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
+                                    let tree = parser
+                                        .parse_with(
+                                            &mut |byte, _| {
+                                                if byte <= source.len_bytes() {
+                                                    let (chunk, start_byte, _, _) =
+                                                        source.chunk_at_byte(byte);
+                                                    &chunk.as_bytes()[byte - start_byte..]
+                                                } else {
+                                                    // out of range
+                                                    &[]
+                                                }
+                                            },
+                                            Some(&tree_info.0),
+                                        )
+                                        .unwrap();
+                                    tree_info.1 = current_rope.clone();
+
+                                    tree_info.0 = tree;
+                                } else {
+                                    panic!("Transaction could not be applied");
+                                }
+                            }
 
                             connection
                                 .sender
@@ -1100,6 +1147,79 @@ pub fn start_lsp(
                                             .unwrap();
                                     }
                                 }
+                                "full_reparse" => {
+                                    let mut slide_show = app.slide_show.write();
+                                    current_rope = Rope::from_reader(
+                                        std::fs::File::open(currently_open.path()).unwrap(),
+                                    )
+                                    .unwrap();
+                                    let mut tree_info = app.tree_info.lock();
+                                    let tree = parser
+                                        .parse_with(
+                                            &mut |byte, _| {
+                                                if byte <= current_rope.len_bytes() {
+                                                    let (chunk, start_byte, _, _) =
+                                                        current_rope.chunk_at_byte(byte);
+                                                    &chunk.as_bytes()[byte - start_byte..]
+                                                } else {
+                                                    // out of range
+                                                    &[]
+                                                }
+                                            },
+                                            None,
+                                        )
+                                        .unwrap();
+                                    let ast = crate::parser::parse_file(
+                                        &tree,
+                                        None,
+                                        &current_rope,
+                                        &mut app.helix_cell,
+                                        &mut slide_show,
+                                    );
+                                    *tree_info = Some((tree, Rope::new()));
+                                    *app.slide_show_file.lock() = current_rope.clone();
+                                    match ast {
+                                        Ok(_) => {
+                                            connection
+                                                .sender
+                                                .send(Message::Notification(
+                                                    lsp_server::Notification::new(
+                                                        PublishDiagnostics::METHOD.to_string(),
+                                                        PublishDiagnosticsParams {
+                                                            uri: currently_open.clone(),
+                                                            diagnostics: vec![],
+                                                            version: Some(current_document_version),
+                                                        },
+                                                    ),
+                                                ))
+                                                .unwrap();
+                                        }
+                                        Err(errors) => {
+                                            connection
+                                            .sender
+                                            .send(Message::Notification(lsp_server::Notification::new(
+                                                PublishDiagnostics::METHOD.to_string(),
+                                                PublishDiagnosticsParams {
+                                                    uri: currently_open.clone(),
+                                                    diagnostics: errors
+                                                        .into_iter()
+                                                        .map(|error| {
+                                                            let diagnostic: lsp_types::Diagnostic =
+                                                                error.into();
+                                                            diagnostic
+                                                        })
+                                                        .collect(),
+                                                    version: Some(current_document_version),
+                                                },
+                                            )))
+                                            .unwrap();
+                                        }
+                                    }
+
+                                    app.clear_resolved.store(true, Ordering::Relaxed);
+                                    app.restart_timer.store(true, Ordering::Relaxed);
+                                    lsp_egui_ctx.request_repaint();
+                                }
                                 _ => {
                                     connection
                                         .sender
@@ -1237,9 +1357,10 @@ pub fn start_lsp(
                             }
                         }
 
-                        app.clear_resolved.store(false, Ordering::Relaxed);
+                        app.clear_resolved.store(true, Ordering::Relaxed);
                     }
                     DidChangeTextDocument::METHOD => {
+                        let start = std::time::Instant::now();
                         let changes: lsp_types::DidChangeTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
 
@@ -1293,19 +1414,17 @@ pub fn start_lsp(
                                         )
                                         .unwrap();
                                     if !tree.root_node().has_error() {
-                                        edit_slideshow(
-                                            &tree_info.0,
-                                            &tree,
-                                            &mut app.slide_show.write(),
-                                        );
-
                                         tree_info.1 = current_rope.clone();
 
                                         let mut slide_show = app.slide_show.write();
 
                                         if super::parser::parse_file(
                                             &tree,
-                                            Some(&tree_info.0),
+                                            if last_change_was_error {
+                                                None
+                                            } else {
+                                                Some(&tree_info.0)
+                                            },
                                             &tree_info.1,
                                             &mut app.helix_cell,
                                             &mut slide_show,
@@ -1315,7 +1434,11 @@ pub fn start_lsp(
                                             app.clear_resolved.store(true, Ordering::Relaxed);
                                             lsp_egui_ctx.request_repaint();
                                         }
+                                        last_change_was_error = false;
+                                    } else {
+                                        last_change_was_error = true;
                                     }
+
                                     tree_info.0 = tree;
                                 } else {
                                     panic!("Transaction could not be applied");
@@ -1336,6 +1459,7 @@ pub fn start_lsp(
                                 );
                             }
                         }
+                        dbg!(start.elapsed());
                     }
                     DidSaveTextDocument::METHOD => {
                         // let _: lsp_types::DidSaveTextDocumentParams =
@@ -1577,28 +1701,33 @@ fn inlay_hints(
                         current_rope.byte_slice(edge_match.captures[0].node.byte_range()),
                     )
                 };
-                if edge_slice.len_chars() == 2 {
-                    if let Some(edge) = inlay_edge_map.get(&query_slice) {
-                        let range = edge_match.captures[0].node.range();
 
-                        hints.push(InlayHint {
-                            position: Position {
-                                line: range.start_point.row as u32,
-                                character: range.start_point.column as u32,
-                            },
-                            // This parameter must NEVER be the actual borrowed slice
-                            label: InlayHintLabel::String(format!("{}", edge)),
-                            kind: Some(InlayHintKind::PARAMETER),
-                            text_edits: None,
-                            tooltip: None,
-                            padding_right: Some(false),
-                            padding_left: Some(false),
-                            data: None,
-                        });
+                match edge_slice.len_chars() {
+                    2 => {
+                        if let Some(edge) = inlay_edge_map.get(&query_slice) {
+                            let range = edge_match.captures[0].node.range();
+
+                            hints.push(InlayHint {
+                                position: Position {
+                                    line: range.start_point.row as u32,
+                                    character: range.start_point.column as u32,
+                                },
+                                // This parameter must NEVER be the actual borrowed slice
+                                label: InlayHintLabel::String(format!("{}", edge)),
+                                kind: Some(InlayHintKind::PARAMETER),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_right: Some(false),
+                                padding_left: Some(false),
+                                data: None,
+                            });
+                        }
+                        inlay_edge_map.insert(query_slice, edge_slice);
                     }
-                    inlay_edge_map.insert(query_slice, edge_slice);
-                } else {
-                    inlay_edge_map.insert(query_slice, edge_slice.slice(2..));
+                    4 => {
+                        inlay_edge_map.insert(query_slice, edge_slice.slice(2..));
+                    }
+                    _ => {}
                 }
 
                 edge_iter.next();
@@ -1781,7 +1910,7 @@ pub fn complete_source_file(
         }
         node = Some(query_match.captures[0].node);
     }
-    let mut walker = if let Some(n) = node.as_ref() {
+    let mut walker = if let Some(n) = node {
         GrzCursor::from_node(n)
     } else {
         return Ok(CompletionResponse::Array(vec![new_slide_item]));
@@ -2197,24 +2326,6 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
     }
 
     Some(DocumentSymbolResponse::Nested(symbols))
-}
-
-pub fn edit_slideshow(old_tree: &Tree, new_tree: &Tree, slideshow: &mut SlideShow) {
-    for range in old_tree.changed_ranges(&new_tree) {
-        let mut node = old_tree
-            .root_node()
-            .descendant_for_point_range(range.start_point, range.start_point);
-        if let Some(mut node) = node {
-            while node.is_extra() {
-                if let Some(next_sibling) = node.next_named_sibling() {
-                    node = next_sibling;
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-    eprintln!();
 }
 
 pub fn hover(

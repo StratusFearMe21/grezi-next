@@ -111,7 +111,7 @@ use std::{borrow::Cow, collections::HashMap, hash::BuildHasherDefault};
 use super::PassThroughHasher;
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_viewbox(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
@@ -119,7 +119,7 @@ pub fn parse_viewbox(
     tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());
     tree_cursor.goto_next_sibling()?;
-    let attached_box = parse_viewbox_ident(source, &mut tree_cursor, hasher, viewboxes)?;
+    let attached_box = parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?;
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
     let direction: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();

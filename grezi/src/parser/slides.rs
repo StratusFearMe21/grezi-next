@@ -36,7 +36,7 @@ pub struct ResolvedSlideObj {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_slides(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
@@ -50,20 +50,15 @@ pub fn parse_slides(
     let mut slide_on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
-        match parse_slide_object(
-            tree_cursor.fork(),
-            hasher,
-            on_screen,
-            objects,
-            source,
-            viewboxes,
-        ) {
-            Ok(object) => {
-                slide_on_screen.insert(object.object, slide_objects.len());
-                slide_objects.push(object);
+        tree_cursor.fork(|cursor| {
+            match parse_slide_object(cursor, hasher, on_screen, objects, source, viewboxes) {
+                Ok(object) => {
+                    slide_on_screen.insert(object.object, slide_objects.len());
+                    slide_objects.push(object);
+                }
+                Err(e) => errors_present.push(e),
             }
-            Err(e) => errors_present.push(e),
-        }
+        });
         tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
@@ -77,19 +72,21 @@ pub fn parse_slides(
     let mut max_time = 1.0;
     let mut actions = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
-        match parse_slide_function(
-            tree_cursor.fork(),
-            hasher,
-            source,
-            &mut slide_objects,
-            &mut max_time,
-            &slide_on_screen,
-            errors_present,
-        ) {
-            Ok(Some(slide_functions)) => actions.push(slide_functions),
-            Err(e) => errors_present.push(e),
-            _ => {}
-        }
+        tree_cursor.fork(|cursor| {
+            match parse_slide_function(
+                cursor,
+                hasher,
+                source,
+                &mut slide_objects,
+                &mut max_time,
+                &slide_on_screen,
+                errors_present,
+            ) {
+                Ok(Some(slide_functions)) => actions.push(slide_functions),
+                Err(e) => errors_present.push(e),
+                _ => {}
+            }
+        });
         tree_cursor.goto_next_sibling()?;
     }
     core::mem::swap(&mut slide_on_screen, on_screen);
@@ -104,7 +101,7 @@ pub fn parse_slides(
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_slide_object(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
@@ -126,8 +123,7 @@ pub fn parse_slide_object(
         .get_mut(&object_name)
         .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
     tree_cursor.goto_next_sibling()?;
-    let viewbox =
-        super::viewboxes::parse_viewbox_ident(source, &mut tree_cursor, hasher, viewboxes)?;
+    let viewbox = super::viewboxes::parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?;
     tree_cursor.goto_next_sibling()?;
     let from: Option<ViewboxIn>;
     match NodeKind::from(tree_cursor.node().kind_id()) {
@@ -135,7 +131,7 @@ pub fn parse_slide_object(
             tree_cursor.goto_first_child()?;
             from = Some(super::viewboxes::parse_viewbox_ident(
                 source,
-                &mut tree_cursor,
+                tree_cursor,
                 hasher,
                 viewboxes,
             )?);
@@ -198,10 +194,13 @@ pub fn parse_slide_object(
                         (lineup_first, viewbox)
                     }
                     _ => {
-                        line_up_now = object.position.ok_or_else(|| {
-                            Error::ImplicitEdge(tree_cursor.node().range().into())
-                        })?;
-                        lineup_first_locations = (line_up_now, viewbox_first);
+                        line_up_now = lineup_first;
+                        lineup_first_locations = (
+                            object.position.ok_or_else(|| {
+                                Error::ImplicitEdge(tree_cursor.node().range().into())
+                            })?,
+                            viewbox_first,
+                        );
                         (lineup_first, viewbox)
                     }
                 },
@@ -227,7 +226,7 @@ pub fn parse_slide_object(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_slide_function(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
     source: &helix_core::ropey::Rope,
     slide_objects: &mut [SlideObj],
@@ -290,27 +289,29 @@ fn parse_slide_function(
 
             let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
                 NodeKind::StringLiteral => {
-                    let from =
-                        match super::actions::parse_highlight_location(tree_cursor.fork(), source)
-                            .map_err(|_| {
-                                super::Error::InvalidParameter(tree_cursor.node().range().into())
-                            }) {
-                            Ok(from) => from,
-                            Err(e) => {
-                                errors_present.push(e);
-                                PCursor::default()
-                            }
-                        };
+                    let from = match tree_cursor
+                        .fork(|cursor| super::actions::parse_highlight_location(cursor, source))
+                        .map_err(|_| {
+                            super::Error::InvalidParameter(tree_cursor.node().range().into())
+                        }) {
+                        Ok(from) => from,
+                        Err(e) => {
+                            errors_present.push(e);
+                            PCursor::default()
+                        }
+                    };
                     tree_cursor.goto_next_sibling()?;
                     match NodeKind::from(tree_cursor.node().kind_id()) {
                         NodeKind::StringLiteral => {
-                            let to = match super::actions::parse_highlight_location(
-                                tree_cursor.fork(),
-                                source,
-                            )
-                            .map_err(|_| {
-                                super::Error::InvalidParameter(tree_cursor.node().range().into())
-                            }) {
+                            let to = match tree_cursor
+                                .fork(|cursor| {
+                                    super::actions::parse_highlight_location(cursor, source)
+                                })
+                                .map_err(|_| {
+                                    super::Error::InvalidParameter(
+                                        tree_cursor.node().range().into(),
+                                    )
+                                }) {
                                 Ok(to) => to,
                                 Err(e) => {
                                     errors_present.push(e);

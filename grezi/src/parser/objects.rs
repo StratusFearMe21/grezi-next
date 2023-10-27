@@ -60,7 +60,7 @@ pub enum ObjectState {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_objects(
-    mut tree_cursor: GrzCursor<'_>,
+    tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
@@ -176,7 +176,7 @@ pub fn parse_objects(
                         },
                         ..Default::default()
                     };
-                    let mut walker = GrzCursor::from_node(&text);
+                    let mut walker = GrzCursor::from_node(text);
                     walker.goto_first_child()?;
                     let mut options = pulldown_cmark::Options::empty();
                     options.insert(pulldown_cmark::Options::ENABLE_STRIKETHROUGH);

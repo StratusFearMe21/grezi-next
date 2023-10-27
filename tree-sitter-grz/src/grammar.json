@@ -538,7 +538,7 @@
     },
     "edge_parser": {
       "type": "PATTERN",
-      "value": "[><^_.|]{2,4}"
+      "value": "[><^_.|]+"
     },
     "_vb_identifier": {
       "type": "CHOICE",
