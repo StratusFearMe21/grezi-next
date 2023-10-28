@@ -155,7 +155,11 @@ pub fn parse_objects(
                     _ => {}
                 }
             }
-            let text = text.unwrap();
+            let text = if let Some(t) = text {
+                t
+            } else {
+                return Err(super::Error::KnownMissing(obj_range.into(), "value"));
+            };
             let layout_job = match language {
                 Some(lang) => highlighting::highlight_text(
                     text,
