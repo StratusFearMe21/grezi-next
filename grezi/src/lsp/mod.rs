@@ -235,51 +235,55 @@ pub fn start_lsp(
                             let edits: Option<Vec<TextEdit>> =
                                 format_code(&app, &current_rope).ok();
 
-                            /*
-                            if let Some(edits) = edits.clone() {
-                                current_document_version += 1;
+                            match edits.clone() {
+                                Some(edits) if !edits.is_empty() => {
+                                    current_document_version += 1;
 
-                                let mut tree_info = app.tree_info.lock();
-                                let tree_info = tree_info.as_mut().unwrap();
+                                    let mut tree_info = app.tree_info.lock();
+                                    let tree_info = tree_info.as_mut().unwrap();
 
-                                let transaction = helix_lsp::util::generate_transaction_from_edits(
-                                    &current_rope,
-                                    edits,
-                                    helix_lsp::OffsetEncoding::Utf8,
-                                );
+                                    let transaction =
+                                        helix_lsp::util::generate_transaction_from_edits(
+                                            &current_rope,
+                                            edits,
+                                            helix_lsp::OffsetEncoding::Utf8,
+                                        );
 
-                                let edits =
-                                    generate_edits(current_rope.slice(..), transaction.changes());
-                                if transaction.apply(&mut current_rope) {
-                                    let source = current_rope.slice(..);
-                                    for edit in edits.iter().rev() {
-                                        tree_info.0.edit(edit);
+                                    let edits = generate_edits(
+                                        current_rope.slice(..),
+                                        transaction.changes(),
+                                    );
+                                    if transaction.apply(&mut current_rope) {
+                                        let source = current_rope.slice(..);
+                                        for edit in edits.iter().rev() {
+                                            tree_info.0.edit(edit);
+                                        }
+
+                                        // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
+                                        let tree = parser
+                                            .parse_with(
+                                                &mut |byte, _| {
+                                                    if byte <= source.len_bytes() {
+                                                        let (chunk, start_byte, _, _) =
+                                                            source.chunk_at_byte(byte);
+                                                        &chunk.as_bytes()[byte - start_byte..]
+                                                    } else {
+                                                        // out of range
+                                                        &[]
+                                                    }
+                                                },
+                                                Some(&tree_info.0),
+                                            )
+                                            .unwrap();
+                                        tree_info.1 = current_rope.clone();
+
+                                        tree_info.0 = tree;
+                                    } else {
+                                        panic!("Transaction could not be applied");
                                     }
-
-                                    // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
-                                    let tree = parser
-                                        .parse_with(
-                                            &mut |byte, _| {
-                                                if byte <= source.len_bytes() {
-                                                    let (chunk, start_byte, _, _) =
-                                                        source.chunk_at_byte(byte);
-                                                    &chunk.as_bytes()[byte - start_byte..]
-                                                } else {
-                                                    // out of range
-                                                    &[]
-                                                }
-                                            },
-                                            Some(&tree_info.0),
-                                        )
-                                        .unwrap();
-                                    tree_info.1 = current_rope.clone();
-
-                                    tree_info.0 = tree;
-                                } else {
-                                    panic!("Transaction could not be applied");
                                 }
+                                _ => {}
                             }
-                            */
 
                             connection
                                 .sender
