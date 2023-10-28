@@ -1442,10 +1442,8 @@ pub fn start_lsp(
                                             app.clear_resolved.store(true, Ordering::Relaxed);
                                             lsp_egui_ctx.request_repaint();
                                         }
-                                    } else {
-                                        if error_tree.is_none() {
-                                            error_tree = Some(tree.clone());
-                                        }
+                                    } else if error_tree.is_none() {
+                                        error_tree = Some(tree.clone());
                                     }
 
                                     tree_info.0 = tree;
@@ -2380,7 +2378,7 @@ pub fn hover(
                 query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
 
                 let iter = query_cursor.matches(
-                    &slide_index_query,
+                    slide_index_query,
                     tree_info.root_node(),
                     RopeProvider(current_rope.slice(..)),
                 );
@@ -2414,7 +2412,7 @@ pub fn hover(
                         );
 
                         let mut iter = query_cursor.matches(
-                            &vb_in_slide_query,
+                            vb_in_slide_query,
                             tree_info.root_node(),
                             RopeProvider(current_rope.slice(..)),
                         );
@@ -2439,7 +2437,7 @@ pub fn hover(
                                 .set_point_range(Point { row: 0, column: 0 }..range.end_point);
 
                             let iter = query_cursor.matches(
-                                &slide_index_query,
+                                slide_index_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );
@@ -2471,7 +2469,7 @@ pub fn hover(
                         );
 
                         let mut iter = query_cursor.matches(
-                            &obj_in_slide_query,
+                            obj_in_slide_query,
                             tree_info.root_node(),
                             RopeProvider(current_rope.slice(..)),
                         );
@@ -2496,7 +2494,7 @@ pub fn hover(
                                 .set_point_range(Point { row: 0, column: 0 }..range.end_point);
 
                             let iter = query_cursor.matches(
-                                &slide_index_query,
+                                slide_index_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );

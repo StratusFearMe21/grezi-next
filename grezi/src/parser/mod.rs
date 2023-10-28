@@ -484,17 +484,16 @@ pub fn parse_file(
                     last_slide_changed = node.has_changes();
                 } else {
                     on_screen.clear();
-                    match slide_show.slide_show.get_mut(ast_object_at) {
-                        Some(AstObject::Slide { objects, .. }) => {
-                            for (index, obj) in objects.iter_mut().enumerate() {
-                                on_screen.insert(obj.object, index);
-                                if let Some(object) = slide_show.objects.get_mut(&obj.object) {
-                                    object.viewbox = Some(obj.locations[1].1);
-                                    object.position = Some(obj.locations[1].0);
-                                }
+                    if let Some(AstObject::Slide { objects, .. }) =
+                        slide_show.slide_show.get_mut(ast_object_at)
+                    {
+                        for (index, obj) in objects.iter_mut().enumerate() {
+                            on_screen.insert(obj.object, index);
+                            if let Some(object) = slide_show.objects.get_mut(&obj.object) {
+                                object.viewbox = Some(obj.locations[1].1);
+                                object.position = Some(obj.locations[1].0);
                             }
                         }
-                        _ => {}
                     }
                 }
                 ast_object_at += 1;
