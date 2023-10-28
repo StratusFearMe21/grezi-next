@@ -1,0 +1,1 @@
+[(slide) (action)] @index

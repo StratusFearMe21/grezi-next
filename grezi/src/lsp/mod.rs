@@ -66,6 +66,11 @@ pub fn start_lsp(
         include_str!("queries/slide_complete.scm"),
     )
     .unwrap();
+    let slide_index_query = Query::new(
+        tree_sitter_grz::language(),
+        include_str!("queries/slide_index.scm"),
+    )
+    .unwrap();
     let top_level_search_query = Query::new(
         tree_sitter_grz::language(),
         include_str!("queries/top_level_search.scm"),
@@ -1366,7 +1371,6 @@ pub fn start_lsp(
                         app.clear_resolved.store(true, Ordering::Relaxed);
                     }
                     DidChangeTextDocument::METHOD => {
-                        let start = std::time::Instant::now();
                         let changes: lsp_types::DidChangeTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
 
@@ -1456,7 +1460,7 @@ pub fn start_lsp(
                                     &tree_info.0,
                                     &mut query_cursor,
                                     &current_rope,
-                                    &slide_complete_query,
+                                    &slide_index_query,
                                     &vb_in_slide_query,
                                     &obj_in_slide_query,
                                     &lsp_egui_ctx,
@@ -1464,7 +1468,6 @@ pub fn start_lsp(
                                 );
                             }
                         }
-                        dbg!(start.elapsed());
                     }
                     DidSaveTextDocument::METHOD => {
                         // let _: lsp_types::DidSaveTextDocumentParams =
@@ -1732,7 +1735,9 @@ fn inlay_hints(
                     4 => {
                         inlay_edge_map.insert(query_slice, edge_slice.slice(2..));
                     }
-                    _ => {}
+                    _ => {
+                        inlay_edge_map.remove(&query_slice);
+                    }
                 }
 
                 edge_iter.next();
@@ -2338,7 +2343,7 @@ pub fn hover(
     tree_info: &Tree,
     query_cursor: &mut QueryCursor,
     current_rope: &Rope,
-    slide_complete_query: &Query,
+    slide_index_query: &Query,
     vb_in_slide_query: &Query,
     obj_in_slide_query: &Query,
     lsp_egui_ctx: &eframe::egui::Context,
@@ -2356,6 +2361,7 @@ pub fn hover(
         while node.kind_id() != NodeKind::Slide as u16
             && node.kind_id() != NodeKind::Viewbox as u16
             && node.kind_id() != NodeKind::Obj as u16
+            && node.kind_id() != NodeKind::Action as u16
         {
             if let Some(parent) = node.parent() {
                 node = parent;
@@ -2370,11 +2376,11 @@ pub fn hover(
         }
 
         match NodeKind::from(node.kind_id()) {
-            NodeKind::Slide => {
+            nk @ NodeKind::Slide | nk @ NodeKind::Action => {
                 query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
 
                 let iter = query_cursor.matches(
-                    &slide_complete_query,
+                    &slide_index_query,
                     tree_info.root_node(),
                     RopeProvider(current_rope.slice(..)),
                 );
@@ -2385,6 +2391,10 @@ pub fn hover(
                     app.vb_dbg.store(0, Ordering::Relaxed);
                     app.obj_dbg.store(0, Ordering::Relaxed);
                     app.clear_resolved.store(true, Ordering::Relaxed);
+                    lsp_egui_ctx.request_repaint();
+                }
+                if matches!(nk, NodeKind::Action) {
+                    app.restart_timer.store(true, Ordering::Relaxed);
                     lsp_egui_ctx.request_repaint();
                 }
             }
@@ -2429,7 +2439,7 @@ pub fn hover(
                                 .set_point_range(Point { row: 0, column: 0 }..range.end_point);
 
                             let iter = query_cursor.matches(
-                                &slide_complete_query,
+                                &slide_index_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );
@@ -2486,7 +2496,7 @@ pub fn hover(
                                 .set_point_range(Point { row: 0, column: 0 }..range.end_point);
 
                             let iter = query_cursor.matches(
-                                &slide_complete_query,
+                                &slide_index_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );

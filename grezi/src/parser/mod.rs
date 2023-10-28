@@ -494,7 +494,7 @@ pub fn parse_file(
                                 }
                             }
                         }
-                        _ => unreachable!(),
+                        _ => {}
                     }
                 }
                 ast_object_at += 1;
