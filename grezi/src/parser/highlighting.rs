@@ -52,6 +52,7 @@ pub fn highlight_text(
         break_on_newline: true,
         wrap: TextWrapping {
             max_width: 0.0,
+            max_rows: u32::MAX as usize,
             ..Default::default()
         },
         ..Default::default()

@@ -4,7 +4,7 @@ use std::{
 };
 
 use eframe::{
-    egui::TextFormat,
+    egui::{load::SizedTexture, TextFormat},
     emath::Align,
     epaint::{
         text::{LayoutJob, TextWrapping},
@@ -23,7 +23,7 @@ use super::{
     FieldName, NodeKind,
 };
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Object {
     pub position: Option<LineUp>,
     pub viewbox: Option<ViewboxIn>,
@@ -32,12 +32,21 @@ pub struct Object {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ObjectType {
-    Text { layout_job: LayoutJob },
+    Text {
+        layout_job: LayoutJob,
+    },
+    Image {
+        uri: String,
+        bytes: Arc<[u8]>,
+        tint: [u8; 4],
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum ResolvedObject {
     Text(Arc<Galley>),
+    Image((SizedTexture, [u8; 4])),
+    Gif((egui_anim::Anim, [u8; 4])),
 }
 
 impl ResolvedObject {
@@ -47,6 +56,12 @@ impl ResolvedObject {
                 .rect
                 .translate(Vec2::new(-galley.rect.min.x, -galley.rect.min.y))
                 .expand(1.0),
+            ResolvedObject::Image(img) => {
+                Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), img.0.size)
+            }
+            ResolvedObject::Gif(gif) => {
+                Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), gif.0.size)
+            }
         }
     }
 }
@@ -64,10 +79,12 @@ pub fn parse_objects(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
+    ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
 ) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
+    use eframe::egui::load::Bytes;
     use helix_core::tree_sitter::Node;
     use pulldown_cmark::Tag;
 
@@ -107,6 +124,63 @@ pub fn parse_objects(
         },
     );
     let object = match obj_type.as_ref() {
+        "Image" => {
+            let mut uri = String::new();
+            let mut tint = None;
+            for parameter in parameters {
+                let parameter = parameter?;
+                let value: Cow<'_, str> = source
+                    .byte_slice(
+                        parameter
+                            .1
+                            .child(1 /* second child */)
+                            .unwrap_or(parameter.1)
+                            .byte_range(),
+                    )
+                    .into();
+                match parameter.0.as_ref() {
+                    "value" => uri = value.into_owned(),
+                    "tint" => {
+                        tint = Some(
+                            value
+                                .parse::<csscolorparser::Color>()
+                                .map_err(|_| {
+                                    super::Error::InvalidParameter(parameter.1.range().into())
+                                })?
+                                .to_rgba8(),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if uri.is_empty() {
+                return Err(super::Error::KnownMissing(obj_range.into(), "value"));
+            }
+            let bytes = loop {
+                match ctx.try_load_bytes(&uri) {
+                    Ok(poll) => match poll {
+                        eframe::egui::load::BytesPoll::Ready { bytes, .. } => {
+                            break match bytes {
+                                Bytes::Static(s) => s.into(),
+                                Bytes::Shared(b) => Arc::clone(&b),
+                            }
+                        }
+                        eframe::egui::load::BytesPoll::Pending { .. } => {}
+                    },
+                    Err(e) => {
+                        return Err(super::Error::ImageError(
+                            tree_cursor.node().range().into(),
+                            e,
+                        ))
+                    }
+                }
+            };
+            ObjectType::Image {
+                uri,
+                bytes,
+                tint: tint.unwrap_or([u8::MAX; 4]),
+            }
+        }
         "Paragraph" | "Header" => {
             let mut text = None;
             let mut align = Align::LEFT;
@@ -124,7 +198,7 @@ pub fn parse_objects(
                         parameter
                             .1
                             .child(1 /* second child */)
-                            .unwrap()
+                            .unwrap_or(parameter.1)
                             .byte_range(),
                     )
                     .into();
@@ -176,6 +250,7 @@ pub fn parse_objects(
                         break_on_newline: true,
                         wrap: TextWrapping {
                             max_width: 0.0,
+                            max_rows: u32::MAX as usize,
                             ..Default::default()
                         },
                         ..Default::default()

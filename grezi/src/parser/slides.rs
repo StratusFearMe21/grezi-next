@@ -65,12 +65,13 @@ pub fn parse_slides(
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
     // Draws Entering objects first, then OnScreen, then Exiting
-    slide_objects.sort_by_key(|obj| obj.state);
-    for (index, slide_object) in slide_objects.iter().enumerate() {
-        *slide_on_screen.get_mut(&slide_object.object).unwrap() = index;
-    }
-    let mut max_time = 1.0;
+    // slide_objects.sort_by_key(|obj| obj.state);
+    // for (index, slide_object) in slide_objects.iter().enumerate() {
+    //     *slide_on_screen.get_mut(&slide_object.object).unwrap() = index;
+    // }
+    let mut max_time = 0.5;
     let mut actions = Vec::new();
+    let mut next = false;
     while tree_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
         tree_cursor.fork(|cursor| {
             match parse_slide_function(
@@ -78,6 +79,7 @@ pub fn parse_slides(
                 hasher,
                 source,
                 &mut slide_objects,
+                &mut next,
                 &mut max_time,
                 &slide_on_screen,
                 errors_present,
@@ -96,6 +98,7 @@ pub fn parse_slides(
         objects: slide_objects,
         actions,
         max_time,
+        next,
     })
 }
 
@@ -166,7 +169,8 @@ pub fn parse_slide_object(
         } else {
             let mut lineup_first_locations = match edges.get(..2) {
                 Some(s) => {
-                    lineup_first = LineUp::from_str(s).unwrap();
+                    lineup_first = LineUp::from_str(s)
+                        .map_err(|_| Error::InvalidParameter(tree_cursor.node().range().into()))?;
                     (lineup_first, viewbox_first)
                 }
                 None => {
@@ -178,7 +182,8 @@ pub fn parse_slide_object(
             };
             let lineup_second = match edges.get(2..4) {
                 Some(s) => {
-                    line_up_now = LineUp::from_str(s).unwrap();
+                    line_up_now = LineUp::from_str(s)
+                        .map_err(|_| Error::InvalidParameter(tree_cursor.node().range().into()))?;
                     (line_up_now, viewbox)
                 }
                 None => match edges.get(2..) {
@@ -230,6 +235,7 @@ fn parse_slide_function(
     hasher: &ahash::RandomState,
     source: &helix_core::ropey::Rope,
     slide_objects: &mut [SlideObj],
+    next: &mut bool,
     max_time: &mut f32,
     slide_on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     errors_present: &mut Vec<super::Error>,
@@ -272,6 +278,11 @@ fn parse_slide_function(
                     tree_cursor.node().range().into(),
                 )),
             }
+        }
+        "next" => {
+            tree_cursor.goto_next_sibling()?;
+            *next = true;
+            Ok(None)
         }
         "highlight" => {
             tree_cursor.goto_next_sibling()?;

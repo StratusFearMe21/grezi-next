@@ -61,6 +61,7 @@ pub enum AstObject {
         objects: Vec<slides::SlideObj>,
         actions: Vec<actions::Actions>,
         max_time: f32,
+        next: bool,
     },
     Action {
         actions: Vec<actions::Actions>,
@@ -112,6 +113,11 @@ pub enum Error {
         #[label("Invalid Node kind: {1:?} here")] PointFromRange,
         NodeKind,
     ),
+    #[error("Image error")]
+    ImageError(
+        #[label("Error loading image: {1}")] PointFromRange,
+        eframe::egui::load::LoadError,
+    ),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -127,6 +133,7 @@ impl Error {
             Error::Syntax(range) => range.0,
             Error::InvalidParameter(range) => range.0,
             Error::BadNode(range, _) => range.0,
+            Error::ImageError(range, _) => range.0,
         }
     }
 }
@@ -395,6 +402,7 @@ pub fn parse_file(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
+    egui_ctx: &eframe::egui::Context,
 ) -> Result<(), Vec<Error>> {
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
@@ -523,6 +531,7 @@ pub fn parse_file(
                             source,
                             helix_cell,
                             &hasher,
+                            egui_ctx,
                             &mut errors_present,
                         ) {
                             Ok(object) => {

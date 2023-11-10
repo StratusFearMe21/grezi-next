@@ -743,6 +743,57 @@ pub fn start_lsp(
                                         ),
                                         additional_text_edits: Some(Vec::new()),
                                         ..Default::default()
+                                        },
+                                        CompletionItem {
+                                        label: "Image".to_string(),
+                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                        deprecated: Some(false),
+                                        preselect: Some(true),
+                                        insert_text_format: Some(
+                                        InsertTextFormat::PLAIN_TEXT,
+                                        ),
+                                        insert_text_mode: None,
+                                        text_edit: Some(
+                                        CompletionTextEdit::InsertAndReplace(
+                                        InsertReplaceEdit {
+                                        new_text: "Image".to_string(),
+                                        insert: lsp_types::Range {
+                                        start: completion
+                                        .text_document_position
+                                        .position,
+                                        end: completion
+                                        .text_document_position
+                                        .position,
+                                        },
+                                        replace: lsp_types::Range {
+                                        start: Position {
+                                        line: completion_range
+                                        .start_point
+                                        .row
+                                        as u32,
+                                        character:
+                                        completion_range
+                                        .start_point
+                                        .column
+                                        as u32,
+                                        },
+                                        end: Position {
+                                        line: completion_range
+                                        .end_point
+                                        .row
+                                        as u32,
+                                        character:
+                                        completion_range
+                                        .end_point
+                                        .column
+                                        as u32,
+                                        },
+                                        },
+                                        },
+                                        ),
+                                        ),
+                                        additional_text_edits: Some(Vec::new()),
+                                        ..Default::default()
                                         }])),
                                                 )))
                                                 .unwrap();
@@ -767,6 +818,57 @@ pub fn start_lsp(
                                                                 CompletionTextEdit::InsertAndReplace(
                                                                     InsertReplaceEdit {
                                                                         new_text: "value: \"$0\"".to_string(),
+                                                                        insert: lsp_types::Range {
+                                                                            start: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                            end: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                        },
+                                                                        replace: lsp_types::Range {
+                                                                            start: Position {
+                                                                                line: completion_range
+                                                                                    .start_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .start_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                            end: Position {
+                                                                                line: completion_range
+                                                                                    .end_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .end_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            additional_text_edits: Some(Vec::new()),
+                                                            ..Default::default()
+                                                        },
+                                                        CompletionItem {
+                                                            label: "tint".to_string(),
+                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                            deprecated: Some(false),
+                                                            preselect: Some(true),
+                                                            insert_text_format: Some(
+                                                                InsertTextFormat::SNIPPET,
+                                                            ),
+                                                            insert_text_mode: None,
+                                                            text_edit: Some(
+                                                                CompletionTextEdit::InsertAndReplace(
+                                                                    InsertReplaceEdit {
+                                                                        new_text: "tint: \"$0\"".to_string(),
                                                                         insert: lsp_types::Range {
                                                                             start: completion
                                                                                 .text_document_position
@@ -1186,6 +1288,7 @@ pub fn start_lsp(
                                         &current_rope,
                                         &mut app.helix_cell,
                                         &mut slide_show,
+                                        &lsp_egui_ctx,
                                     );
                                     *tree_info = Some((tree, Rope::new()));
                                     *app.slide_show_file.lock() = current_rope.clone();
@@ -1339,11 +1442,23 @@ pub fn start_lsp(
                             &current_rope,
                             &mut app.helix_cell,
                             &mut slide_show,
+                            &lsp_egui_ctx,
                         );
                         *tree_info = Some((tree, Rope::new()));
                         *app.slide_show_file.lock() = current_rope.clone();
                         match ast {
                             Ok(_) => {
+                                connection
+                                    .sender
+                                    .send(Message::Notification(lsp_server::Notification::new(
+                                        PublishDiagnostics::METHOD.to_string(),
+                                        PublishDiagnosticsParams {
+                                            uri: currently_open.clone(),
+                                            diagnostics: vec![],
+                                            version: Some(current_document_version),
+                                        },
+                                    )))
+                                    .unwrap();
                                 current_thread.unpark();
                             }
                             Err(errors) => {
@@ -1428,7 +1543,7 @@ pub fn start_lsp(
 
                                         let mut slide_show = app.slide_show.write();
 
-                                        if super::parser::parse_file(
+                                        match super::parser::parse_file(
                                             &tree,
                                             Some(
                                                 error_tree.take().as_ref().unwrap_or(&tree_info.0),
@@ -1436,11 +1551,47 @@ pub fn start_lsp(
                                             &tree_info.1,
                                             &mut app.helix_cell,
                                             &mut slide_show,
-                                        )
-                                        .is_ok()
-                                        {
-                                            app.clear_resolved.store(true, Ordering::Relaxed);
-                                            lsp_egui_ctx.request_repaint();
+                                            &lsp_egui_ctx,
+                                        ) {
+                                            Ok(_) => {
+                                                connection
+                                                    .sender
+                                                    .send(Message::Notification(
+                                                        lsp_server::Notification::new(
+                                                            PublishDiagnostics::METHOD.to_string(),
+                                                            PublishDiagnosticsParams {
+                                                                uri: currently_open.clone(),
+                                                                diagnostics: vec![],
+                                                                version: Some(
+                                                                    current_document_version,
+                                                                ),
+                                                            },
+                                                        ),
+                                                    ))
+                                                    .unwrap();
+                                                app.clear_resolved.store(true, Ordering::Relaxed);
+                                                lsp_egui_ctx.request_repaint();
+                                            }
+                                            Err(errors) => {
+                                                connection
+                                                    .sender
+                                                    .send(Message::Notification(lsp_server::Notification::new(
+                                                        PublishDiagnostics::METHOD.to_string(),
+                                                        PublishDiagnosticsParams {
+                                                            uri: currently_open.clone(),
+                                                            diagnostics: errors
+                                                                .into_iter()
+                                                                .map(|error| {
+                                                                    let diagnostic: lsp_types::Diagnostic =
+                                                                        error.into();
+                                                                    diagnostic
+                                                                })
+                                                                .collect(),
+                                                            version: Some(current_document_version),
+                                                        },
+                                                    )))
+                                                    .unwrap();
+                                            }
                                         }
                                     } else if error_tree.is_none() {
                                         error_tree = Some(tree.clone());
@@ -1482,6 +1633,7 @@ pub fn start_lsp(
                                 &info.1,
                                 &mut app.helix_cell,
                                 &mut slide_show,
+                                &lsp_egui_ctx,
                             );
                             match ast {
                                 Ok(_) => {
@@ -1498,6 +1650,7 @@ pub fn start_lsp(
                                         )))
                                         .unwrap();
                                     app.clear_resolved.store(true, Ordering::Relaxed);
+                                    app.next.store(true, Ordering::Relaxed);
                                     app.restart_timer.store(true, Ordering::Relaxed);
                                     current_thread.unpark();
                                 }
@@ -2386,6 +2539,7 @@ pub fn hover(
                 let slide_num = iter.count().saturating_sub(1);
 
                 if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
+                    app.next.store(false, Ordering::Relaxed);
                     app.vb_dbg.store(0, Ordering::Relaxed);
                     app.obj_dbg.store(0, Ordering::Relaxed);
                     app.clear_resolved.store(true, Ordering::Relaxed);
@@ -2445,6 +2599,7 @@ pub fn hover(
                             let slide_num = iter.count() - 1;
 
                             app.index.store(slide_num, Ordering::Relaxed);
+                            app.next.store(false, Ordering::Relaxed);
                             app.obj_dbg.store(0, Ordering::Relaxed);
 
                             app.clear_resolved.store(true, Ordering::Relaxed);
@@ -2502,6 +2657,7 @@ pub fn hover(
                             let slide_num = iter.count() - 1;
 
                             app.index.store(slide_num, Ordering::Relaxed);
+                            app.next.store(false, Ordering::Relaxed);
                             app.vb_dbg.store(0, Ordering::Relaxed);
 
                             app.clear_resolved.store(true, Ordering::Relaxed);

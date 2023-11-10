@@ -1,0 +1,11 @@
+[package]
+name = "egui-anim"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+egui = { version = "0.23.0", default-features = false }
+image = { version = "0.24.7", default-features = false, features = ["gif"] }
+web-time = "0.2.3"

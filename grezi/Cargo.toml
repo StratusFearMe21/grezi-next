@@ -11,8 +11,12 @@ cassowary = "0.3.0"
 keyframe = { version = "1.1.1", default-features = false, features = ["alloc"] }
 num_enum = "0.7.0"
 serde = { version = "1.0.188", features = ["derive"] }
-postcard = { version = "1.0.8", features = ["use-std"] }
 log = "0.4.20"
+egui_extras = { version = "0.23.0", features = ["all_loaders"] }
+image = "0.24.7"
+egui-anim = { version = "0.1.0", path = "../egui-anim" }
+postcard = { version = "1.0.8", features = ["use-std"] }
+csscolorparser = { version = "0.6.2", features = ["lab"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -25,9 +29,9 @@ helix-loader = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" 
 helix-term = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 helix-view = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
-eframe = { version = "0.22.0", default-features = false, features = [
+eframe = { version = "0.23.0", default-features = false, features = [
     "default_fonts",
-    "glow",
+    "wgpu",
     "wayland",
     "persistence",
 ] }
@@ -41,7 +45,7 @@ thiserror = "1.0.48"
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2.10", features = ["js"] }
-eframe = { version = "0.22.0", default-features = false, features = [
+eframe = { version = "0.23.0", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",

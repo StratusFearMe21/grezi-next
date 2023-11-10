@@ -5,6 +5,7 @@
 use std::{
     collections::HashMap,
     hash::BuildHasherDefault,
+    io::{BufWriter, Cursor},
     mem::ManuallyDrop,
     path::PathBuf,
     sync::{
@@ -18,16 +19,17 @@ use std::{
 use std::time::Instant;
 
 use eframe::{
-    egui::{self, FontData, FontDefinitions, PointerButton, Rect, Ui},
+    egui::{self, FontData, FontDefinitions, ImageSource, PointerButton, Rect, TextureOptions, Ui},
     epaint::{
         mutex::{Mutex, RwLock},
-        Color32, FontFamily, Pos2, Rounding, Stroke, Vec2,
+        Color32, FontFamily, Pos2, RectShape, Rounding, Stroke, Vec2,
     },
 };
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::tree_sitter::Tree;
+use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
 use layout::UnresolvedLayout;
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,6 +72,7 @@ pub struct MyEguiApp {
     slide_show: Arc<RwLock<SlideShow>>,
     #[cfg(not(target_arch = "wasm32"))]
     clear_resolved: Arc<AtomicBool>,
+    next: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
     restart_timer: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -94,6 +97,7 @@ pub struct MyEguiApp {
     resolved_viewboxes: HashMap<u64, Vec<Rect>, BuildHasherDefault<PassThroughHasher>>,
     resolved_actions: Option<Vec<ResolvedActions>>,
     resolved_slide: Option<Vec<ResolvedSlideObj>>,
+    resolved_images: HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>,
     time: f32,
     #[cfg(not(target_arch = "wasm32"))]
     lsp: bool,
@@ -101,7 +105,7 @@ pub struct MyEguiApp {
     parser: Arc<Mutex<helix_core::tree_sitter::Parser>>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug)]
 pub struct SlideShow {
     slide_show: Vec<AstObject>,
     viewboxes: HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
@@ -117,7 +121,7 @@ impl MyEguiApp {
 
         fonts.font_data.insert(
             "Fira Code".to_owned(),
-            FontData::from_static(include_bytes!("../fira/ttf/FiraCode-Regular.ttf")),
+            FontData::from_static(include_bytes!("/usr/share/fonts/TTF/FiraCode-Regular.ttf")),
         );
 
         fonts.families.insert(
@@ -126,6 +130,8 @@ impl MyEguiApp {
         );
 
         cc.egui_ctx.set_fonts(fonts);
+
+        egui_extras::install_image_loaders(&cc.egui_ctx);
 
         #[cfg(not(target_arch = "wasm32"))]
         if !self.lsp {
@@ -190,6 +196,7 @@ impl MyEguiApp {
                                         &info.1,
                                         &mut self.helix_cell,
                                         &mut slide_show,
+                                        &watcher_context,
                                     );
                                     info.0 = tree;
                                     match ast {
@@ -295,7 +302,11 @@ impl MyEguiApp {
                         None,
                     )
                     .unwrap();
-                let ast = parser::parse_file(&tree, None, &file, &mut helix_cell, &mut slide_show);
+                let ast = {
+                    let ctx = eframe::egui::Context::default();
+                    egui_extras::install_image_loaders(&ctx);
+                    parser::parse_file(&tree, None, &file, &mut helix_cell, &mut slide_show, &ctx)
+                };
                 match ast {
                     Ok(_) => {
                         *tree_info = Some((tree, Rope::new()));
@@ -317,6 +328,7 @@ impl MyEguiApp {
                 }
             }
         };
+
         #[cfg(target_arch = "wasm32")]
         let slide_show: SlideShow = { postcard::from_bytes(PRESENTATION).unwrap() };
 
@@ -325,7 +337,11 @@ impl MyEguiApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         if args.export {
-            postcard::to_io(&slide_show, std::fs::File::create("out.slideshow").unwrap()).unwrap();
+            postcard::to_io(
+                &slide_show,
+                BufWriter::new(std::fs::File::create("out.slideshow").unwrap()),
+            )
+            .unwrap();
             std::process::exit(0);
         }
 
@@ -333,6 +349,7 @@ impl MyEguiApp {
             slide_show: Arc::new(RwLock::new(slide_show)),
             #[cfg(not(target_arch = "wasm32"))]
             clear_resolved: new_file,
+            next: Arc::new(false.into()),
             #[cfg(not(target_arch = "wasm32"))]
             restart_timer: Arc::new(true.into()),
             #[cfg(not(target_arch = "wasm32"))]
@@ -361,6 +378,7 @@ impl MyEguiApp {
             resolved_viewboxes: HashMap::default(),
             resolved_actions: None,
             resolved_slide: None,
+            resolved_images: HashMap::default(),
             #[cfg(not(target_arch = "wasm32"))]
             window_size: [0, 0],
             #[cfg(target_arch = "wasm32")]
@@ -379,55 +397,106 @@ impl MyEguiApp {
             } else {
                 0.0
             };
-            let mut obj_pos;
+            let mut obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
+                EaseOutCubic,
+                obj.locations[0],
+                obj.locations[1],
+                time,
+                obj.scaled_time[1],
+            ));
             match &obj.object {
                 parser::objects::ResolvedObject::Text(galley) => {
-                    obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
-                        EaseOutCubic,
-                        obj.locations[0],
-                        obj.locations[1],
-                        time,
-                        obj.scaled_time[1],
-                    ));
-                    ui.painter().galley(obj_pos, Arc::clone(galley));
                     obj_pos.x += galley.rect.min.x;
                     // ui.painter()
                     // .circle(obj_pos, 5.0, Color32::RED, Stroke::NONE);
-                }
-            }
 
-            match obj.state {
-                ObjectState::Entering => {
-                    let fade_color =
-                        Color32::from_gray(27).gamma_multiply(keyframe::ease_with_scaled_time(
+                    let gamma_multiply = match obj.state {
+                        ObjectState::Entering => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
                             1.0,
                             0.0,
                             time,
                             obj.scaled_time[1],
-                        ));
-                    ui.painter().rect_filled(
-                        obj.object.bounds().translate(obj_pos.to_vec2()),
-                        Rounding::none(),
-                        fade_color,
-                    );
-                }
-                ObjectState::Exiting => {
-                    let fade_color =
-                        Color32::from_gray(27).gamma_multiply(keyframe::ease_with_scaled_time(
+                        ),
+                        ObjectState::Exiting => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
                             0.0,
                             1.0,
                             time,
                             obj.scaled_time[1],
-                        ));
-                    ui.painter().rect_filled(
-                        obj.object.bounds().translate(obj_pos.to_vec2()),
-                        Rounding::none(),
-                        fade_color,
+                        ),
+                        ObjectState::OnScreen => 0.0,
+                    };
+                    if gamma_multiply != 1.0 {
+                        ui.painter().galley(obj_pos, Arc::clone(galley));
+                        if gamma_multiply != 0.0 {
+                            ui.painter().rect_filled(
+                                obj.object.bounds().translate(obj_pos.to_vec2()),
+                                Rounding::ZERO,
+                                Color32::from_gray(27).gamma_multiply(gamma_multiply),
+                            );
+                        }
+                    }
+                }
+                parser::objects::ResolvedObject::Gif((gif, mut tint)) => {
+                    match obj.state {
+                        ObjectState::Entering => {
+                            tint[3] = keyframe::ease_with_scaled_time(
+                                EaseOutCubic,
+                                0.0,
+                                tint[3] as f64,
+                                time,
+                                obj.scaled_time[1],
+                            ) as u8;
+                        }
+                        ObjectState::Exiting => {
+                            tint[3] = keyframe::ease_with_scaled_time(
+                                EaseOutCubic,
+                                tint[3] as f64,
+                                0.0,
+                                time,
+                                obj.scaled_time[1],
+                            ) as u8;
+                        }
+                        ObjectState::OnScreen => {}
+                    }
+                    gif.ui(
+                        ui,
+                        Rect::from_min_size(obj_pos, gif.size),
+                        Color32::from_rgba_unmultiplied(tint[0], tint[1], tint[2], tint[3]),
                     );
                 }
-                ObjectState::OnScreen => {}
+                parser::objects::ResolvedObject::Image((image, mut tint)) => {
+                    match obj.state {
+                        ObjectState::Entering => {
+                            tint[3] = keyframe::ease_with_scaled_time(
+                                EaseOutCubic,
+                                0.0,
+                                tint[3] as f64,
+                                time,
+                                obj.scaled_time[1],
+                            ) as u8;
+                        }
+                        ObjectState::Exiting => {
+                            tint[3] = keyframe::ease_with_scaled_time(
+                                EaseOutCubic,
+                                tint[3] as f64,
+                                0.0,
+                                time,
+                                obj.scaled_time[1],
+                            ) as u8;
+                        }
+                        ObjectState::OnScreen => {}
+                    }
+                    ui.painter().add(RectShape {
+                        rect: Rect::from_min_size(obj_pos, image.size),
+                        rounding: Rounding::ZERO,
+                        fill: Color32::from_rgba_unmultiplied(tint[0], tint[1], tint[2], tint[3]),
+                        stroke: Stroke::NONE,
+                        fill_texture_id: image.id,
+                        uv: Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    });
+                }
             }
         }
     }
@@ -463,7 +532,7 @@ impl MyEguiApp {
                                 locations.max.y,
                             ),
                         },
-                        Rounding::none(),
+                        Rounding::ZERO,
                         Color32::LIGHT_YELLOW.gamma_multiply(0.5),
                     );
                 }
@@ -517,6 +586,7 @@ impl MyEguiApp {
     ) -> Vec<ResolvedSlideObj> {
         let mut resolved_slides = Vec::new();
         let size = Rect::from_min_size(Pos2::ZERO, size);
+        let mut images = Vec::with_capacity(3);
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => size.shrink(15.0),
@@ -554,8 +624,111 @@ impl MyEguiApp {
                         state: object.state,
                     });
                 }
+                parser::objects::ObjectType::Image { uri, bytes, tint } => {
+                    match images.binary_search(&object.object) {
+                        Err(index) | Ok(index) => images.insert(index, object.object),
+                    }
+                    let resolved_obj = self
+                        .resolved_images
+                        .entry(object.object)
+                        .and_modify(|obj| match obj {
+                            ResolvedObject::Image((_, t)) | ResolvedObject::Gif((_, t)) => {
+                                *t = *tint
+                            }
+                            _ => {}
+                        })
+                        .or_insert_with(|| {
+                            match uri.rsplit_once('.') {
+                                Some((_, "gif")) => {
+                                    return ResolvedObject::Gif((
+                                        egui_anim::Anim::new(
+                                            ctx,
+                                            GifDecoder::new(Cursor::new(bytes.as_ref())).unwrap(),
+                                            Some(uri),
+                                        ),
+                                        *tint,
+                                    ))
+                                }
+                                Some((_, "apng" | "png")) => {
+                                    let decoder =
+                                        PngDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
+                                    if decoder.is_apng() {
+                                        return ResolvedObject::Gif((
+                                            egui_anim::Anim::new(ctx, decoder.apng(), Some(uri)),
+                                            *tint,
+                                        ));
+                                    }
+                                }
+                                Some((_, "webp")) => {
+                                    let decoder =
+                                        WebPDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
+                                    if decoder.has_animation() {
+                                        return ResolvedObject::Gif((
+                                            egui_anim::Anim::new(ctx, decoder, Some(uri)),
+                                            *tint,
+                                        ));
+                                    }
+                                }
+                                _ => {}
+                            }
+                            let texture = loop {
+                                let source = ImageSource::Bytes {
+                                    uri: std::borrow::Cow::Owned(uri.clone()),
+                                    bytes: egui::load::Bytes::Shared(Arc::clone(bytes)),
+                                };
+                                match source.load(
+                                    ctx,
+                                    TextureOptions::default(),
+                                    egui::SizeHint::Size(
+                                        second_viewbox.max.x as u32,
+                                        second_viewbox.max.y as u32,
+                                    ),
+                                ) {
+                                    Ok(poll) => match poll {
+                                        eframe::egui::load::TexturePoll::Ready { texture } => {
+                                            break texture
+                                        }
+                                        eframe::egui::load::TexturePoll::Pending { .. } => {}
+                                    },
+                                    Err(e) => {
+                                        panic!("{}", e)
+                                    }
+                                }
+                            };
+                            ResolvedObject::Image((texture, *tint))
+                        });
+                    let size = resolved_obj.bounds();
+                    // let size = Rect {
+                    //     min: size.min,
+                    //     max: {
+                    //         if second_viewbox.max.x / second_viewbox.max.y > size.max.x / size.max.y
+                    //         {
+                    //             Pos2::new(
+                    //                 second_viewbox.max.y * size.max.x / size.max.y,
+                    //                 second_viewbox.max.y,
+                    //             )
+                    //         } else {
+                    //             Pos2::new(
+                    //                 second_viewbox.max.x,
+                    //                 second_viewbox.max.x * size.max.y / size.max.x,
+                    //             )
+                    //         }
+                    //     },
+                    // };
+                    use parser::viewboxes::LineUp;
+                    let first_pos = get_pos!(object.locations[0].0, first_viewbox, size);
+                    let second_pos = get_pos!(object.locations[1].0, second_viewbox, size);
+                    resolved_slides.push(ResolvedSlideObj {
+                        object: resolved_obj.clone(),
+                        locations: [first_pos, second_pos],
+                        scaled_time: object.scaled_time,
+                        state: object.state,
+                    });
+                }
             }
         }
+        self.resolved_images
+            .retain(|k, _| images.binary_search(k).is_ok());
         resolved_slides
     }
 
@@ -617,7 +790,7 @@ impl eframe::App for MyEguiApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            self.time += 0.01666667;
+            self.time += 0.016666666667;
         }
         #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|input| {
@@ -625,36 +798,12 @@ impl eframe::App for MyEguiApp {
                 frame.close();
             }
         });
-        #[cfg(target_arch = "wasm32")]
         let slide_show_cloned = Arc::clone(&self.slide_show);
-        #[cfg(target_arch = "wasm32")]
         let slide_show = slide_show_cloned.read();
         #[cfg(target_arch = "wasm32")]
         let mut button_hit = false;
         #[cfg(not(target_arch = "wasm32"))]
         let button_hit = false;
-        #[cfg(target_arch = "wasm32")]
-        egui::TopBottomPanel::bottom("controls")
-            .exact_height(32.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("⬅")).clicked() {
-                        self.index.fetch_sub(1, Ordering::Relaxed);
-                        self.resolved_actions = None;
-                        self.resolved_slide = None;
-                        button_hit = true;
-                        self.time = 1000.0;
-                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
-                        self.index.fetch_add(1, Ordering::Relaxed);
-                        self.resolved_actions = None;
-                        self.resolved_slide = None;
-                        button_hit = true;
-                        self.time = 0.0;
-                    }
-                    ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
-                    ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
-                })
-            });
         egui::CentralPanel::default().show(ctx, |ui| {
             #[cfg(target_arch = "wasm32")]
             {
@@ -683,23 +832,18 @@ impl eframe::App for MyEguiApp {
                 self.restart_timer.store(false, Ordering::Relaxed);
             }
 
-            #[cfg(not(target_arch = "wasm32"))]
-            let slide_show_cloned = Arc::clone(&self.slide_show);
-            #[cfg(not(target_arch = "wasm32"))]
-            let slide_show = slide_show_cloned.read();
-
             let mut index = self.index.load(Ordering::Relaxed);
             if index >= slide_show.slide_show.len() {
                 index = slide_show.slide_show.len() - 1;
                 self.index
                     .store(slide_show.slide_show.len() - 1, Ordering::Relaxed);
+                self.next.store(false, Ordering::Relaxed);
             }
             // This is safe because the resolution functions do not touch self.slide_show.slide_show
             let resolved_slide = {
                 if let Some(slide) = slide_show.slide_show.get(index) {
-                    let slide = slide as *const AstObject;
                     match &self.resolved_slide {
-                        None => match unsafe { &*slide } {
+                        None => match slide {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -723,9 +867,8 @@ impl eframe::App for MyEguiApp {
                                 actions,
                                 slide_in_ast,
                             } => {
-                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap()
-                                    as *const AstObject;
-                                match unsafe { &*slide } {
+                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
+                                match slide {
                                     AstObject::Slide { objects, .. } => {
                                         let resolved_slide = self.resolve_slide(
                                             objects,
@@ -758,12 +901,21 @@ impl eframe::App for MyEguiApp {
                 };
 
                 match slide {
-                    AstObject::Slide { max_time, .. } => {
+                    AstObject::Slide { max_time, next, .. } => {
                         self.draw_slide(resolved_slide, ui, self.time);
                         self.draw_actions(resolved_actions, ui, self.time);
 
                         if self.time < *max_time {
                             ctx.request_repaint();
+                        } else if *next && self.next.load(Ordering::Relaxed) {
+                            self.index.fetch_add(1, Ordering::Relaxed);
+                            self.resolved_actions = None;
+                            self.resolved_slide = None;
+                            self.time = 0.0;
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.vb_dbg.store(0, Ordering::Relaxed);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            self.obj_dbg.store(0, Ordering::Relaxed);
                         }
                     }
                     AstObject::Action { slide_in_ast, .. } => {
@@ -790,108 +942,135 @@ impl eframe::App for MyEguiApp {
                             for rect in vb {
                                 ctx.debug_painter().rect_stroke(
                                     *rect,
-                                    Rounding::none(),
+                                    Rounding::ZERO,
                                     Stroke::new(2.0, Color32::RED),
                                 );
                             }
                         }
                     }
                 }
-
-                ctx.input(|input| {
-                    for event in input.events.iter() {
-                        match event {
-                            egui::Event::Key {
-                                key: egui::Key::ArrowRight | egui::Key::Space,
-                                pressed: true,
-                                ..
-                            }
-                            | egui::Event::PointerButton {
-                                button: PointerButton::Primary,
-                                pressed: false,
-                                ..
-                            } if !button_hit => {
-                                let _ = self.index.fetch_update(
-                                    Ordering::Relaxed,
-                                    Ordering::Relaxed,
-                                    |index| {
-                                        if index == slide_show.slide_show.len() - 1 {
-                                            #[cfg(not(target_arch = "wasm32"))]
-                                            if !self.dont_exit {
-                                                frame.close();
-                                            }
-                                            None
-                                        } else {
-                                            self.resolved_actions = None;
-                                            self.resolved_slide = None;
-                                            self.time = 0.0;
-                                            #[cfg(not(target_arch = "wasm32"))]
-                                            self.vb_dbg.store(0, Ordering::Relaxed);
-                                            #[cfg(not(target_arch = "wasm32"))]
-                                            self.obj_dbg.store(0, Ordering::Relaxed);
-                                            Some(index + 1)
-                                        }
-                                    },
-                                );
-                            }
-                            egui::Event::Key {
-                                key: egui::Key::ArrowLeft,
-                                pressed: true,
-                                ..
-                            }
-                            | egui::Event::PointerButton {
-                                button: PointerButton::Secondary,
-                                pressed: false,
-                                ..
-                            } if !button_hit => {
-                                let _ = self.index.fetch_update(
-                                    Ordering::Relaxed,
-                                    Ordering::Relaxed,
-                                    |index| {
-                                        if index != 0 {
-                                            self.resolved_actions = None;
-                                            self.resolved_slide = None;
-                                            self.time = 1000.0;
-                                            #[cfg(not(target_arch = "wasm32"))]
-                                            self.vb_dbg.store(0, Ordering::Relaxed);
-                                            #[cfg(not(target_arch = "wasm32"))]
-                                            self.obj_dbg.store(0, Ordering::Relaxed);
-                                            return Some(index - 1);
-                                        }
-                                        None
-                                    },
-                                );
-                            }
-                            egui::Event::Key {
-                                key: egui::Key::R,
-                                pressed: true,
-                                ..
-                            } => {
-                                self.time = 0.0;
-                                #[cfg(not(target_arch = "wasm32"))]
-                                self.vb_dbg.store(0, Ordering::Relaxed);
-                                #[cfg(not(target_arch = "wasm32"))]
-                                self.obj_dbg.store(0, Ordering::Relaxed);
-                            }
-                            egui::Event::Key {
-                                key: egui::Key::B,
-                                pressed: true,
-                                ..
-                            } => {
-                                self.index.store(0, Ordering::Relaxed);
-                                #[cfg(not(target_arch = "wasm32"))]
-                                self.vb_dbg.store(0, Ordering::Relaxed);
-                                #[cfg(not(target_arch = "wasm32"))]
-                                self.obj_dbg.store(0, Ordering::Relaxed);
-                                self.resolved_actions = None;
-                                self.resolved_slide = None;
-                            }
-                            _ => {}
-                        }
-                    }
-                })
             }
         });
+        #[cfg(target_arch = "wasm32")]
+        egui::TopBottomPanel::bottom("controls")
+            .exact_height(32.0)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("⬅")).clicked() {
+                        self.index.fetch_sub(1, Ordering::Relaxed);
+                        self.resolved_actions = None;
+                        self.next.store(false, Ordering::Relaxed);
+                        self.resolved_slide = None;
+                        button_hit = true;
+                        self.time = 1000.0;
+                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
+                        self.index.fetch_add(1, Ordering::Relaxed);
+                        self.resolved_actions = None;
+                        self.next.store(true, Ordering::Relaxed);
+                        self.resolved_slide = None;
+                        button_hit = true;
+                        self.time = 0.0;
+                    }
+                    ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
+                    ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
+                })
+            });
+        ctx.input(|input| {
+            for event in input.events.iter() {
+                match event {
+                    egui::Event::Key {
+                        key: egui::Key::ArrowRight | egui::Key::Space,
+                        pressed: true,
+                        ..
+                    }
+                    | egui::Event::PointerButton {
+                        button: PointerButton::Primary,
+                        pressed: false,
+                        ..
+                    } if !button_hit => {
+                        let _ = self.index.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |index| {
+                                if index == slide_show.slide_show.len() - 1 {
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    if !self.dont_exit {
+                                        frame.close();
+                                    }
+                                    None
+                                } else {
+                                    self.resolved_actions = None;
+                                    self.resolved_slide = None;
+                                    self.time = 0.0;
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    self.vb_dbg.store(0, Ordering::Relaxed);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    self.obj_dbg.store(0, Ordering::Relaxed);
+                                    self.next.store(true, Ordering::Relaxed);
+                                    Some(index + 1)
+                                }
+                            },
+                        );
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::ArrowLeft,
+                        pressed: true,
+                        ..
+                    }
+                    | egui::Event::PointerButton {
+                        button: PointerButton::Secondary,
+                        pressed: false,
+                        ..
+                    } if !button_hit => {
+                        let _ = self.index.fetch_update(
+                            Ordering::Relaxed,
+                            Ordering::Relaxed,
+                            |index| {
+                                if index != 0 {
+                                    self.resolved_actions = None;
+                                    self.resolved_slide = None;
+                                    self.time = 1000.0;
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    self.vb_dbg.store(0, Ordering::Relaxed);
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    self.obj_dbg.store(0, Ordering::Relaxed);
+                                    self.next.store(false, Ordering::Relaxed);
+                                    return Some(index - 1);
+                                }
+                                None
+                            },
+                        );
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::R,
+                        pressed: true,
+                        ..
+                    } => {
+                        self.time = 0.0;
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.vb_dbg.store(0, Ordering::Relaxed);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.obj_dbg.store(0, Ordering::Relaxed);
+                        self.next.store(true, Ordering::Relaxed);
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::B,
+                        pressed: true,
+                        ..
+                    } => {
+                        self.index.store(0, Ordering::Relaxed);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.vb_dbg.store(0, Ordering::Relaxed);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.obj_dbg.store(0, Ordering::Relaxed);
+                        self.next.store(false, Ordering::Relaxed);
+                        self.resolved_actions = None;
+                        self.resolved_slide = None;
+                    }
+                    _ => {}
+                }
+            }
+        })
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -911,13 +1090,13 @@ impl eframe::App for MyEguiApp {
 fn main() -> eframe::Result<()> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
+    let args: Args = clap::Parser::parse();
     let native_options = eframe::NativeOptions {
-        fullscreen: true,
+        fullscreen: !args.lsp,
         resizable: true,
         vsync: true,
         ..Default::default()
     };
-    let args: Args = clap::Parser::parse();
     let app = MyEguiApp::new(&args);
     let init_app = app.clone();
 
@@ -956,6 +1135,7 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| {
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();
+                egui_extras::install_image_loaders(&lsp_egui_ctx);
                 let current_thread = std::thread::current();
                 std::thread::spawn(move || lsp::start_lsp(app, current_thread, lsp_egui_ctx));
                 std::thread::park();
