@@ -1,54 +1,5 @@
 [
   {
-    "type": "action",
-    "named": true,
-    "fields": {},
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "action_obj",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "action_obj",
-    "named": true,
-    "fields": {
-      "function": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "number_literal",
-          "named": true
-        },
-        {
-          "type": "string_literal",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "completion",
     "named": true,
     "fields": {},
@@ -350,10 +301,6 @@
       "required": false,
       "types": [
         {
-          "type": "action",
-          "named": true
-        },
-        {
           "type": "completion",
           "named": true
         },
@@ -367,6 +314,10 @@
         },
         {
           "type": "slide",
+          "named": true
+        },
+        {
+          "type": "slide_functions",
           "named": true
         },
         {

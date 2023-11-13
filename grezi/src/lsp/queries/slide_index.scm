@@ -1,1 +1,1 @@
-[(slide) (action)] @index
+(source_file [(slide) (slide_functions)] @index)

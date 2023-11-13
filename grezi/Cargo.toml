@@ -12,15 +12,17 @@ keyframe = { version = "1.1.1", default-features = false, features = ["alloc"] }
 num_enum = "0.7.0"
 serde = { version = "1.0.188", features = ["derive"] }
 log = "0.4.20"
-egui_extras = { version = "0.23.0", features = ["all_loaders"] }
+egui_extras = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_overried_gamma_stable_tag", features = ["all_loaders"] }
 image = "0.24.7"
 egui-anim = { version = "0.1.0", path = "../egui-anim" }
 postcard = { version = "1.0.8", features = ["use-std"] }
 csscolorparser = { version = "0.6.2", features = ["lab"] }
+ehttp = "0.3.1"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
+font-loader = "0.11.0"
 miette = { version = "5.10.0", features = ["fancy"] }
 pulldown-cmark = { version = "0.9.3", default-features = false }
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
@@ -29,7 +31,7 @@ helix-loader = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" 
 helix-term = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 helix-view = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
-eframe = { version = "0.23.0", default-features = false, features = [
+eframe = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_overried_gamma_stable_tag", default-features = false, features = [
     "default_fonts",
     "wgpu",
     "wayland",
@@ -41,16 +43,16 @@ serde_json = "1.0.107"
 notify = "6.1.1"
 env_logger = "0.10"
 thiserror = "1.0.48"
+humantime = "2.1.0"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2.10", features = ["js"] }
-eframe = { version = "0.23.0", default-features = false, features = [
-    "default_fonts",
+eframe = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_overried_gamma_stable_tag", default-features = false, features = [
     "glow",
     "persistence",
 ] }
-wasm-bindgen-futures = "0.4"
+wasm-bindgen-futures = "0.4.38"
 
 [build-dependencies]
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }

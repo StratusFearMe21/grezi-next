@@ -15,21 +15,21 @@ use std::{
     time::Duration,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Instant;
-
 use eframe::{
-    egui::{self, FontData, FontDefinitions, ImageSource, PointerButton, Rect, TextureOptions, Ui},
+    egui::{self, FontData, FontDefinitions, Image, PointerButton, Rect, SizeHint, Ui},
     epaint::{
         mutex::{Mutex, RwLock},
-        Color32, FontFamily, Pos2, RectShape, Rounding, Stroke, Vec2,
+        Color32, FontFamily, Pos2, Rounding, Stroke, Vec2,
     },
 };
+use egui_anim::Anim;
+#[cfg(not(target_arch = "wasm32"))]
+use font_loader::system_fonts::FontPropertyBuilder;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::tree_sitter::Tree;
-use image::codecs::{gif::GifDecoder, png::PngDecoder, webp::WebPDecoder};
+use image::codecs::{png::PngDecoder, webp::WebPDecoder};
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
 use layout::UnresolvedLayout;
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,12 +58,18 @@ struct Args {
     presentation: Option<PathBuf>,
     #[clap(short, long)]
     export: bool,
-    #[clap(short, long)]
-    dont_close: bool,
     #[clap(long)]
     lsp: bool,
     #[clap(long)]
     fmt: bool,
+    #[clap(short, long)]
+    dont_close: bool,
+    /// Automatically advance to the next page after the given number of seconds
+    #[clap(short, long)]
+    auto: Option<u64>,
+    /// Specifies the expected run time of the presentation
+    #[clap(long)]
+    duration: Option<humantime::Duration>,
 }
 
 #[allow(dead_code)]
@@ -89,8 +95,6 @@ pub struct MyEguiApp {
     obj_dbg: Arc<AtomicU64>,
     index: Arc<AtomicUsize>,
     #[cfg(not(target_arch = "wasm32"))]
-    delta: Instant,
-    #[cfg(not(target_arch = "wasm32"))]
     helix_cell: Option<HelixCell>,
     window_size: [u32; 2],
     // Safe, I think, IDK
@@ -112,29 +116,35 @@ pub struct SlideShow {
     objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
 
-#[cfg(target_arch = "wasm32")]
-const PRESENTATION: &[u8] = include_bytes!(env!("PRESENTATION"));
-
 impl MyEguiApp {
-    fn init_app(mut self, cc: &eframe::CreationContext<'_>) -> Self {
-        let mut fonts = FontDefinitions::default();
-
-        fonts.font_data.insert(
-            "Fira Code".to_owned(),
-            FontData::from_static(include_bytes!("/usr/share/fonts/TTF/FiraCode-Regular.ttf")),
-        );
-
-        fonts.families.insert(
-            FontFamily::Name("Fira Code".into()),
-            vec!["Fira Code".to_owned()],
-        );
-
-        cc.egui_ctx.set_fonts(fonts);
-
+    fn init_app(mut self, cc: &eframe::CreationContext<'_>, fonts: FontDefinitions) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        cc.egui_ctx
+            .add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let fetch_ss = Arc::clone(&self.slide_show);
+            let fetch_ctx = cc.egui_ctx.clone();
+            ehttp::fetch(
+                ehttp::Request::get(&cc.integration_info.web_info.location.hash[1..]),
+                move |response| {
+                    let res = response.unwrap();
+                    let slide_show: (FontDefinitions, SlideShow) =
+                        postcard::from_bytes(&res.bytes).unwrap();
+                    fetch_ctx.set_fonts(slide_show.0);
+                    *fetch_ss.write() = slide_show.1;
+                },
+            );
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        cc.egui_ctx.set_fonts(fonts);
 
         #[cfg(not(target_arch = "wasm32"))]
         if !self.lsp {
+            use std::time::Instant;
+
             let watcher_tree_info = Arc::clone(&self.tree_info);
             let watcher_context = cc.egui_ctx.clone();
             let watcher_file_name = self.file_name.clone();
@@ -197,6 +207,7 @@ impl MyEguiApp {
                                         &mut self.helix_cell,
                                         &mut slide_show,
                                         &watcher_context,
+                                        std::path::Path::new(&watcher_file_name),
                                     );
                                     info.0 = tree;
                                     match ast {
@@ -236,11 +247,12 @@ impl MyEguiApp {
             ..self
         }
     }
-    fn new(#[cfg(not(target_arch = "wasm32"))] args: &Args) -> Self {
+    fn new(#[cfg(not(target_arch = "wasm32"))] args: &Args) -> (Self, FontDefinitions) {
         // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
         // Restore app state using cc.storage (requires the "persistence" feature).
         // Use the cc.gl (a glo::Context) to create graphics shaders and buffers that you can use
         // for e.g. egui::PaintCallback.
+        let mut fonts = FontDefinitions::default();
 
         #[cfg(not(target_arch = "wasm32"))]
         let slide_show_file = Arc::new(Mutex::new(Rope::new()));
@@ -275,8 +287,24 @@ impl MyEguiApp {
                 == "slideshow"
             {
                 let file = std::fs::read(args.presentation.as_ref().unwrap()).unwrap();
-                postcard::from_bytes(&file).unwrap()
+                let slideshow: (FontDefinitions, SlideShow) = postcard::from_bytes(&file).unwrap();
+
+                fonts = slideshow.0;
+
+                slideshow.1
             } else {
+                let fira_code_prop = FontPropertyBuilder::new().family("Fira Code").build();
+                if let Some(font) = font_loader::system_fonts::get(&fira_code_prop) {
+                    fonts
+                        .font_data
+                        .insert("Fira Code".to_owned(), FontData::from_owned(font.0));
+
+                    fonts
+                        .families
+                        .get_mut(&FontFamily::Monospace)
+                        .unwrap()
+                        .insert(0, "Fira Code".to_owned());
+                }
                 let mut slide_show = SlideShow {
                     slide_show: Vec::new(),
                     viewboxes,
@@ -305,7 +333,16 @@ impl MyEguiApp {
                 let ast = {
                     let ctx = eframe::egui::Context::default();
                     egui_extras::install_image_loaders(&ctx);
-                    parser::parse_file(&tree, None, &file, &mut helix_cell, &mut slide_show, &ctx)
+                    ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                    parser::parse_file(
+                        &tree,
+                        None,
+                        &file,
+                        &mut helix_cell,
+                        &mut slide_show,
+                        &ctx,
+                        &std::fs::canonicalize(args.presentation.as_ref().unwrap()).unwrap(),
+                    )
                 };
                 match ast {
                     Ok(_) => {
@@ -330,7 +367,7 @@ impl MyEguiApp {
         };
 
         #[cfg(target_arch = "wasm32")]
-        let slide_show: SlideShow = { postcard::from_bytes(PRESENTATION).unwrap() };
+        let slide_show = SlideShow::default();
 
         #[cfg(not(target_arch = "wasm32"))]
         new_file.store(false, Ordering::Relaxed);
@@ -338,56 +375,57 @@ impl MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))]
         if args.export {
             postcard::to_io(
-                &slide_show,
+                &(fonts, slide_show),
                 BufWriter::new(std::fs::File::create("out.slideshow").unwrap()),
             )
             .unwrap();
             std::process::exit(0);
         }
 
-        Self {
-            slide_show: Arc::new(RwLock::new(slide_show)),
-            #[cfg(not(target_arch = "wasm32"))]
-            clear_resolved: new_file,
-            next: Arc::new(false.into()),
-            #[cfg(not(target_arch = "wasm32"))]
-            restart_timer: Arc::new(true.into()),
-            #[cfg(not(target_arch = "wasm32"))]
-            slide_show_file,
-            #[cfg(not(target_arch = "wasm32"))]
-            tree_info,
-            #[cfg(not(target_arch = "wasm32"))]
-            file_name: args
-                .presentation
-                .clone()
-                .unwrap_or_default()
-                .display()
-                .to_string(),
-            #[cfg(not(target_arch = "wasm32"))]
-            dont_exit: args.dont_close,
-            #[cfg(not(target_arch = "wasm32"))]
-            vb_dbg: Arc::new(0.into()),
-            #[cfg(not(target_arch = "wasm32"))]
-            obj_dbg: Arc::new(0.into()),
-            index: Arc::new(0.into()),
-            #[cfg(not(target_arch = "wasm32"))]
-            delta: Instant::now(),
-            time: 0.0,
-            #[cfg(not(target_arch = "wasm32"))]
-            helix_cell,
-            resolved_viewboxes: HashMap::default(),
-            resolved_actions: None,
-            resolved_slide: None,
-            resolved_images: HashMap::default(),
-            #[cfg(not(target_arch = "wasm32"))]
-            window_size: [0, 0],
-            #[cfg(target_arch = "wasm32")]
-            window_size: [1920, 1080],
-            #[cfg(not(target_arch = "wasm32"))]
-            lsp: args.lsp,
-            #[cfg(not(target_arch = "wasm32"))]
-            parser: Arc::new(Mutex::new(parser)),
-        }
+        (
+            Self {
+                slide_show: Arc::new(RwLock::new(slide_show)),
+                #[cfg(not(target_arch = "wasm32"))]
+                clear_resolved: new_file,
+                next: Arc::new(false.into()),
+                #[cfg(not(target_arch = "wasm32"))]
+                restart_timer: Arc::new(true.into()),
+                #[cfg(not(target_arch = "wasm32"))]
+                slide_show_file,
+                #[cfg(not(target_arch = "wasm32"))]
+                tree_info,
+                #[cfg(not(target_arch = "wasm32"))]
+                file_name: args
+                    .presentation
+                    .clone()
+                    .unwrap_or_default()
+                    .display()
+                    .to_string(),
+                #[cfg(not(target_arch = "wasm32"))]
+                dont_exit: args.dont_close,
+                #[cfg(not(target_arch = "wasm32"))]
+                vb_dbg: Arc::new(0.into()),
+                #[cfg(not(target_arch = "wasm32"))]
+                obj_dbg: Arc::new(0.into()),
+                index: Arc::new(0.into()),
+                time: 0.0,
+                #[cfg(not(target_arch = "wasm32"))]
+                helix_cell,
+                resolved_viewboxes: HashMap::default(),
+                resolved_actions: None,
+                resolved_slide: None,
+                resolved_images: HashMap::default(),
+                #[cfg(not(target_arch = "wasm32"))]
+                window_size: [0, 0],
+                #[cfg(target_arch = "wasm32")]
+                window_size: [1920, 1080],
+                #[cfg(not(target_arch = "wasm32"))]
+                lsp: args.lsp,
+                #[cfg(not(target_arch = "wasm32"))]
+                parser: Arc::new(Mutex::new(parser)),
+            },
+            fonts,
+        )
     }
 
     fn draw_slide(&self, slide: &[ResolvedSlideObj], ui: &mut Ui, time: f32) {
@@ -397,105 +435,110 @@ impl MyEguiApp {
             } else {
                 0.0
             };
-            let mut obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
-                EaseOutCubic,
-                obj.locations[0],
-                obj.locations[1],
-                time,
-                obj.scaled_time[1],
-            ));
+            let mut obj_pos = Rect::from([
+                Pos2::from(keyframe::ease_with_scaled_time(
+                    EaseOutCubic,
+                    obj.locations[0][0],
+                    obj.locations[1][0],
+                    time,
+                    obj.scaled_time[1],
+                )),
+                Pos2::from(keyframe::ease_with_scaled_time(
+                    EaseOutCubic,
+                    obj.locations[0][1],
+                    obj.locations[1][1],
+                    time,
+                    obj.scaled_time[1],
+                )),
+            ]);
             match &obj.object {
                 parser::objects::ResolvedObject::Text(galley) => {
-                    obj_pos.x += galley.rect.min.x;
+                    obj_pos = obj_pos.translate(egui::vec2(galley.rect.min.x, 0.0));
                     // ui.painter()
                     // .circle(obj_pos, 5.0, Color32::RED, Stroke::NONE);
 
                     let gamma_multiply = match obj.state {
                         ObjectState::Entering => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
-                            1.0,
                             0.0,
+                            1.0,
                             time,
                             obj.scaled_time[1],
                         ),
                         ObjectState::Exiting => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
-                            0.0,
                             1.0,
+                            0.0,
                             time,
                             obj.scaled_time[1],
                         ),
-                        ObjectState::OnScreen => 0.0,
+                        ObjectState::OnScreen => 1.0,
                     };
-                    if gamma_multiply != 1.0 {
-                        ui.painter().galley(obj_pos, Arc::clone(galley));
-                        if gamma_multiply != 0.0 {
-                            ui.painter().rect_filled(
-                                obj.object.bounds().translate(obj_pos.to_vec2()),
-                                Rounding::ZERO,
-                                Color32::from_gray(27).gamma_multiply(gamma_multiply),
-                            );
-                        }
-                    }
+                    ui.painter()
+                        .galley_with_gamma(obj_pos.min, Arc::clone(galley), gamma_multiply);
                 }
-                parser::objects::ResolvedObject::Gif((gif, mut tint)) => {
+                parser::objects::ResolvedObject::Image {
+                    image,
+                    mut tint,
+                    scale,
+                } => {
                     match obj.state {
                         ObjectState::Entering => {
-                            tint[3] = keyframe::ease_with_scaled_time(
+                            tint = tint.gamma_multiply(keyframe::ease_with_scaled_time(
                                 EaseOutCubic,
                                 0.0,
-                                tint[3] as f64,
+                                1.0,
                                 time,
                                 obj.scaled_time[1],
-                            ) as u8;
+                            ));
                         }
                         ObjectState::Exiting => {
-                            tint[3] = keyframe::ease_with_scaled_time(
+                            tint = tint.gamma_multiply(keyframe::ease_with_scaled_time(
                                 EaseOutCubic,
-                                tint[3] as f64,
+                                1.0,
                                 0.0,
                                 time,
                                 obj.scaled_time[1],
-                            ) as u8;
+                            ));
                         }
                         ObjectState::OnScreen => {}
                     }
-                    gif.ui(
-                        ui,
-                        Rect::from_min_size(obj_pos, gif.size),
-                        Color32::from_rgba_unmultiplied(tint[0], tint[1], tint[2], tint[3]),
-                    );
+                    image
+                        .clone()
+                        .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
+                        .tint(tint)
+                        .paint_at(ui, obj_pos)
                 }
-                parser::objects::ResolvedObject::Image((image, mut tint)) => {
+                parser::objects::ResolvedObject::Anim {
+                    anim,
+                    mut tint,
+                    scale,
+                } => {
                     match obj.state {
                         ObjectState::Entering => {
-                            tint[3] = keyframe::ease_with_scaled_time(
+                            tint = tint.gamma_multiply(keyframe::ease_with_scaled_time(
                                 EaseOutCubic,
                                 0.0,
-                                tint[3] as f64,
+                                1.0,
                                 time,
                                 obj.scaled_time[1],
-                            ) as u8;
+                            ));
                         }
                         ObjectState::Exiting => {
-                            tint[3] = keyframe::ease_with_scaled_time(
+                            tint = tint.gamma_multiply(keyframe::ease_with_scaled_time(
                                 EaseOutCubic,
-                                tint[3] as f64,
+                                1.0,
                                 0.0,
                                 time,
                                 obj.scaled_time[1],
-                            ) as u8;
+                            ));
                         }
                         ObjectState::OnScreen => {}
                     }
-                    ui.painter().add(RectShape {
-                        rect: Rect::from_min_size(obj_pos, image.size),
-                        rounding: Rounding::ZERO,
-                        fill: Color32::from_rgba_unmultiplied(tint[0], tint[1], tint[2], tint[3]),
-                        stroke: Stroke::NONE,
-                        fill_texture_id: image.id,
-                        uv: Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    });
+                    Image::from_uri(anim.find_img(ui.ctx()))
+                        .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
+                        .tint(tint)
+                        .paint_at(ui, obj_pos)
                 }
             }
         }
@@ -580,7 +623,7 @@ impl MyEguiApp {
     fn resolve_slide(
         &mut self,
         slide: &[SlideObj],
-        ctx: &egui::Context,
+        ui: &mut Ui,
         size: Vec2,
         slide_show: &SlideShow,
     ) -> Vec<ResolvedSlideObj> {
@@ -608,23 +651,36 @@ impl MyEguiApp {
                     for row in layout_job.sections.iter_mut() {
                         row.format.font_id.size *= size.max.x / 1920.0;
                     }
-                    let galley = ctx.fonts(|f| f.layout_job(layout_job));
+                    let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
                     let galley_x = -galley.rect.min.x;
                     let resolved_obj = ResolvedObject::Text(galley);
-                    let size = resolved_obj.bounds();
+                    let size = resolved_obj.bounds(second_viewbox.size(), ui);
                     use parser::viewboxes::LineUp;
-                    let mut first_pos = get_pos!(object.locations[0].0, first_viewbox, size);
-                    let mut second_pos = get_pos!(object.locations[1].0, second_viewbox, size);
-                    first_pos[0] += galley_x;
-                    second_pos[0] += galley_x;
+                    let first_pos = Rect::from_min_size(
+                        get_pos!(object.locations[0].0, first_viewbox, size).into(),
+                        size.size().into(),
+                    );
+                    let mut first_pos = [first_pos.min, first_pos.max];
+                    let second_pos = Rect::from_min_size(
+                        get_pos!(object.locations[1].0, second_viewbox, size).into(),
+                        size.size().into(),
+                    );
+                    let mut second_pos = [second_pos.min, second_pos.max];
+                    first_pos[0][0] += galley_x;
+                    second_pos[0][0] += galley_x;
                     resolved_slides.push(ResolvedSlideObj {
                         object: resolved_obj,
-                        locations: [first_pos, second_pos],
+                        locations: [first_pos.map(|f| f.into()), second_pos.map(|f| f.into())],
                         scaled_time: object.scaled_time,
                         state: object.state,
                     });
                 }
-                parser::objects::ObjectType::Image { uri, bytes, tint } => {
+                parser::objects::ObjectType::Image {
+                    uri,
+                    bytes,
+                    tint,
+                    scale,
+                } => {
                     match images.binary_search(&object.object) {
                         Err(index) | Ok(index) => images.insert(index, object.object),
                     }
@@ -632,72 +688,75 @@ impl MyEguiApp {
                         .resolved_images
                         .entry(object.object)
                         .and_modify(|obj| match obj {
-                            ResolvedObject::Image((_, t)) | ResolvedObject::Gif((_, t)) => {
-                                *t = *tint
+                            ResolvedObject::Image {
+                                tint: t, scale: s, ..
+                            }
+                            | ResolvedObject::Anim {
+                                tint: t, scale: s, ..
+                            } => {
+                                *t = *tint;
+                                *s = *scale;
                             }
                             _ => {}
                         })
                         .or_insert_with(|| {
                             match uri.rsplit_once('.') {
                                 Some((_, "gif")) => {
-                                    return ResolvedObject::Gif((
-                                        egui_anim::Anim::new(
-                                            ctx,
-                                            GifDecoder::new(Cursor::new(bytes.as_ref())).unwrap(),
-                                            Some(uri),
+                                    ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
+                                    return ResolvedObject::Anim {
+                                        anim: Anim::new(
+                                            ui.ctx(),
+                                            &format!("{}\0gif", uri),
+                                            SizeHint::default(),
                                         ),
-                                        *tint,
-                                    ))
+                                        tint: *tint,
+                                        scale: *scale,
+                                    };
                                 }
                                 Some((_, "apng" | "png")) => {
+                                    ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
                                     let decoder =
                                         PngDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
                                     if decoder.is_apng() {
-                                        return ResolvedObject::Gif((
-                                            egui_anim::Anim::new(ctx, decoder.apng(), Some(uri)),
-                                            *tint,
-                                        ));
+                                        return ResolvedObject::Anim {
+                                            anim: Anim::new(
+                                                ui.ctx(),
+                                                &format!("{}\0apng", uri),
+                                                SizeHint::default(),
+                                            ),
+                                            tint: *tint,
+                                            scale: *scale,
+                                        };
                                     }
                                 }
                                 Some((_, "webp")) => {
+                                    ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
                                     let decoder =
                                         WebPDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
                                     if decoder.has_animation() {
-                                        return ResolvedObject::Gif((
-                                            egui_anim::Anim::new(ctx, decoder, Some(uri)),
-                                            *tint,
-                                        ));
+                                        return ResolvedObject::Anim {
+                                            anim: Anim::new(
+                                                ui.ctx(),
+                                                &format!("{}\0webp", uri),
+                                                SizeHint::default(),
+                                            ),
+                                            tint: *tint,
+                                            scale: *scale,
+                                        };
                                     }
                                 }
                                 _ => {}
                             }
-                            let texture = loop {
-                                let source = ImageSource::Bytes {
-                                    uri: std::borrow::Cow::Owned(uri.clone()),
-                                    bytes: egui::load::Bytes::Shared(Arc::clone(bytes)),
-                                };
-                                match source.load(
-                                    ctx,
-                                    TextureOptions::default(),
-                                    egui::SizeHint::Size(
-                                        second_viewbox.max.x as u32,
-                                        second_viewbox.max.y as u32,
-                                    ),
-                                ) {
-                                    Ok(poll) => match poll {
-                                        eframe::egui::load::TexturePoll::Ready { texture } => {
-                                            break texture
-                                        }
-                                        eframe::egui::load::TexturePoll::Pending { .. } => {}
-                                    },
-                                    Err(e) => {
-                                        panic!("{}", e)
-                                    }
-                                }
-                            };
-                            ResolvedObject::Image((texture, *tint))
+                            ResolvedObject::Image {
+                                image: Image::from_bytes(uri.clone(), Arc::clone(bytes)),
+                                tint: *tint,
+                                scale: *scale,
+                            }
                         });
-                    let size = resolved_obj.bounds();
+                    let first_size =
+                        resolved_obj.bounds(scale.unwrap_or_else(|| first_viewbox.size()), ui);
+                    let second_size =
+                        resolved_obj.bounds(scale.unwrap_or_else(|| second_viewbox.size()), ui);
                     // let size = Rect {
                     //     min: size.min,
                     //     max: {
@@ -716,11 +775,19 @@ impl MyEguiApp {
                     //     },
                     // };
                     use parser::viewboxes::LineUp;
-                    let first_pos = get_pos!(object.locations[0].0, first_viewbox, size);
-                    let second_pos = get_pos!(object.locations[1].0, second_viewbox, size);
+                    let first_pos = Rect::from_min_size(
+                        get_pos!(object.locations[0].0, first_viewbox, first_size).into(),
+                        first_size.size().into(),
+                    );
+                    let first_pos = [first_pos.min, first_pos.max];
+                    let second_pos = Rect::from_min_size(
+                        get_pos!(object.locations[1].0, second_viewbox, second_size).into(),
+                        second_size.size().into(),
+                    );
+                    let second_pos = [second_pos.min, second_pos.max];
                     resolved_slides.push(ResolvedSlideObj {
                         object: resolved_obj.clone(),
-                        locations: [first_pos, second_pos],
+                        locations: [first_pos.map(|f| f.into()), second_pos.map(|f| f.into())],
                         scaled_time: object.scaled_time,
                         state: object.state,
                     });
@@ -756,12 +823,13 @@ impl MyEguiApp {
                         };
                         from_rect
                             .union(to_rect)
-                            .translate(Vec2::from(text_object.locations[1]))
+                            .translate(Vec2::from(text_object.locations[1][0]))
                     } else {
                         match &text_object.object {
-                            ResolvedObject::Text(galley) => {
-                                galley.rect.translate(Vec2::from(text_object.locations[1]))
-                            }
+                            ResolvedObject::Text(_) => Rect::from([
+                                Pos2::from(text_object.locations[1][0]),
+                                Pos2::from(text_object.locations[1][1]),
+                            ]),
                             _ => todo!(),
                         }
                     };
@@ -778,19 +846,12 @@ impl MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.time += ctx.input(|i| i.stable_dt);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let delta = self.delta;
-            self.delta = Instant::now();
-            let delta = self.delta.duration_since(delta);
-            self.time += delta.as_secs_f32();
             if self.window_size == [0, 0] {
                 return;
             }
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.time += 0.016666666667;
         }
         #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|input| {
@@ -805,6 +866,10 @@ impl eframe::App for MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))]
         let button_hit = false;
         egui::CentralPanel::default().show(ctx, |ui| {
+            if slide_show.slide_show.is_empty() {
+                ui.centered_and_justified(|ui| ui.spinner());
+                return;
+            }
             #[cfg(target_arch = "wasm32")]
             {
                 let available = ui.available_size();
@@ -822,12 +887,10 @@ impl eframe::App for MyEguiApp {
                 self.resolved_actions = None;
                 self.resolved_slide = None;
                 self.resolved_viewboxes.clear();
-                self.delta = Instant::now();
                 self.clear_resolved.store(false, Ordering::Relaxed);
             }
             #[cfg(not(target_arch = "wasm32"))]
             if self.restart_timer.load(Ordering::Relaxed) {
-                self.delta = Instant::now();
                 self.time = 0.0;
                 self.restart_timer.store(false, Ordering::Relaxed);
             }
@@ -851,7 +914,7 @@ impl eframe::App for MyEguiApp {
                             } => {
                                 let resolved_slide = self.resolve_slide(
                                     slide,
-                                    ctx,
+                                    ui,
                                     Vec2::new(
                                         self.window_size[0] as f32,
                                         self.window_size[1] as f32,
@@ -872,7 +935,7 @@ impl eframe::App for MyEguiApp {
                                     AstObject::Slide { objects, .. } => {
                                         let resolved_slide = self.resolve_slide(
                                             objects,
-                                            ctx,
+                                            ui,
                                             Vec2::new(
                                                 self.window_size[0] as f32,
                                                 self.window_size[1] as f32,
@@ -951,6 +1014,9 @@ impl eframe::App for MyEguiApp {
                 }
             }
         });
+        if slide_show.slide_show.is_empty() {
+            return;
+        }
         #[cfg(target_arch = "wasm32")]
         egui::TopBottomPanel::bottom("controls")
             .exact_height(32.0)
@@ -1098,11 +1164,11 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     let app = MyEguiApp::new(&args);
-    let init_app = app.clone();
+    let init_app = app.0.clone();
 
     if args.fmt {
-        let mut file = app.slide_show_file.lock();
-        match lsp::format_code(&app, &file) {
+        let mut file = app.0.slide_show_file.lock();
+        match lsp::format_code(&app.0, &file) {
             Ok(edits) => {
                 let transaction = helix_lsp::util::generate_transaction_from_edits(
                     &file,
@@ -1136,11 +1202,12 @@ fn main() -> eframe::Result<()> {
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();
                 egui_extras::install_image_loaders(&lsp_egui_ctx);
+                lsp_egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
                 let current_thread = std::thread::current();
-                std::thread::spawn(move || lsp::start_lsp(app, current_thread, lsp_egui_ctx));
+                std::thread::spawn(move || lsp::start_lsp(app.0, current_thread, lsp_egui_ctx));
                 std::thread::park();
             }
-            Box::new(init_app.init_app(cc))
+            Box::new(init_app.init_app(cc, app.1))
         }),
     )
 }
@@ -1161,7 +1228,12 @@ fn main() {
             .start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|cc| Box::new(MyEguiApp::new().init_app(cc))),
+                Box::new(|cc| {
+                    Box::new({
+                        let app = MyEguiApp::new();
+                        app.0.init_app(cc, app.1)
+                    })
+                }),
             )
             .await
             .expect("failed to start eframe");

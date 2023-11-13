@@ -7,8 +7,6 @@
   operation: (operation) @operator)
 (viewbox_obj
   operation: (":") @operator)
-(action_obj
-  function: (identifier) @function)
 (viewbox_inner
   direction: (direction) @modifier)
 (slide_function

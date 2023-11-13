@@ -1,6 +1,6 @@
 {
-  "name": "egui Template PWA",
-  "short_name": "egui-template-pwa",
+  "name": "Grezi",
+  "short_name": "grezi-pwa",
   "icons": [
     {
       "src": "./icon-256.png",

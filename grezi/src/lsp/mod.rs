@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     hash::Hash,
     hash::{BuildHasher, BuildHasherDefault, Hasher},
+    path::Path,
     process::Stdio,
     sync::atomic::Ordering,
 };
@@ -180,7 +181,7 @@ pub fn start_lsp(
                 resolve_provider: Some(false),
             },
         ))),
-        position_encoding: Some(PositionEncodingKind::UTF8),
+        position_encoding: Some(PositionEncodingKind::UTF16),
         ..Default::default()
     })
     .unwrap();
@@ -251,7 +252,7 @@ pub fn start_lsp(
                                         helix_lsp::util::generate_transaction_from_edits(
                                             &current_rope,
                                             edits,
-                                            helix_lsp::OffsetEncoding::Utf8,
+                                            helix_lsp::OffsetEncoding::Utf16,
                                         );
 
                                     let edits = generate_edits(
@@ -553,7 +554,7 @@ pub fn start_lsp(
                                         }
                                         NodeKind::SlideObjects
                                         | NodeKind::SlideObj
-                                        | NodeKind::Action => {
+                                        | NodeKind::SlideFunctions => {
                                             query_cursor.set_point_range(
                                                 Point { row: 0, column: 0 }..completion_point,
                                             );
@@ -1289,6 +1290,7 @@ pub fn start_lsp(
                                         &mut app.helix_cell,
                                         &mut slide_show,
                                         &lsp_egui_ctx,
+                                        Path::new(currently_open.path()),
                                     );
                                     *tree_info = Some((tree, Rope::new()));
                                     *app.slide_show_file.lock() = current_rope.clone();
@@ -1443,6 +1445,7 @@ pub fn start_lsp(
                             &mut app.helix_cell,
                             &mut slide_show,
                             &lsp_egui_ctx,
+                            Path::new(currently_open.path()),
                         );
                         *tree_info = Some((tree, Rope::new()));
                         *app.slide_show_file.lock() = current_rope.clone();
@@ -1511,7 +1514,7 @@ pub fn start_lsp(
                                 let transaction = helix_lsp::util::generate_transaction_from_edits(
                                     &current_rope,
                                     vec![edit],
-                                    helix_lsp::OffsetEncoding::Utf8,
+                                    helix_lsp::OffsetEncoding::Utf16,
                                 );
 
                                 let edits =
@@ -1552,6 +1555,7 @@ pub fn start_lsp(
                                             &mut app.helix_cell,
                                             &mut slide_show,
                                             &lsp_egui_ctx,
+                                            Path::new(currently_open.path()),
                                         ) {
                                             Ok(_) => {
                                                 connection
@@ -1634,6 +1638,7 @@ pub fn start_lsp(
                                 &mut app.helix_cell,
                                 &mut slide_show,
                                 &lsp_egui_ctx,
+                                Path::new(currently_open.path()),
                             );
                             match ast {
                                 Ok(_) => {
@@ -2440,7 +2445,7 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
                 })
             }
             NodeKind::Register => { /* todo */ }
-            NodeKind::Action => {
+            NodeKind::SlideFunctions => {
                 let _ = tree_cursor.goto_first_child();
                 let selection_range = tree_cursor.node().range();
                 tree_cursor.goto_parent();
@@ -2512,7 +2517,7 @@ pub fn hover(
         while node.kind_id() != NodeKind::Slide as u16
             && node.kind_id() != NodeKind::Viewbox as u16
             && node.kind_id() != NodeKind::Obj as u16
-            && node.kind_id() != NodeKind::Action as u16
+            && node.kind_id() != NodeKind::SlideFunctions as u16
         {
             if let Some(parent) = node.parent() {
                 node = parent;
@@ -2527,16 +2532,18 @@ pub fn hover(
         }
 
         match NodeKind::from(node.kind_id()) {
-            nk @ NodeKind::Slide | nk @ NodeKind::Action => {
+            nk @ NodeKind::Slide | nk @ NodeKind::SlideFunctions => {
                 query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
 
-                let iter = query_cursor.matches(
+                let mut iter = query_cursor.matches(
                     slide_index_query,
                     tree_info.root_node(),
                     RopeProvider(current_rope.slice(..)),
                 );
 
-                let slide_num = iter.count().saturating_sub(1);
+                let slide_num = iter
+                    .position(|n| n.captures[0].node.id() == node.id())
+                    .unwrap_or_default();
 
                 if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
                     app.next.store(false, Ordering::Relaxed);
@@ -2545,7 +2552,7 @@ pub fn hover(
                     app.clear_resolved.store(true, Ordering::Relaxed);
                     lsp_egui_ctx.request_repaint();
                 }
-                if matches!(nk, NodeKind::Action) {
+                if matches!(nk, NodeKind::SlideFunctions) {
                     app.restart_timer.store(true, Ordering::Relaxed);
                     lsp_egui_ctx.request_repaint();
                 }
@@ -2590,13 +2597,15 @@ pub fn hover(
                             query_cursor
                                 .set_point_range(Point { row: 0, column: 0 }..range.end_point);
 
-                            let iter = query_cursor.matches(
+                            let mut iter = query_cursor.matches(
                                 slide_index_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );
 
-                            let slide_num = iter.count() - 1;
+                            let slide_num = iter
+                                .position(|n| n.captures[0].node.id() == on_slide.id())
+                                .unwrap_or_default();
 
                             app.index.store(slide_num, Ordering::Relaxed);
                             app.next.store(false, Ordering::Relaxed);
@@ -2645,16 +2654,19 @@ pub fn hover(
                             }
                             let range = on_slide.range();
 
-                            query_cursor
-                                .set_point_range(Point { row: 0, column: 0 }..range.end_point);
+                            query_cursor.set_point_range(dbg!(
+                                Point { row: 0, column: 0 }..range.end_point
+                            ));
 
-                            let iter = query_cursor.matches(
+                            let mut iter = query_cursor.matches(
                                 slide_index_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );
 
-                            let slide_num = iter.count() - 1;
+                            let slide_num = iter
+                                .position(|n| n.captures[0].node.id() == on_slide.id())
+                                .unwrap_or_default();
 
                             app.index.store(slide_num, Ordering::Relaxed);
                             app.next.store(false, Ordering::Relaxed);
@@ -2811,18 +2823,13 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
                 formatting_cursor.goto_parent();
             }
-            NodeKind::Action => {
+            NodeKind::SlideFunction => {
                 formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor
                     .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
-                if formatting_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
-                    while formatting_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
+                if formatting_cursor.node().kind() != "]" {
+                    while formatting_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
                         formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor
-                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor
-                            .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
-
                         formatting_cursor
                             .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
                         formatting_cursor

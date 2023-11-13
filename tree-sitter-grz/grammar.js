@@ -19,7 +19,7 @@ module.exports = grammar({
         $.viewbox,
         $.obj,
         $.register,
-        $.action,
+        $.slide_functions,
         // Only used in LSP
         $.completion
       ),
@@ -171,21 +171,6 @@ module.exports = grammar({
       ':',
       field('ty', $.identifier),
       $.obj_inner
-    ),
-
-    action_obj: $ => seq(
-      seq($.identifier, ':', field('function', $.identifier)),
-      '(',
-      sep($._text_ident, ','),
-      optional(','),
-      ')',
-    ),
-
-    action: $ => seq(
-      '[',
-      sep($.action_obj, ','),
-      optional(','),
-      ']'
     ),
 
     register: $ => seq(field('name', $.identifier), ':', $._text_ident),

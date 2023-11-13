@@ -35,7 +35,7 @@ pub fn parse_actions(
 ) -> Result<AstObject, super::Error> {
     tree_cursor.goto_first_child()?;
     let mut actions = Vec::new();
-    while tree_cursor.node().kind_id() == NodeKind::ActionObj as u16 {
+    while tree_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
         tree_cursor.fork(
             |cursor| match parse_single_action(cursor, source, hasher, on_screen) {
                 Ok(action) => actions.push(action),
@@ -59,21 +59,21 @@ fn parse_single_action(
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<Actions, super::Error> {
     action_walker.goto_first_child()?;
-    let object_name = {
-        let mut hasher = hasher.build_hasher();
-        std::hash::Hash::hash(
-            &source.byte_slice(action_walker.node().byte_range()),
-            &mut hasher,
-        );
-        hasher.finish()
-    };
-    let object = on_screen
-        .get(&object_name)
-        .ok_or_else(|| super::Error::NotFound(action_walker.node().range().into()))?;
-    action_walker.goto_next_sibling()?;
     let function_name = source.byte_slice(action_walker.node().byte_range());
 
     if function_name == "highlight" {
+        action_walker.goto_next_sibling()?;
+        let object_name = {
+            let mut hasher = hasher.build_hasher();
+            std::hash::Hash::hash(
+                &source.byte_slice(action_walker.node().byte_range()),
+                &mut hasher,
+            );
+            hasher.finish()
+        };
+        let object = on_screen
+            .get(&object_name)
+            .ok_or_else(|| super::Error::NotFound(action_walker.node().range().into()))?;
         action_walker.goto_next_sibling()?;
 
         let locations = match NodeKind::from(action_walker.node().kind_id()) {

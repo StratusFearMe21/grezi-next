@@ -403,6 +403,7 @@ pub fn parse_file(
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
     egui_ctx: &eframe::egui::Context,
+    file_path: &std::path::Path,
 ) -> Result<(), Vec<Error>> {
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
@@ -435,7 +436,7 @@ pub fn parse_file(
 
                 if matches!(
                     NodeKind::from(n.kind_id()),
-                    NodeKind::Slide | NodeKind::Action
+                    NodeKind::Slide | NodeKind::SlideFunctions
                 ) {
                     is_new = true;
                 }
@@ -533,6 +534,7 @@ pub fn parse_file(
                             &hasher,
                             egui_ctx,
                             &mut errors_present,
+                            file_path,
                         ) {
                             Ok(object) => {
                                 slide_show.objects.insert(object.0, object.1);
@@ -562,7 +564,7 @@ pub fn parse_file(
                 ast.push(AstObject::Register { key, value });
                 */
             }
-            NodeKind::Action => {
+            NodeKind::SlideFunctions => {
                 if node.has_changes() || is_new || last_slide_changed {
                     new_tree_cursor.fork(|cursor| {
                         match actions::parse_actions(

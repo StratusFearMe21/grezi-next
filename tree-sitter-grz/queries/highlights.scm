@@ -4,8 +4,6 @@
   operation: (operation) @keyword.operator)
 (viewbox_obj
   operation: (":") @keyword.operator)
-(action_obj
-  function: (identifier) @function)
 (viewbox_inner
   direction: (direction) @keyword.control)
 (slide_function

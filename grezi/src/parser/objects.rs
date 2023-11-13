@@ -4,7 +4,7 @@ use std::{
 };
 
 use eframe::{
-    egui::{load::SizedTexture, TextFormat},
+    egui::{Image, TextFormat, Ui},
     emath::Align,
     epaint::{
         text::{LayoutJob, TextWrapping},
@@ -38,29 +38,51 @@ pub enum ObjectType {
     Image {
         uri: String,
         bytes: Arc<[u8]>,
-        tint: [u8; 4],
+        scale: Option<Vec2>,
+        tint: Color32,
     },
 }
 
 #[derive(Debug, Clone)]
 pub enum ResolvedObject {
     Text(Arc<Galley>),
-    Image((SizedTexture, [u8; 4])),
-    Gif((egui_anim::Anim, [u8; 4])),
+    Image {
+        image: Image<'static>,
+        scale: Option<Vec2>,
+        tint: Color32,
+    },
+    Anim {
+        anim: egui_anim::Anim,
+        scale: Option<Vec2>,
+        tint: Color32,
+    },
 }
 
 impl ResolvedObject {
-    pub fn bounds(&self) -> Rect {
+    pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
             ResolvedObject::Text(galley) => galley
                 .rect
                 .translate(Vec2::new(-galley.rect.min.x, -galley.rect.min.y))
                 .expand(1.0),
-            ResolvedObject::Image(img) => {
-                Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), img.0.size)
+            ResolvedObject::Image { image, .. } => {
+                Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
+                    let mut size = None;
+                    while size.is_none() {
+                        size = image.load_and_calc_size(ui, vb);
+                    }
+                    size.unwrap()
+                })
             }
-            ResolvedObject::Gif(gif) => {
-                Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), gif.0.size)
+            ResolvedObject::Anim { anim, .. } => {
+                Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
+                    let mut size = None;
+                    let image = Image::from_uri(anim.find_img(ui.ctx()));
+                    while size.is_none() {
+                        size = image.load_and_calc_size(ui, vb);
+                    }
+                    size.unwrap()
+                })
             }
         }
     }
@@ -81,11 +103,13 @@ pub fn parse_objects(
     hasher: &ahash::RandomState,
     ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
+    file_path: &std::path::Path,
 ) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
     use eframe::egui::load::Bytes;
     use helix_core::tree_sitter::Node;
+    use lsp_types::Url;
     use pulldown_cmark::Tag;
 
     tree_cursor.goto_first_child()?;
@@ -127,6 +151,7 @@ pub fn parse_objects(
         "Image" => {
             let mut uri = String::new();
             let mut tint = None;
+            let mut scale = None;
             for parameter in parameters {
                 let parameter = parameter?;
                 let value: Cow<'_, str> = source
@@ -140,21 +165,50 @@ pub fn parse_objects(
                     .into();
                 match parameter.0.as_ref() {
                     "value" => uri = value.into_owned(),
+                    "scale" => {
+                        let split = value.split_once('x').ok_or_else(|| {
+                            super::Error::InvalidParameter(parameter.1.range().into())
+                        })?;
+
+                        let w: f32 = split.0.parse().map_err(|_| {
+                            super::Error::InvalidParameter(parameter.1.range().into())
+                        })?;
+
+                        let h: f32 = split.1.parse().map_err(|_| {
+                            super::Error::InvalidParameter(parameter.1.range().into())
+                        })?;
+
+                        scale = Some(Vec2::new(w, h));
+                    }
                     "tint" => {
-                        tint = Some(
-                            value
-                                .parse::<csscolorparser::Color>()
-                                .map_err(|_| {
-                                    super::Error::InvalidParameter(parameter.1.range().into())
-                                })?
-                                .to_rgba8(),
-                        );
+                        let t = value
+                            .parse::<csscolorparser::Color>()
+                            .map_err(|_| {
+                                super::Error::InvalidParameter(parameter.1.range().into())
+                            })?
+                            .to_rgba8();
+
+                        tint = Some(Color32::from_rgba_unmultiplied(t[0], t[1], t[2], t[3]));
                     }
                     _ => {}
                 }
             }
             if uri.is_empty() {
                 return Err(super::Error::KnownMissing(obj_range.into(), "value"));
+            }
+            if let Ok(mut new_uri) = Url::parse(&uri) {
+                if new_uri.scheme() == "file" {
+                    new_uri.set_path(
+                        file_path
+                            .parent()
+                            .unwrap()
+                            .join(&new_uri.path()[1..])
+                            .as_os_str()
+                            .to_str()
+                            .unwrap(),
+                    );
+                    uri = new_uri.to_string();
+                }
             }
             let bytes = loop {
                 match ctx.try_load_bytes(&uri) {
@@ -178,7 +232,8 @@ pub fn parse_objects(
             ObjectType::Image {
                 uri,
                 bytes,
-                tint: tint.unwrap_or([u8::MAX; 4]),
+                scale,
+                tint: tint.unwrap_or(Color32::WHITE),
             }
         }
         "Paragraph" | "Header" => {
@@ -215,9 +270,16 @@ pub fn parse_objects(
                         }
                     },
                     "font_family" => {
-                        if value == "Fira Code" {
-                            font = FontFamily::Name(value.into())
-                        }
+                        font = match value.as_ref() {
+                            "proportional" => FontFamily::Proportional,
+                            "monospace" => FontFamily::Monospace,
+                            _ => {
+                                errors_present.push(super::Error::InvalidParameter(
+                                    parameter.1.range().into(),
+                                ));
+                                continue;
+                            }
+                        };
                     }
                     "font_size" => font_size = value.parse::<f32>().unwrap(),
                     "language" => {
