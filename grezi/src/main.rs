@@ -119,8 +119,10 @@ pub struct SlideShow {
 impl MyEguiApp {
     fn init_app(mut self, cc: &eframe::CreationContext<'_>, fonts: FontDefinitions) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        cc.egui_ctx
-            .add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+        if !cc.egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+            cc.egui_ctx
+                .add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+        }
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -333,7 +335,9 @@ impl MyEguiApp {
                 let ast = {
                     let ctx = eframe::egui::Context::default();
                     egui_extras::install_image_loaders(&ctx);
-                    ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                    if !ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+                        ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                    }
                     parser::parse_file(
                         &tree,
                         None,
@@ -1202,7 +1206,9 @@ fn main() -> eframe::Result<()> {
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();
                 egui_extras::install_image_loaders(&lsp_egui_ctx);
-                lsp_egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                if !lsp_egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+                    lsp_egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                }
                 let current_thread = std::thread::current();
                 std::thread::spawn(move || lsp::start_lsp(app.0, current_thread, lsp_egui_ctx));
                 std::thread::park();
