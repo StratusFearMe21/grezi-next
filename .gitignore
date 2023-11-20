@@ -1,2 +1,4 @@
 *.so
+dist/
+target/
 .ccls-cache/

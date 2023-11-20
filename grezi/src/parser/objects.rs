@@ -4,7 +4,7 @@ use std::{
 };
 
 use eframe::{
-    egui::{Image, TextFormat, Ui},
+    egui::{Image, ImageFit, TextFormat, Ui},
     emath::Align,
     epaint::{
         text::{LayoutJob, TextWrapping},
@@ -20,7 +20,7 @@ use super::{
 };
 use super::{
     viewboxes::{LineUp, ViewboxIn},
-    FieldName, NodeKind,
+    NodeKind,
 };
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -41,6 +41,7 @@ pub enum ObjectType {
         scale: Option<Vec2>,
         tint: Color32,
     },
+    Spinner,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +57,7 @@ pub enum ResolvedObject {
         scale: Option<Vec2>,
         tint: Color32,
     },
+    Spinner,
 }
 
 impl ResolvedObject {
@@ -84,6 +86,10 @@ impl ResolvedObject {
                     size.unwrap()
                 })
             }
+            ResolvedObject::Spinner => Rect::from_min_size(
+                eframe::egui::pos2(0.0, 0.0),
+                ImageFit::Exact(vb).resolve(vb, Vec2::new(1.0, 1.0)),
+            ),
         }
     }
 }
@@ -107,6 +113,8 @@ pub fn parse_objects(
 ) -> Result<(u64, Object), super::Error> {
     use std::borrow::Cow;
 
+    use super::color::DefaultColorParser;
+    use cssparser::ParserInput;
     use eframe::egui::load::Bytes;
     use helix_core::tree_sitter::Node;
     use lsp_types::Url;
@@ -121,23 +129,16 @@ pub fn parse_objects(
     tree_cursor.goto_first_child()?;
     let parameters = std::iter::from_fn(
         || -> Option<Result<(Cow<'_, str>, Node<'_>), super::Error>> {
-            if tree_cursor.field_id() == Some(FieldName::Parameters as u16) {
+            if tree_cursor.node().kind_id() == NodeKind::ObjParam as u16 {
+                if let Err(e) = tree_cursor.goto_first_child() {
+                    return Some(Err(e));
+                }
                 let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
                 if let Err(e) = tree_cursor.goto_next_sibling() {
                     return Some(Err(e));
                 }
-                let value = match NodeKind::from(tree_cursor.node().kind_id()) {
-                    NodeKind::StringLiteral => {
-                        let value = tree_cursor.node();
-                        value
-                    }
-                    NodeKind::NumberLiteral => tree_cursor.node(),
-                    _ => {
-                        return Some(Err(super::Error::InvalidParameter(
-                            tree_cursor.node().range().into(),
-                        )))
-                    }
-                };
+                let value = tree_cursor.node();
+                tree_cursor.goto_parent();
                 if let Err(e) = tree_cursor.goto_next_sibling() {
                     return Some(Err(e));
                 }
@@ -181,14 +182,15 @@ pub fn parse_objects(
                         scale = Some(Vec2::new(w, h));
                     }
                     "tint" => {
-                        let t = value
-                            .parse::<csscolorparser::Color>()
-                            .map_err(|_| {
-                                super::Error::InvalidParameter(parameter.1.range().into())
-                            })?
-                            .to_rgba8();
+                        let t = super::color::parse_color_with::<super::color::Color>(
+                            &mut DefaultColorParser::new(None),
+                            &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                        )
+                        .map_err(|e| {
+                            super::Error::ColorError(parameter.1.range().into(), format!("{:?}", e))
+                        })?;
 
-                        tint = Some(Color32::from_rgba_unmultiplied(t[0], t[1], t[2], t[3]));
+                        tint = Some(t.1.into());
                     }
                     _ => {}
                 }
@@ -238,6 +240,8 @@ pub fn parse_objects(
         }
         "Paragraph" | "Header" => {
             let mut text = None;
+            let mut color = None;
+            let mut bg = None;
             let mut align = Align::LEFT;
             let mut font = FontFamily::Proportional;
             let mut font_size = match obj_type.as_ref() {
@@ -258,7 +262,7 @@ pub fn parse_objects(
                     )
                     .into();
                 match parameter.0.as_ref() {
-                    "value" => text = Some(parameter.1),
+                    "value" | "code" => text = Some(parameter.1),
                     "align" => match value.as_ref() {
                         "left" | "Left" => align = Align::LEFT,
                         "center" | "Center" => align = Align::Center,
@@ -269,6 +273,28 @@ pub fn parse_objects(
                             continue;
                         }
                     },
+                    "color" => {
+                        let c = super::color::parse_color_with::<super::color::Color>(
+                            &mut DefaultColorParser::new(None),
+                            &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                        )
+                        .map_err(|e| {
+                            super::Error::ColorError(parameter.1.range().into(), format!("{:?}", e))
+                        })?;
+
+                        color = Some(c.1.into());
+                    }
+                    "background" => {
+                        let c = super::color::parse_color_with::<super::color::Color>(
+                            &mut DefaultColorParser::new(None),
+                            &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                        )
+                        .map_err(|e| {
+                            super::Error::ColorError(parameter.1.range().into(), format!("{:?}", e))
+                        })?;
+
+                        bg = Some(c.1.into());
+                    }
                     "font_family" => {
                         font = match value.as_ref() {
                             "proportional" => FontFamily::Proportional,
@@ -326,7 +352,7 @@ pub fn parse_objects(
 
                     loop {
                         match NodeKind::from(walker.node().kind_id()) {
-                            NodeKind::StringContent => {
+                            NodeKind::StringContent | NodeKind::RawStringContent => {
                                 source
                                     .byte_slice(walker.node().byte_range())
                                     .chunks()
@@ -357,8 +383,8 @@ pub fn parse_objects(
                                 0.0,
                                 TextFormat {
                                     font_id: $font_id,
-                                    color: Color32::WHITE,
-                                    background: Color32::TRANSPARENT,
+                                    color: color.unwrap_or(Color32::WHITE),
+                                    background: bg.unwrap_or(Color32::TRANSPARENT),
                                     italics: tags.contains(&Tag::Emphasis),
                                     underline: Stroke::NONE,
                                     strikethrough: if tags.contains(&Tag::Strikethrough) {

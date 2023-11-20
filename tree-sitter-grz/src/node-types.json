@@ -68,25 +68,42 @@
   {
     "type": "obj_inner",
     "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "obj_param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "obj_param",
+    "named": true,
     "fields": {
-      "parameters": {
-        "multiple": true,
-        "required": false,
+      "key": {
+        "multiple": false,
+        "required": true,
         "types": [
-          {
-            "type": ",",
-            "named": false
-          },
-          {
-            "type": ":",
-            "named": false
-          },
           {
             "type": "identifier",
             "named": true
-          },
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
           {
             "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "obj_other",
             "named": true
           },
           {
@@ -100,28 +117,13 @@
   {
     "type": "register",
     "named": true,
-    "fields": {
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    },
+    "fields": {},
     "children": {
       "multiple": false,
       "required": true,
       "types": [
         {
-          "type": "number_literal",
-          "named": true
-        },
-        {
-          "type": "string_literal",
+          "type": "obj_param",
           "named": true
         }
       ]
@@ -340,6 +342,10 @@
           "named": true
         },
         {
+          "type": "raw_string_content",
+          "named": true
+        },
+        {
           "type": "string_content",
           "named": true
         }
@@ -471,6 +477,10 @@
     "named": false
   },
   {
+    "type": "\"#",
+    "named": false
+  },
+  {
     "type": "(",
     "named": false
   },
@@ -491,11 +501,11 @@
     "named": false
   },
   {
-    "type": "L\"",
+    "type": "<",
     "named": false
   },
   {
-    "type": "U\"",
+    "type": ">",
     "named": false
   },
   {
@@ -531,7 +541,19 @@
     "named": true
   },
   {
+    "type": "obj_other",
+    "named": true
+  },
+  {
     "type": "operation",
+    "named": true
+  },
+  {
+    "type": "r#\"",
+    "named": false
+  },
+  {
+    "type": "raw_string_content",
     "named": true
   },
   {
@@ -541,14 +563,6 @@
   {
     "type": "string_content",
     "named": true
-  },
-  {
-    "type": "u\"",
-    "named": false
-  },
-  {
-    "type": "u8\"",
-    "named": false
   },
   {
     "type": "whitespace",

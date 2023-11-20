@@ -1,4 +1,6 @@
 pub mod actions;
+pub mod color;
+use color::Color;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod highlighting;
 pub mod objects;
@@ -9,10 +11,13 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     hash::{BuildHasherDefault, Hasher},
+    time::Duration,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::tree_sitter::{Node, Tree, TreeCursor};
+#[cfg(not(target_arch = "wasm32"))]
+use helix_core::RopeSlice;
 #[cfg(not(target_arch = "wasm32"))]
 use miette::{Diagnostic, GraphicalReportHandler, SourceSpan};
 use num_enum::FromPrimitive;
@@ -60,6 +65,7 @@ pub enum AstObject {
     Slide {
         objects: Vec<slides::SlideObj>,
         actions: Vec<actions::Actions>,
+        bg: (Color, Option<(Duration, Color)>),
         max_time: f32,
         next: bool,
     },
@@ -118,6 +124,8 @@ pub enum Error {
         #[label("Error loading image: {1}")] PointFromRange,
         eframe::egui::load::LoadError,
     ),
+    #[error("Color error")]
+    ColorError(#[label("Error parsing color: {1}")] PointFromRange, String),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -134,6 +142,7 @@ impl Error {
             Error::InvalidParameter(range) => range.0,
             Error::BadNode(range, _) => range.0,
             Error::ImageError(range, _) => range.0,
+            Error::ColorError(range, _) => range.0,
         }
     }
 }
@@ -405,6 +414,7 @@ pub fn parse_file(
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
 ) -> Result<(), Vec<Error>> {
+    let mut bg = (Color::default(), None);
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
     let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
@@ -463,6 +473,7 @@ pub fn parse_file(
 
     let mut ast_object_at = 0;
     let mut last_slide_changed = false;
+    let mut last_bg_changed = false;
     'parserloop: loop {
         let node = old_tree_cursor.node();
         match NodeKind::from(new_tree_cursor.node().kind_id()) {
@@ -478,13 +489,18 @@ pub fn parse_file(
                             &mut slide_show.objects,
                             source,
                             &mut errors_present,
+                            (bg.0, bg.1.take()),
                             &slide_show.viewboxes,
                         ) {
-                            Ok(slide) => {
+                            Ok((slide, color)) => {
                                 if is_new {
                                     slide_show.slide_show.push(slide)
                                 } else {
                                     slide_show.slide_show[ast_object_at] = slide;
+                                }
+
+                                if let Some(color) = color {
+                                    bg.0 = color.1;
                                 }
                             }
                             Err(e) => errors_present.push(e),
@@ -493,8 +509,9 @@ pub fn parse_file(
                     last_slide_changed = node.has_changes();
                 } else {
                     on_screen.clear();
-                    if let Some(AstObject::Slide { objects, .. }) =
-                        slide_show.slide_show.get_mut(ast_object_at)
+                    if let Some(AstObject::Slide {
+                        objects, bg: color, ..
+                    }) = slide_show.slide_show.get_mut(ast_object_at)
                     {
                         for (index, obj) in objects.iter_mut().enumerate() {
                             on_screen.insert(obj.object, index);
@@ -502,6 +519,9 @@ pub fn parse_file(
                                 object.viewbox = Some(obj.locations[1].1);
                                 object.position = Some(obj.locations[1].0);
                             }
+                        }
+                        if let Some(color) = color.1 {
+                            bg.0 = color.1;
                         }
                     }
                 }
@@ -545,24 +565,30 @@ pub fn parse_file(
                 }
             }
             NodeKind::Register => {
-                /*
-                tree_cursor.goto_first_child()?;
-                let key = source.byte_slice(tree_cursor.node().byte_range());
-                tree_cursor.goto_next_sibling()?;
-                let value = match NodeKind::from(tree_cursor.node().kind_id()) {
-                    NodeKind::StringLiteral => {
-                        tree_cursor.goto_first_child()?;
-                        tree_cursor.goto_next_sibling()?;
-                        let value = source.byte_slice(tree_cursor.node().byte_range());
-                        tree_cursor.goto_parent();
-                        value
+                if node.has_changes() || is_new || last_bg_changed {
+                    match parse_register(&mut new_tree_cursor, source) {
+                        Ok((key, value)) => {
+                            let value: std::borrow::Cow<'_, str> = value.into();
+                            if key == "BACKGROUND" {
+                                match color::parse_color_with::<Color>(
+                                    &mut color::DefaultColorParser::new(Some(&mut bg.0)),
+                                    &mut cssparser::Parser::new(&mut cssparser::ParserInput::new(
+                                        value.as_ref(),
+                                    )),
+                                ) {
+                                    Ok(c) => bg.1 = Some(c),
+                                    Err(e) => errors_present.push(Error::ColorError(
+                                        node.range().into(),
+                                        format!("{:?}", e),
+                                    )),
+                                }
+                            }
+                        }
+                        Err(e) => errors_present.push(e),
                     }
-                    NodeKind::NumberLiteral => source.byte_slice(tree_cursor.node().byte_range()),
-                    _ => todo!(),
-                };
-                tree_cursor.goto_parent();
-                ast.push(AstObject::Register { key, value });
-                */
+                    last_slide_changed = node.has_changes() || last_bg_changed;
+                    last_bg_changed = node.has_changes();
+                }
             }
             NodeKind::SlideFunctions => {
                 if node.has_changes() || is_new || last_slide_changed {
@@ -614,4 +640,30 @@ pub fn parse_file(
     } else {
         Err(errors_present)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_register<'a>(
+    tree_cursor: &mut GrzCursor<'_>,
+    source: &'a helix_core::ropey::Rope,
+) -> Result<(RopeSlice<'a>, RopeSlice<'a>), Error> {
+    tree_cursor.goto_first_child()?;
+    tree_cursor.goto_first_child()?;
+    let key = source.byte_slice(tree_cursor.node().byte_range());
+    tree_cursor.goto_next_sibling()?;
+    let value = match NodeKind::from(tree_cursor.node().kind_id()) {
+        NodeKind::StringLiteral => {
+            tree_cursor.goto_first_child()?;
+            let value = source.byte_slice(tree_cursor.node().byte_range());
+            tree_cursor.goto_parent();
+            value
+        }
+        NodeKind::NumberLiteral | NodeKind::ObjOther => {
+            source.byte_slice(tree_cursor.node().byte_range())
+        }
+        _ => todo!(),
+    };
+    tree_cursor.goto_parent();
+    tree_cursor.goto_parent();
+    Ok((key, value))
 }

@@ -6,12 +6,20 @@ module.exports = grammar({
     $.comment
   ],
 
+  externals: $ => [
+    $.string_content,
+    $.raw_string_content,
+    $.obj_other,
+    $.until_nl
+  ],
+
+
   word: $ => $.identifier,
 
   rules: {
     source_file: $ => repeat($._definition),
 
-    whitespace: $ => /(\s|\\\r?\n)+/,
+    whitespace: _ => /(\s|\\\r?\n)+/,
 
     _definition: $ =>
       choice(
@@ -42,14 +50,25 @@ module.exports = grammar({
       ),
     ))),
 
-    // C style string
-    string_literal: $ => seq(
-      choice('L"', 'u"', 'U"', 'u8"', '"'),
+    // Rust style string
+    _simple_string_literal: $ => seq(
+      alias(/b?"/, '"'),
       repeat(choice(
-        alias(token.immediate(prec(1, /[^\\"]+/)), $.string_content),
         $.escape_sequence,
+        $.string_content,
       )),
-      '"',
+      token.immediate('"'),
+    ),
+
+    _raw_string_literal: $ => seq(
+      'r#"',
+      optional($.raw_string_content),
+      token.immediate('"#')
+    ),
+
+    string_literal: $ => choice(
+      $._simple_string_literal,
+      $._raw_string_literal,
     ),
 
     // C style numbers
@@ -159,9 +178,11 @@ module.exports = grammar({
         field('body', $.viewbox_inner)
       ),
 
+    obj_param: $ => seq(field('key', $.identifier), ':', field('value', choice($._text_ident, $.obj_other))),
+
     obj_inner: $ => seq(
       '(',
-      field('parameters', sep(seq($.identifier, ':', $._text_ident), ',')),
+      sep($.obj_param, ','),
       optional(','),
       ')'
     ),
@@ -173,7 +194,7 @@ module.exports = grammar({
       $.obj_inner
     ),
 
-    register: $ => seq(field('name', $.identifier), ':', $._text_ident),
+    register: $ => seq('<', $.obj_param, '>'),
 
     comment: _ => token(choice(
       seq('//', /(\\+(.|\r?\n)|[^\\\n])*/),

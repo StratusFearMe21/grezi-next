@@ -10,7 +10,7 @@ use std::{
 mod you_can;
 
 use crate::{
-    parser::{Error, FieldName, GrzCursor, NodeKind},
+    parser::{Error, GrzCursor, NodeKind},
     MyEguiApp,
 };
 use helix_core::ropey::{Rope, RopeSlice};
@@ -262,7 +262,7 @@ pub fn start_lsp(
                                     if transaction.apply(&mut current_rope) {
                                         let source = current_rope.slice(..);
                                         for edit in edits.iter().rev() {
-                                            tree_info.0.edit(edit);
+                                            tree_info.edit(edit);
                                         }
 
                                         // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
@@ -278,12 +278,11 @@ pub fn start_lsp(
                                                         &[]
                                                     }
                                                 },
-                                                Some(&tree_info.0),
+                                                Some(&tree_info),
                                             )
                                             .unwrap();
-                                        tree_info.1 = current_rope.clone();
 
-                                        tree_info.0 = tree;
+                                        *tree_info = tree;
                                     } else {
                                         panic!("Transaction could not be applied");
                                     }
@@ -406,7 +405,6 @@ pub fn start_lsp(
                                     .saturating_sub(1),
                             };
                             let mut completion_node = tree_info
-                                .0
                                 .root_node()
                                 .descendant_for_point_range(completion_point, completion_point)
                                 .unwrap();
@@ -432,7 +430,7 @@ pub fn start_lsp(
                                             );
                                             let iter = query_cursor.matches(
                                                 &viewbox_name_query,
-                                                tree_info.0.root_node(),
+                                                tree_info.root_node(),
                                                 RopeProvider(current_rope.slice(..)),
                                             );
 
@@ -552,15 +550,13 @@ pub fn start_lsp(
                                                 )))
                                                 .unwrap();
                                         }
-                                        NodeKind::SlideObjects
-                                        | NodeKind::SlideObj
-                                        | NodeKind::SlideFunctions => {
+                                        NodeKind::SlideObjects | NodeKind::SlideObj => {
                                             query_cursor.set_point_range(
                                                 Point { row: 0, column: 0 }..completion_point,
                                             );
                                             let iter = query_cursor.matches(
                                                 &object_name_query,
-                                                tree_info.0.root_node(),
+                                                tree_info.root_node(),
                                                 RopeProvider(current_rope.slice(..)),
                                             );
 
@@ -573,18 +569,20 @@ pub fn start_lsp(
                                                         .to_string();
                                                     let completion_range = completion_node.range();
                                                     CompletionItem {
-                                                        label: label.clone(),
                                                         kind: Some(CompletionItemKind::VARIABLE),
                                                         deprecated: Some(false),
                                                         preselect: Some(true),
                                                         insert_text_format: Some(
-                                                            InsertTextFormat::PLAIN_TEXT,
+                                                            InsertTextFormat::SNIPPET,
                                                         ),
                                                         insert_text_mode: None,
                                                         text_edit: Some(
                                                             CompletionTextEdit::InsertAndReplace(
                                                                 InsertReplaceEdit {
-                                                                    new_text: label,
+                                                                    new_text: format!(
+                                                                        "{}: $0,",
+                                                                        label
+                                                                    ),
                                                                     insert: lsp_types::Range {
                                                                         start: completion
                                                                             .text_document_position
@@ -620,6 +618,7 @@ pub fn start_lsp(
                                                                 },
                                                             ),
                                                         ),
+                                                        label,
                                                         additional_text_edits: Some(Vec::new()),
                                                         ..Default::default()
                                                     }
@@ -818,7 +817,58 @@ pub fn start_lsp(
                                                             text_edit: Some(
                                                                 CompletionTextEdit::InsertAndReplace(
                                                                     InsertReplaceEdit {
-                                                                        new_text: "value: \"$0\"".to_string(),
+                                                                        new_text: "value: \"$0\",".to_string(),
+                                                                        insert: lsp_types::Range {
+                                                                            start: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                            end: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                        },
+                                                                        replace: lsp_types::Range {
+                                                                            start: Position {
+                                                                                line: completion_range
+                                                                                    .start_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .start_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                            end: Position {
+                                                                                line: completion_range
+                                                                                    .end_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .end_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            additional_text_edits: Some(Vec::new()),
+                                                            ..Default::default()
+                                                        },
+                                                        CompletionItem {
+                                                            label: "code".to_string(),
+                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                            deprecated: Some(false),
+                                                            preselect: Some(true),
+                                                            insert_text_format: Some(
+                                                                InsertTextFormat::SNIPPET,
+                                                            ),
+                                                            insert_text_mode: None,
+                                                            text_edit: Some(
+                                                                CompletionTextEdit::InsertAndReplace(
+                                                                    InsertReplaceEdit {
+                                                                        new_text: "code: r#\"$0\"#,".to_string(),
                                                                         insert: lsp_types::Range {
                                                                             start: completion
                                                                                 .text_document_position
@@ -869,7 +919,160 @@ pub fn start_lsp(
                                                             text_edit: Some(
                                                                 CompletionTextEdit::InsertAndReplace(
                                                                     InsertReplaceEdit {
-                                                                        new_text: "tint: \"$0\"".to_string(),
+                                                                        new_text: "tint: $0,".to_string(),
+                                                                        insert: lsp_types::Range {
+                                                                            start: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                            end: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                        },
+                                                                        replace: lsp_types::Range {
+                                                                            start: Position {
+                                                                                line: completion_range
+                                                                                    .start_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .start_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                            end: Position {
+                                                                                line: completion_range
+                                                                                    .end_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .end_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            additional_text_edits: Some(Vec::new()),
+                                                            ..Default::default()
+                                                        },
+                                                        CompletionItem {
+                                                            label: "color".to_string(),
+                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                            deprecated: Some(false),
+                                                            preselect: Some(true),
+                                                            insert_text_format: Some(
+                                                                InsertTextFormat::SNIPPET,
+                                                            ),
+                                                            insert_text_mode: None,
+                                                            text_edit: Some(
+                                                                CompletionTextEdit::InsertAndReplace(
+                                                                    InsertReplaceEdit {
+                                                                        new_text: "color: $0,".to_string(),
+                                                                        insert: lsp_types::Range {
+                                                                            start: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                            end: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                        },
+                                                                        replace: lsp_types::Range {
+                                                                            start: Position {
+                                                                                line: completion_range
+                                                                                    .start_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .start_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                            end: Position {
+                                                                                line: completion_range
+                                                                                    .end_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .end_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            additional_text_edits: Some(Vec::new()),
+                                                            ..Default::default()
+                                                        },
+                                                        CompletionItem {
+                                                            label: "background".to_string(),
+                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                            deprecated: Some(false),
+                                                            preselect: Some(true),
+                                                            insert_text_format: Some(
+                                                                InsertTextFormat::SNIPPET,
+                                                            ),
+                                                            insert_text_mode: None,
+                                                            text_edit: Some(
+                                                                CompletionTextEdit::InsertAndReplace(
+                                                                    InsertReplaceEdit {
+                                                                        new_text: "background: $0,".to_string(),
+                                                                        insert: lsp_types::Range {
+                                                                            start: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                            end: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                        },
+                                                                        replace: lsp_types::Range {
+                                                                            start: Position {
+                                                                                line: completion_range
+                                                                                    .start_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .start_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                            end: Position {
+                                                                                line: completion_range
+                                                                                    .end_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .end_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            additional_text_edits: Some(Vec::new()),
+                                                            ..Default::default()
+                                                        },
+                                                        CompletionItem {
+                                                            label: "scale".to_string(),
+                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                            deprecated: Some(false),
+                                                            preselect: Some(true),
+                                                            insert_text_format: Some(
+                                                                InsertTextFormat::SNIPPET,
+                                                            ),
+                                                            insert_text_mode: None,
+                                                            text_edit: Some(
+                                                                CompletionTextEdit::InsertAndReplace(
+                                                                    InsertReplaceEdit {
+                                                                        new_text: "scale: \"$0\",".to_string(),
                                                                         insert: lsp_types::Range {
                                                                             start: completion
                                                                                 .text_document_position
@@ -920,7 +1123,58 @@ pub fn start_lsp(
                                                         text_edit: Some(
                                                             CompletionTextEdit::InsertAndReplace(
                                                                 InsertReplaceEdit {
-                                                                    new_text: "font_family: \"$0\"".to_string(),
+                                                                    new_text: "font_family: \"$0\",".to_string(),
+                                                                    insert: lsp_types::Range {
+                                                                        start: completion
+                                                                            .text_document_position
+                                                                            .position,
+                                                                        end: completion
+                                                                            .text_document_position
+                                                                            .position,
+                                                                    },
+                                                                    replace: lsp_types::Range {
+                                                                        start: Position {
+                                                                            line: completion_range
+                                                                                .start_point
+                                                                                .row
+                                                                                as u32,
+                                                                            character:
+                                                                                completion_range
+                                                                                    .start_point
+                                                                                    .column
+                                                                                    as u32,
+                                                                        },
+                                                                        end: Position {
+                                                                            line: completion_range
+                                                                                .end_point
+                                                                                .row
+                                                                                as u32,
+                                                                            character:
+                                                                                completion_range
+                                                                                    .end_point
+                                                                                    .column
+                                                                                    as u32,
+                                                                        },
+                                                                    },
+                                                                },
+                                                            ),
+                                                        ),
+                                                        additional_text_edits: Some(Vec::new()),
+                                                        ..Default::default()
+                                                    },
+                                                    CompletionItem {
+                                                        label: "font_size".to_string(),
+                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                        deprecated: Some(false),
+                                                        preselect: Some(true),
+                                                        insert_text_format: Some(
+                                                            InsertTextFormat::SNIPPET,
+                                                        ),
+                                                        insert_text_mode: None,
+                                                        text_edit: Some(
+                                                            CompletionTextEdit::InsertAndReplace(
+                                                                InsertReplaceEdit {
+                                                                    new_text: "font_size: $0,".to_string(),
                                                                     insert: lsp_types::Range {
                                                                         start: completion
                                                                             .text_document_position
@@ -971,7 +1225,7 @@ pub fn start_lsp(
                                                         text_edit: Some(
                                                             CompletionTextEdit::InsertAndReplace(
                                                                 InsertReplaceEdit {
-                                                                    new_text: "language: \"$0\"".to_string(),
+                                                                    new_text: "language: \"$0\",".to_string(),
                                                                     insert: lsp_types::Range {
                                                                         start: completion
                                                                             .text_document_position
@@ -1022,7 +1276,7 @@ pub fn start_lsp(
                                                         text_edit: Some(
                                                             CompletionTextEdit::InsertAndReplace(
                                                                 InsertReplaceEdit {
-                                                                    new_text: "align: \"$0\"".to_string(),
+                                                                    new_text: "align: \"$0\",".to_string(),
                                                                     insert: lsp_types::Range {
                                                                         start: completion
                                                                             .text_document_position
@@ -1176,7 +1430,8 @@ pub fn start_lsp(
                                                 ))
                                                 .unwrap();
                                         }
-                                        _ => {
+                                        node_kind => {
+                                            dbg!(node_kind);
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
@@ -1195,7 +1450,7 @@ pub fn start_lsp(
                                             complete_source_file(
                                                 completion,
                                                 &slide_complete_query,
-                                                &tree_info.0,
+                                                &*tree_info,
                                                 &current_rope,
                                                 &mut query_cursor,
                                             )
@@ -1203,7 +1458,9 @@ pub fn start_lsp(
                                         )))
                                         .unwrap();
                                 }
-                                _ => {}
+                                node_kind => {
+                                    dbg!(node_kind);
+                                }
                             }
                         }
                     }
@@ -1241,7 +1498,7 @@ pub fn start_lsp(
                                         let tree_info = app.tree_info.lock();
                                         let tree_info = tree_info.as_ref().unwrap();
 
-                                        tree_info.0.print_dot_graph(&process.stdin.unwrap());
+                                        tree_info.print_dot_graph(&process.stdin.unwrap());
 
                                         connection
                                             .sender
@@ -1292,7 +1549,7 @@ pub fn start_lsp(
                                         &lsp_egui_ctx,
                                         Path::new(currently_open.path()),
                                     );
-                                    *tree_info = Some((tree, Rope::new()));
+                                    *tree_info = Some(tree);
                                     *app.slide_show_file.lock() = current_rope.clone();
                                     match ast {
                                         Ok(_) => {
@@ -1447,7 +1704,7 @@ pub fn start_lsp(
                             &lsp_egui_ctx,
                             Path::new(currently_open.path()),
                         );
-                        *tree_info = Some((tree, Rope::new()));
+                        *tree_info = Some(tree);
                         *app.slide_show_file.lock() = current_rope.clone();
                         match ast {
                             Ok(_) => {
@@ -1522,7 +1779,7 @@ pub fn start_lsp(
                                 if transaction.apply(&mut current_rope) {
                                     let source = current_rope.slice(..);
                                     for edit in edits.iter().rev() {
-                                        tree_info.0.edit(edit);
+                                        tree_info.edit(edit);
                                     }
 
                                     // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
@@ -1538,20 +1795,16 @@ pub fn start_lsp(
                                                     &[]
                                                 }
                                             },
-                                            Some(&tree_info.0),
+                                            Some(&*tree_info),
                                         )
                                         .unwrap();
                                     if !tree.root_node().has_error() {
-                                        tree_info.1 = current_rope.clone();
-
                                         let mut slide_show = app.slide_show.write();
 
                                         match super::parser::parse_file(
                                             &tree,
-                                            Some(
-                                                error_tree.take().as_ref().unwrap_or(&tree_info.0),
-                                            ),
-                                            &tree_info.1,
+                                            Some(error_tree.take().as_ref().unwrap_or(&*tree_info)),
+                                            &current_rope,
                                             &mut app.helix_cell,
                                             &mut slide_show,
                                             &lsp_egui_ctx,
@@ -1601,7 +1854,7 @@ pub fn start_lsp(
                                         error_tree = Some(tree.clone());
                                     }
 
-                                    tree_info.0 = tree;
+                                    *tree_info = tree;
                                 } else {
                                     panic!("Transaction could not be applied");
                                 }
@@ -1610,7 +1863,7 @@ pub fn start_lsp(
                             if changes_len == 1 {
                                 hover(
                                     &app,
-                                    &tree_info.0,
+                                    &*tree_info,
                                     &mut query_cursor,
                                     &current_rope,
                                     &slide_index_query,
@@ -1627,14 +1880,12 @@ pub fn start_lsp(
                         //    serde_json::from_value(not.params).unwrap();
                         let mut tree_info = app.tree_info.lock();
                         if let Some(info) = tree_info.as_mut() {
-                            info.1 = current_rope.clone();
-
                             let mut slide_show = app.slide_show.write();
 
                             let ast = super::parser::parse_file(
-                                &info.0,
+                                &*info,
                                 None,
-                                &info.1,
+                                &current_rope,
                                 &mut app.helix_cell,
                                 &mut slide_show,
                                 &lsp_egui_ctx,
@@ -1642,7 +1893,7 @@ pub fn start_lsp(
                             );
                             match ast {
                                 Ok(_) => {
-                                    *app.slide_show_file.lock() = info.1.clone();
+                                    *app.slide_show_file.lock() = current_rope.clone();
                                     connection
                                         .sender
                                         .send(Message::Notification(lsp_server::Notification::new(
@@ -1706,7 +1957,6 @@ fn prepare_rename(
     };
 
     tree_info
-        .0
         .root_node()
         .descendant_for_point_range(point, point)
         .and_then(|f| {
@@ -1744,7 +1994,6 @@ fn rename(
     };
 
     let rename_node = tree_info
-        .0
         .root_node()
         .descendant_for_point_range(point, point)
         .unwrap();
@@ -1760,7 +2009,7 @@ fn rename(
     );
     let iter = query_cursor.matches(
         rename_query,
-        tree_info.0.root_node(),
+        tree_info.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 
@@ -1810,7 +2059,7 @@ fn inlay_hints(
     );
     let slide_iter = query_cursor.matches(
         slide_complete_query,
-        tree_info.0.root_node(),
+        tree_info.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 
@@ -1834,7 +2083,7 @@ fn inlay_hints(
     let mut edge_iter = query_cursor
         .matches(
             inlay_edge_query,
-            tree_info.0.root_node(),
+            tree_info.root_node(),
             RopeProvider(current_rope.slice(..)),
         )
         .peekable();
@@ -1938,7 +2187,7 @@ fn semantic_tokens(
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let start_node = tree_info.0.root_node();
+    let start_node = tree_info.root_node();
 
     query_cursor.set_point_range(
         Point { row: 0, column: 0 }..Point {
@@ -2208,7 +2457,6 @@ pub fn references(
     };
 
     let reference_node = tree_info
-        .0
         .root_node()
         .descendant_for_point_range(point, point)
         .unwrap();
@@ -2221,7 +2469,7 @@ pub fn references(
     );
     let iter = query_cursor.matches(
         rename_query,
-        tree_info.0.root_node(),
+        tree_info.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 
@@ -2270,7 +2518,6 @@ pub fn goto_declaration(
     };
 
     let usage_node = tree_info
-        .0
         .root_node()
         .descendant_for_point_range(point, point)
         .unwrap();
@@ -2283,7 +2530,7 @@ pub fn goto_declaration(
     );
     let iter = query_cursor.matches(
         top_level_search_query,
-        tree_info.0.root_node(),
+        tree_info.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 
@@ -2316,7 +2563,7 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let mut tree_cursor = GrzCursor::new(&tree_info.0);
+    let mut tree_cursor = GrzCursor::new(&*tree_info);
     let mut symbols = Vec::new();
 
     let _ = tree_cursor.goto_first_child();
@@ -2517,7 +2764,6 @@ pub fn hover(
         while node.kind_id() != NodeKind::Slide as u16
             && node.kind_id() != NodeKind::Viewbox as u16
             && node.kind_id() != NodeKind::Obj as u16
-            && node.kind_id() != NodeKind::SlideFunctions as u16
         {
             if let Some(parent) = node.parent() {
                 node = parent;
@@ -2529,6 +2775,11 @@ pub fn hover(
                 }
                 return None;
             }
+        }
+
+        if node.parent().map(|n| NodeKind::from(n.kind_id()) as u16) == Some(NodeKind::Slide as u16)
+        {
+            node = node.parent().unwrap();
         }
 
         match NodeKind::from(node.kind_id()) {
@@ -2654,9 +2905,8 @@ pub fn hover(
                             }
                             let range = on_slide.range();
 
-                            query_cursor.set_point_range(dbg!(
-                                Point { row: 0, column: 0 }..range.end_point
-                            ));
+                            query_cursor
+                                .set_point_range(Point { row: 0, column: 0 }..range.end_point);
 
                             let mut iter = query_cursor.matches(
                                 slide_index_query,
@@ -2688,7 +2938,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let mut formatting_cursor = FormattingCursor::new(&tree_info.0);
+    let mut formatting_cursor = FormattingCursor::new(&*tree_info);
 
     formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
 
@@ -2803,11 +3053,55 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                 formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor
                     .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
-                while formatting_cursor.tree_cursor.field_id() == Some(FieldName::Parameters as u16)
-                {
+                let mut value_location = None;
+                let mut language_location = false;
+                while formatting_cursor.tree_cursor.node().kind_id() == NodeKind::ObjParam as u16 {
+                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                    let value_rope =
+                        current_rope.byte_slice(formatting_cursor.tree_cursor.node().byte_range());
+                    if value_rope == "value" {
+                        if language_location {
+                            language_location = false;
+                            let location = formatting_cursor.tree_cursor.node().range();
+                            formatting_cursor.edits.push(TextEdit {
+                                range: lsp_types::Range {
+                                    start: Position {
+                                        line: location.start_point.row as u32,
+                                        character: location.start_point.column as u32,
+                                    },
+                                    end: Position {
+                                        line: location.end_point.row as u32,
+                                        character: location.end_point.column as u32,
+                                    },
+                                },
+                                new_text: "code".to_owned(),
+                            });
+                        } else {
+                            value_location = Some(formatting_cursor.tree_cursor.node().range())
+                        }
+                    } else if value_rope == "language" {
+                        if let Some(value_location) = value_location.take() {
+                            formatting_cursor.edits.push(TextEdit {
+                                range: lsp_types::Range {
+                                    start: Position {
+                                        line: value_location.start_point.row as u32,
+                                        character: value_location.start_point.column as u32,
+                                    },
+                                    end: Position {
+                                        line: value_location.end_point.row as u32,
+                                        character: value_location.end_point.column as u32,
+                                    },
+                                },
+                                new_text: "code".to_owned(),
+                            });
+                        } else {
+                            language_location = true;
+                        }
+                    }
                     formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
                     formatting_cursor
                         .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                    formatting_cursor.goto_parent();
                     formatting_cursor
                         .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
                     formatting_cursor
@@ -2820,7 +3114,11 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
             NodeKind::Register => {
                 formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                formatting_cursor.goto_parent();
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor.goto_parent();
             }
             NodeKind::SlideFunction => {

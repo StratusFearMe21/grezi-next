@@ -84,7 +84,7 @@ pub fn highlight_text(
     let mut slice: Cow<'_, str>;
     loop {
         match NodeKind::from(walker.node().kind_id()) {
-            NodeKind::StringContent => rope.append({
+            NodeKind::StringContent | NodeKind::RawStringContent => rope.append({
                 slice = source.byte_slice(walker.node().byte_range()).into();
                 slice.as_ref()
             }),

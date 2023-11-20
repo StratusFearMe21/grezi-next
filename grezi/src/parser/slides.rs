@@ -42,8 +42,9 @@ pub fn parse_slides(
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
     source: &helix_core::ropey::Rope,
     errors_present: &mut Vec<super::Error>,
+    bg: (super::Color, Option<(std::time::Duration, super::Color)>),
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
-) -> Result<AstObject, super::Error> {
+) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
     tree_cursor.goto_first_child()?;
     tree_cursor.goto_first_child()?;
     let mut slide_objects = Vec::new();
@@ -94,12 +95,16 @@ pub fn parse_slides(
     core::mem::swap(&mut slide_on_screen, on_screen);
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();
-    Ok(AstObject::Slide {
-        objects: slide_objects,
-        actions,
-        max_time,
-        next,
-    })
+    Ok((
+        AstObject::Slide {
+            objects: slide_objects,
+            actions,
+            bg,
+            max_time: max_time.max(bg.1.map_or(f32::MIN, |f| f.0.as_secs_f32())),
+            next,
+        },
+        bg.1,
+    ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

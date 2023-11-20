@@ -7,7 +7,6 @@ use std::{
     hash::BuildHasherDefault,
     io::{BufWriter, Cursor},
     mem::ManuallyDrop,
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
@@ -19,7 +18,8 @@ use eframe::{
     egui::{self, FontData, FontDefinitions, Image, PointerButton, Rect, SizeHint, Ui},
     epaint::{
         mutex::{Mutex, RwLock},
-        Color32, FontFamily, Pos2, Rounding, Stroke, Vec2,
+        text::LayoutJob,
+        Color32, FontFamily, FontId, Pos2, Rounding, Stroke, Vec2,
     },
 };
 use egui_anim::Anim;
@@ -31,14 +31,15 @@ use helix_core::ropey::Rope;
 use helix_core::tree_sitter::Tree;
 use image::codecs::{png::PngDecoder, webp::WebPDecoder};
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
-use layout::UnresolvedLayout;
+use layout::{Constraint, UnresolvedLayout};
 #[cfg(not(target_arch = "wasm32"))]
 use notify::{event::ModifyKind, Watcher};
 use parser::{
     actions::{Actions, ResolvedActions},
+    color::Color,
     objects::{Object, ObjectState},
     slides::{ResolvedSlideObj, SlideObj},
-    viewboxes::ViewboxIn,
+    viewboxes::{LineUp, ViewboxIn},
     AstObject, PassThroughHasher,
 };
 use serde::{Deserialize, Serialize};
@@ -55,7 +56,7 @@ mod parser;
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(clap::Parser)]
 struct Args {
-    presentation: Option<PathBuf>,
+    presentation: Option<String>,
     #[clap(short, long)]
     export: bool,
     #[clap(long)]
@@ -64,6 +65,12 @@ struct Args {
     fmt: bool,
     #[clap(short, long)]
     dont_close: bool,
+    #[clap(short, long)]
+    thumbnail: bool,
+    #[clap(short, long)]
+    output: Option<String>,
+    #[clap(short, long)]
+    size: Option<f32>,
     /// Automatically advance to the next page after the given number of seconds
     #[clap(short, long)]
     auto: Option<u64>,
@@ -76,15 +83,13 @@ struct Args {
 #[derive(Clone)]
 pub struct MyEguiApp {
     slide_show: Arc<RwLock<SlideShow>>,
-    #[cfg(not(target_arch = "wasm32"))]
     clear_resolved: Arc<AtomicBool>,
     next: Arc<AtomicBool>,
-    #[cfg(not(target_arch = "wasm32"))]
     restart_timer: Arc<AtomicBool>,
     #[cfg(not(target_arch = "wasm32"))]
     slide_show_file: Arc<Mutex<Rope>>,
     #[cfg(not(target_arch = "wasm32"))]
-    tree_info: Arc<Mutex<Option<(Tree, Rope)>>>,
+    tree_info: Arc<Mutex<Option<Tree>>>,
     #[cfg(not(target_arch = "wasm32"))]
     file_name: String,
     #[cfg(not(target_arch = "wasm32"))]
@@ -96,7 +101,7 @@ pub struct MyEguiApp {
     index: Arc<AtomicUsize>,
     #[cfg(not(target_arch = "wasm32"))]
     helix_cell: Option<HelixCell>,
-    window_size: [u32; 2],
+    window_size: Vec2,
     // Safe, I think, IDK
     resolved_viewboxes: HashMap<u64, Vec<Rect>, BuildHasherDefault<PassThroughHasher>>,
     resolved_actions: Option<Vec<ResolvedActions>>,
@@ -107,6 +112,7 @@ pub struct MyEguiApp {
     lsp: bool,
     #[cfg(not(target_arch = "wasm32"))]
     parser: Arc<Mutex<helix_core::tree_sitter::Parser>>,
+    clear_color: Color32,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -116,140 +122,269 @@ pub struct SlideShow {
     objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
 
+impl SlideShow {
+    // Creates a slide for exercising the Browser JIT on WASM to avoid jank
+    fn exercise_jit() -> SlideShow {
+        let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
+        let spinner_hash = hasher.hash_one("spinner");
+        let loading_hash = hasher.hash_one("loading");
+        let halves_hash = hasher.hash_one("halves");
+        SlideShow {
+            slide_show: vec![AstObject::Slide {
+                objects: vec![
+                    SlideObj {
+                        object: spinner_hash,
+                        locations: [
+                            (LineUp::CenterTop, ViewboxIn::Custom(halves_hash, 0)),
+                            (LineUp::CenterCenter, ViewboxIn::Custom(halves_hash, 0)),
+                        ],
+                        scaled_time: [0.0, 0.5],
+                        state: ObjectState::Entering,
+                    },
+                    SlideObj {
+                        object: loading_hash,
+                        locations: [
+                            (LineUp::CenterBottom, ViewboxIn::Custom(halves_hash, 1)),
+                            (LineUp::CenterCenter, ViewboxIn::Custom(halves_hash, 1)),
+                        ],
+                        scaled_time: [0.0, 0.5],
+                        state: ObjectState::Entering,
+                    },
+                ],
+                actions: vec![Actions::Highlight {
+                    locations: None,
+                    index: 1,
+                    persist: true,
+                }],
+                bg: (Color::default(), None),
+                max_time: 0.5,
+                next: false,
+            }],
+            viewboxes: {
+                let mut map = HashMap::default();
+                map.insert(
+                    halves_hash,
+                    UnresolvedLayout {
+                        direction: layout::Direction::Vertical,
+                        margin: 15.0,
+                        constraints: vec![Constraint::Ratio(1.0, 2.0), Constraint::Ratio(1.0, 2.0)],
+                        expand_to_fill: true,
+                        split_on: ViewboxIn::Size,
+                    },
+                );
+                map
+            },
+            objects: {
+                let mut map = HashMap::default();
+                map.insert(
+                    spinner_hash,
+                    Object {
+                        position: None,
+                        viewbox: None,
+                        object: parser::objects::ObjectType::Spinner,
+                    },
+                );
+                map.insert(
+                    loading_hash,
+                    Object {
+                        position: None,
+                        viewbox: None,
+                        object: parser::objects::ObjectType::Text {
+                            layout_job: {
+                                let mut job = LayoutJob::default();
+                                job.append(
+                                    "Loading",
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: FontId::proportional(48.0),
+                                        color: Color32::WHITE,
+                                        background: Color32::TRANSPARENT,
+                                        ..Default::default()
+                                    },
+                                );
+                                job
+                            },
+                        },
+                    },
+                );
+                map
+            },
+        }
+    }
+}
+
+enum SlideShowSource {
+    Loaded,
+    Http,
+}
+
 impl MyEguiApp {
-    fn init_app(mut self, cc: &eframe::CreationContext<'_>, fonts: FontDefinitions) -> Self {
-        egui_extras::install_image_loaders(&cc.egui_ctx);
-        if !cc.egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
-            cc.egui_ctx
-                .add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+    fn init_app(
+        mut self,
+        egui_ctx: &egui::Context,
+        fonts: FontDefinitions,
+        slide_show_source: SlideShowSource,
+        #[cfg(target_arch = "wasm32")] hash: &str,
+    ) -> Self {
+        egui_extras::install_image_loaders(egui_ctx);
+        if !egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+            egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            let fetch_ss = Arc::clone(&self.slide_show);
-            let fetch_ctx = cc.egui_ctx.clone();
-            ehttp::fetch(
-                ehttp::Request::get(&cc.integration_info.web_info.location.hash[1..]),
-                move |response| {
+        match slide_show_source {
+            SlideShowSource::Http => {
+                let fetch_ss = Arc::clone(&self.slide_show);
+                let fetch_clear_resolved = Arc::clone(&self.clear_resolved);
+                let fetch_restart_timer = Arc::clone(&self.restart_timer);
+                let fetch_ctx = egui_ctx.clone();
+                #[cfg(not(target_arch = "wasm32"))]
+                ehttp::fetch(ehttp::Request::get(&self.file_name), move |response| {
                     let res = response.unwrap();
                     let slide_show: (FontDefinitions, SlideShow) =
-                        postcard::from_bytes(&res.bytes).unwrap();
+                        bincode::deserialize(&res.bytes).unwrap();
                     fetch_ctx.set_fonts(slide_show.0);
                     *fetch_ss.write() = slide_show.1;
-                },
-            );
-        }
+                    fetch_restart_timer.store(true, Ordering::Relaxed);
+                    fetch_clear_resolved.store(true, Ordering::Relaxed);
+                });
 
-        #[cfg(not(target_arch = "wasm32"))]
-        cc.egui_ctx.set_fonts(fonts);
+                #[cfg(target_arch = "wasm32")]
+                ehttp::fetch(ehttp::Request::get(hash), move |response| {
+                    let res = response.unwrap();
+                    let slide_show: (FontDefinitions, SlideShow) =
+                        bincode::deserialize(&res.bytes).unwrap();
+                    fetch_ctx.set_fonts(slide_show.0);
+                    *fetch_ss.write() = slide_show.1;
+                    fetch_restart_timer.store(true, Ordering::Relaxed);
+                    fetch_clear_resolved.store(true, Ordering::Relaxed);
+                });
+            }
+            SlideShowSource::Loaded => {
+                #[cfg(not(target_arch = "wasm32"))]
+                if !self.lsp {
+                    use std::time::Instant;
 
-        #[cfg(not(target_arch = "wasm32"))]
-        if !self.lsp {
-            use std::time::Instant;
-
-            let watcher_tree_info = Arc::clone(&self.tree_info);
-            let watcher_context = cc.egui_ctx.clone();
-            let watcher_file_name = self.file_name.clone();
-            let watcher_slide_show_file = Arc::clone(&self.slide_show_file);
-            let watcher_new_file = Arc::clone(&self.clear_resolved);
-            let watcher_restart_timer = Arc::clone(&self.restart_timer);
-            let watcher_parser = Arc::clone(&self.parser);
-            let watcher_slide_show = Arc::clone(&self.slide_show);
-            let mut instant = Instant::now();
-            let mut w = ManuallyDrop::new(
-                notify::recommended_watcher(move |res: Result<notify::Event, notify::Error>| {
-                    if let Ok(event) = res {
-                        if let notify::EventKind::Modify(ModifyKind::Data(_)) = event.kind {
-                            if Instant::now().duration_since(instant) > Duration::from_millis(250) {
-                                std::thread::sleep(Duration::from_millis(250));
-                                instant = Instant::now();
-                                let new_file = Rope::from_reader(
-                                    std::fs::File::open(&watcher_file_name).unwrap(),
-                                )
-                                .unwrap();
-                                let mut slide_show_file = watcher_slide_show_file.lock();
-                                let mut tree_info = watcher_tree_info.lock();
-                                if let Some(info) = tree_info.as_mut() {
-                                    let transaction = helix_core::diff::compare_ropes(
-                                        &slide_show_file,
-                                        &new_file,
-                                    );
-                                    let edits = lsp::generate_edits(
-                                        slide_show_file.slice(..),
-                                        transaction.changes(),
-                                    );
-                                    for change in edits.iter().rev() {
-                                        info.0.edit(change);
-                                    }
-
-                                    info.1 = new_file;
-                                    let tree = watcher_parser
-                                        .lock()
-                                        .parse_with(
-                                            &mut |byte, _| {
-                                                if byte <= info.1.len_bytes() {
-                                                    let (chunk, start_byte, _, _) =
-                                                        info.1.chunk_at_byte(byte);
-                                                    &chunk.as_bytes()[byte - start_byte..]
-                                                } else {
-                                                    // out of range
-                                                    &[]
-                                                }
-                                            },
-                                            Some(&info.0),
-                                        )
-                                        .unwrap();
-
-                                    let mut slide_show = watcher_slide_show.write();
-
-                                    let ast = parser::parse_file(
-                                        &tree,
-                                        Some(&info.0),
-                                        &info.1,
-                                        &mut self.helix_cell,
-                                        &mut slide_show,
-                                        &watcher_context,
-                                        std::path::Path::new(&watcher_file_name),
-                                    );
-                                    info.0 = tree;
-                                    match ast {
-                                        Ok(_) => {
-                                            *slide_show_file = info.1.clone();
-                                            watcher_new_file.store(true, Ordering::Relaxed);
-                                            watcher_restart_timer.store(true, Ordering::Relaxed);
-                                        }
-                                        Err(errors) => {
-                                            for error in errors {
-                                                eprintln!(
-                                                    "{:?}",
-                                                    parser::ErrWithSource {
-                                                        error,
-                                                        source_code: info.1.to_string()
-                                                    }
+                    let watcher_tree_info = Arc::clone(&self.tree_info);
+                    let watcher_context = egui_ctx.clone();
+                    let watcher_file_name = self.file_name.clone();
+                    let watcher_slide_show_file = Arc::clone(&self.slide_show_file);
+                    let watcher_new_file = Arc::clone(&self.clear_resolved);
+                    let watcher_restart_timer = Arc::clone(&self.restart_timer);
+                    let watcher_parser = Arc::clone(&self.parser);
+                    let watcher_slide_show = Arc::clone(&self.slide_show);
+                    let mut instant = Instant::now();
+                    let mut w = ManuallyDrop::new(
+                        notify::recommended_watcher(
+                            move |res: Result<notify::Event, notify::Error>| {
+                                if let Ok(event) = res {
+                                    if let notify::EventKind::Modify(ModifyKind::Data(_)) =
+                                        event.kind
+                                    {
+                                        if Instant::now().duration_since(instant)
+                                            > Duration::from_millis(250)
+                                        {
+                                            std::thread::sleep(Duration::from_millis(250));
+                                            instant = Instant::now();
+                                            let new_file = Rope::from_reader(
+                                                std::fs::File::open(&watcher_file_name).unwrap(),
+                                            )
+                                            .unwrap();
+                                            let mut slide_show_file =
+                                                watcher_slide_show_file.lock();
+                                            let mut tree_info = watcher_tree_info.lock();
+                                            if let Some(info) = tree_info.as_mut() {
+                                                let transaction = helix_core::diff::compare_ropes(
+                                                    &slide_show_file,
+                                                    &new_file,
                                                 );
+                                                let edits = lsp::generate_edits(
+                                                    slide_show_file.slice(..),
+                                                    transaction.changes(),
+                                                );
+                                                for change in edits.iter().rev() {
+                                                    info.edit(change);
+                                                }
+
+                                                let tree = watcher_parser
+                                                    .lock()
+                                                    .parse_with(
+                                                        &mut |byte, _| {
+                                                            if byte <= new_file.len_bytes() {
+                                                                let (chunk, start_byte, _, _) =
+                                                                    new_file.chunk_at_byte(byte);
+                                                                &chunk.as_bytes()
+                                                                    [byte - start_byte..]
+                                                            } else {
+                                                                // out of range
+                                                                &[]
+                                                            }
+                                                        },
+                                                        Some(&info),
+                                                    )
+                                                    .unwrap();
+
+                                                let mut slide_show = watcher_slide_show.write();
+
+                                                let ast = parser::parse_file(
+                                                    &tree,
+                                                    Some(&info),
+                                                    &new_file,
+                                                    &mut self.helix_cell,
+                                                    &mut slide_show,
+                                                    &watcher_context,
+                                                    std::path::Path::new(&watcher_file_name),
+                                                );
+                                                *info = tree;
+                                                match ast {
+                                                    Ok(_) => {
+                                                        *slide_show_file = new_file.clone();
+                                                        watcher_new_file
+                                                            .store(true, Ordering::Relaxed);
+                                                        watcher_restart_timer
+                                                            .store(true, Ordering::Relaxed);
+                                                    }
+                                                    Err(errors) => {
+                                                        for error in errors {
+                                                            eprintln!(
+                                                                "{:?}",
+                                                                parser::ErrWithSource {
+                                                                    error,
+                                                                    source_code: new_file
+                                                                        .to_string()
+                                                                }
+                                                            );
+                                                        }
+                                                    }
+                                                }
                                             }
+
+                                            watcher_context.request_repaint();
                                         }
                                     }
                                 }
+                            },
+                        )
+                        .unwrap(),
+                    );
 
-                                watcher_context.request_repaint();
-                            }
-                        }
-                    }
-                })
-                .unwrap(),
-            );
-
-            w.watch(self.file_name.as_ref(), notify::RecursiveMode::NonRecursive)
-                .unwrap();
+                    w.watch(self.file_name.as_ref(), notify::RecursiveMode::NonRecursive)
+                        .unwrap();
+                }
+            }
         }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        egui_ctx.set_fonts(fonts);
+
         MyEguiApp {
             #[cfg(not(target_arch = "wasm32"))]
             helix_cell: None,
             ..self
         }
     }
-    fn new(#[cfg(not(target_arch = "wasm32"))] args: &Args) -> (Self, FontDefinitions) {
+    fn new(
+        #[cfg(not(target_arch = "wasm32"))] args: &Args,
+    ) -> (Self, FontDefinitions, SlideShowSource) {
         // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
         // Restore app state using cc.storage (requires the "persistence" feature).
         // Use the cc.gl (a glo::Context) to create graphics shaders and buffers that you can use
@@ -258,10 +393,9 @@ impl MyEguiApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         let slide_show_file = Arc::new(Mutex::new(Rope::new()));
-        #[cfg(not(target_arch = "wasm32"))]
         let new_file = Arc::new(AtomicBool::new(true));
         #[cfg(not(target_arch = "wasm32"))]
-        let tree_info: Arc<Mutex<Option<(Tree, Rope)>>> = Arc::new(Mutex::new(None));
+        let tree_info: Arc<Mutex<Option<Tree>>> = Arc::new(Mutex::new(None));
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut helix_cell = None;
@@ -273,27 +407,23 @@ impl MyEguiApp {
             parser
         };
         #[cfg(not(target_arch = "wasm32"))]
-        let slide_show: SlideShow = {
+        let slide_show: (SlideShow, SlideShowSource) = {
             let viewboxes = HashMap::default();
             let objects = HashMap::default();
             if args.lsp {
-                SlideShow::default()
-            } else if args
-                .presentation
-                .as_ref()
-                .unwrap()
-                .extension()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                == "slideshow"
-            {
-                let file = std::fs::read(args.presentation.as_ref().unwrap()).unwrap();
-                let slideshow: (FontDefinitions, SlideShow) = postcard::from_bytes(&file).unwrap();
+                (SlideShow::default(), SlideShowSource::Loaded)
+            } else if args.presentation.as_ref().unwrap().ends_with("slideshow") {
+                if args.presentation.as_ref().unwrap().starts_with("http") {
+                    (SlideShow::exercise_jit(), SlideShowSource::Http)
+                } else {
+                    let file = std::fs::read(args.presentation.as_ref().unwrap()).unwrap();
+                    let slideshow: (FontDefinitions, SlideShow) =
+                        bincode::deserialize(&file).unwrap();
 
-                fonts = slideshow.0;
+                    fonts = slideshow.0;
 
-                slideshow.1
+                    (slideshow.1, SlideShowSource::Loaded)
+                }
             } else {
                 let fira_code_prop = FontPropertyBuilder::new().family("Fira Code").build();
                 if let Some(font) = font_loader::system_fonts::get(&fira_code_prop) {
@@ -350,9 +480,9 @@ impl MyEguiApp {
                 };
                 match ast {
                     Ok(_) => {
-                        *tree_info = Some((tree, Rope::new()));
+                        *tree_info = Some(tree);
                         *slide_show_file.lock() = file;
-                        slide_show
+                        (slide_show, SlideShowSource::Loaded)
                     }
                     Err(errors) => {
                         for error in errors {
@@ -371,16 +501,15 @@ impl MyEguiApp {
         };
 
         #[cfg(target_arch = "wasm32")]
-        let slide_show = SlideShow::default();
+        let slide_show = (SlideShow::exercise_jit(), SlideShowSource::Http);
 
-        #[cfg(not(target_arch = "wasm32"))]
         new_file.store(false, Ordering::Relaxed);
 
         #[cfg(not(target_arch = "wasm32"))]
         if args.export {
-            postcard::to_io(
-                &(fonts, slide_show),
+            bincode::serialize_into(
                 BufWriter::new(std::fs::File::create("out.slideshow").unwrap()),
+                &(fonts, slide_show.0),
             )
             .unwrap();
             std::process::exit(0);
@@ -388,23 +517,16 @@ impl MyEguiApp {
 
         (
             Self {
-                slide_show: Arc::new(RwLock::new(slide_show)),
-                #[cfg(not(target_arch = "wasm32"))]
+                slide_show: Arc::new(RwLock::new(slide_show.0)),
                 clear_resolved: new_file,
                 next: Arc::new(false.into()),
-                #[cfg(not(target_arch = "wasm32"))]
-                restart_timer: Arc::new(true.into()),
+                restart_timer: Arc::new(false.into()),
                 #[cfg(not(target_arch = "wasm32"))]
                 slide_show_file,
                 #[cfg(not(target_arch = "wasm32"))]
                 tree_info,
                 #[cfg(not(target_arch = "wasm32"))]
-                file_name: args
-                    .presentation
-                    .clone()
-                    .unwrap_or_default()
-                    .display()
-                    .to_string(),
+                file_name: args.presentation.clone().unwrap_or_default(),
                 #[cfg(not(target_arch = "wasm32"))]
                 dont_exit: args.dont_close,
                 #[cfg(not(target_arch = "wasm32"))]
@@ -419,23 +541,22 @@ impl MyEguiApp {
                 resolved_actions: None,
                 resolved_slide: None,
                 resolved_images: HashMap::default(),
-                #[cfg(not(target_arch = "wasm32"))]
-                window_size: [0, 0],
-                #[cfg(target_arch = "wasm32")]
-                window_size: [1920, 1080],
+                window_size: Vec2::ZERO,
                 #[cfg(not(target_arch = "wasm32"))]
                 lsp: args.lsp,
                 #[cfg(not(target_arch = "wasm32"))]
                 parser: Arc::new(Mutex::new(parser)),
+                clear_color: Color::default().into(),
             },
             fonts,
+            slide_show.1,
         )
     }
 
     fn draw_slide(&self, slide: &[ResolvedSlideObj], ui: &mut Ui, time: f32) {
         for obj in slide {
             let time = if obj.scaled_time[0] < time {
-                time - obj.scaled_time[0]
+                (time - obj.scaled_time[0]).clamp(0.0, obj.scaled_time[1])
             } else {
                 0.0
             };
@@ -456,8 +577,8 @@ impl MyEguiApp {
                 )),
             ]);
             match &obj.object {
-                parser::objects::ResolvedObject::Text(galley) => {
-                    obj_pos = obj_pos.translate(egui::vec2(galley.rect.min.x, 0.0));
+                ResolvedObject::Text(galley) => {
+                    obj_pos = obj_pos.translate(egui::vec2(-galley.rect.min.x, 0.0));
                     // ui.painter()
                     // .circle(obj_pos, 5.0, Color32::RED, Stroke::NONE);
 
@@ -481,7 +602,7 @@ impl MyEguiApp {
                     ui.painter()
                         .galley_with_gamma(obj_pos.min, Arc::clone(galley), gamma_multiply);
                 }
-                parser::objects::ResolvedObject::Image {
+                ResolvedObject::Image {
                     image,
                     mut tint,
                     scale,
@@ -513,7 +634,7 @@ impl MyEguiApp {
                         .tint(tint)
                         .paint_at(ui, obj_pos)
                 }
-                parser::objects::ResolvedObject::Anim {
+                ResolvedObject::Anim {
                     anim,
                     mut tint,
                     scale,
@@ -544,6 +665,7 @@ impl MyEguiApp {
                         .tint(tint)
                         .paint_at(ui, obj_pos)
                 }
+                ResolvedObject::Spinner => egui::Spinner::new().paint_at(&ui, obj_pos),
             }
         }
     }
@@ -551,7 +673,26 @@ impl MyEguiApp {
     fn draw_actions(&self, actions: &[ResolvedActions], ui: &mut Ui, time: f32) {
         for action in actions {
             match action {
-                parser::actions::ResolvedActions::Highlight { locations, persist } => {
+                parser::actions::ResolvedActions::Highlight {
+                    locations,
+                    persist,
+                    locations_of_object,
+                    scaled_time,
+                } => {
+                    let time = if !*persist {
+                        scaled_time[1]
+                    } else if scaled_time[0] < time {
+                        time - scaled_time[0]
+                    } else {
+                        0.0
+                    };
+                    let obj_pos = Vec2::from(keyframe::ease_with_scaled_time(
+                        EaseOutCubic,
+                        locations_of_object[0],
+                        locations_of_object[1],
+                        time,
+                        scaled_time[1],
+                    ));
                     ui.painter().rect_filled(
                         Rect {
                             min: Pos2::new(
@@ -578,7 +719,8 @@ impl MyEguiApp {
                                 ),
                                 locations.max.y,
                             ),
-                        },
+                        }
+                        .translate(obj_pos),
                         Rounding::ZERO,
                         Color32::LIGHT_YELLOW.gamma_multiply(0.5),
                     );
@@ -649,6 +791,25 @@ impl MyEguiApp {
             };
             let obj = slide_show.objects.get(&object.object).unwrap();
             match &obj.object {
+                parser::objects::ObjectType::Spinner => {
+                    let size = ResolvedObject::Spinner.bounds(second_viewbox.size(), ui);
+                    let first_pos = Rect::from_min_size(
+                        get_pos!(object.locations[0].0, first_viewbox, size).into(),
+                        size.size().into(),
+                    );
+                    let first_pos = [first_pos.min, first_pos.max];
+                    let second_pos = Rect::from_min_size(
+                        get_pos!(object.locations[1].0, second_viewbox, size).into(),
+                        size.size().into(),
+                    );
+                    let second_pos = [second_pos.min, second_pos.max];
+                    resolved_slides.push(ResolvedSlideObj {
+                        object: ResolvedObject::Spinner,
+                        locations: [first_pos.map(|f| f.into()), second_pos.map(|f| f.into())],
+                        scaled_time: object.scaled_time,
+                        state: object.state,
+                    });
+                }
                 parser::objects::ObjectType::Text { layout_job } => {
                     let mut layout_job = layout_job.clone();
                     layout_job.wrap.max_width = second_viewbox.width();
@@ -656,22 +817,18 @@ impl MyEguiApp {
                         row.format.font_id.size *= size.max.x / 1920.0;
                     }
                     let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
-                    let galley_x = -galley.rect.min.x;
                     let resolved_obj = ResolvedObject::Text(galley);
                     let size = resolved_obj.bounds(second_viewbox.size(), ui);
-                    use parser::viewboxes::LineUp;
                     let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, size).into(),
                         size.size().into(),
                     );
-                    let mut first_pos = [first_pos.min, first_pos.max];
+                    let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
                         get_pos!(object.locations[1].0, second_viewbox, size).into(),
                         size.size().into(),
                     );
-                    let mut second_pos = [second_pos.min, second_pos.max];
-                    first_pos[0][0] += galley_x;
-                    second_pos[0][0] += galley_x;
+                    let second_pos = [second_pos.min, second_pos.max];
                     resolved_slides.push(ResolvedSlideObj {
                         object: resolved_obj,
                         locations: [first_pos.map(|f| f.into()), second_pos.map(|f| f.into())],
@@ -778,7 +935,6 @@ impl MyEguiApp {
                     //         }
                     //     },
                     // };
-                    use parser::viewboxes::LineUp;
                     let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, first_size).into(),
                         first_size.size().into(),
@@ -825,42 +981,42 @@ impl MyEguiApp {
                             ),
                             _ => todo!(),
                         };
-                        from_rect
-                            .union(to_rect)
-                            .translate(Vec2::from(text_object.locations[1][0]))
+                        from_rect.union(to_rect)
                     } else {
                         match &text_object.object {
-                            ResolvedObject::Text(_) => Rect::from([
-                                Pos2::from(text_object.locations[1][0]),
-                                Pos2::from(text_object.locations[1][1]),
-                            ]),
+                            ResolvedObject::Text(_) => {
+                                let to_rect = Rect::from([
+                                    Pos2::from(text_object.locations[1][0]),
+                                    Pos2::from(text_object.locations[1][1]),
+                                ]);
+                                Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size())
+                            }
                             _ => todo!(),
                         }
                     };
                     resolved_actions.push(ResolvedActions::Highlight {
                         locations,
                         persist: *persist,
+                        locations_of_object: [
+                            text_object.locations[0][0],
+                            text_object.locations[1][0],
+                        ],
+                        scaled_time: text_object.scaled_time,
                     });
                 }
             }
         }
         resolved_actions
     }
-}
 
-impl eframe::App for MyEguiApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: Option<&mut eframe::Frame>) {
         self.time += ctx.input(|i| i.stable_dt);
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.window_size == [0, 0] {
-                return;
-            }
-        }
         #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|input| {
             if input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape) {
-                frame.close();
+                if let Some(&mut ref mut frame) = frame {
+                    frame.close();
+                }
             }
         });
         let slide_show_cloned = Arc::clone(&self.slide_show);
@@ -869,158 +1025,154 @@ impl eframe::App for MyEguiApp {
         let mut button_hit = false;
         #[cfg(not(target_arch = "wasm32"))]
         let button_hit = false;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if slide_show.slide_show.is_empty() {
-                ui.centered_and_justified(|ui| ui.spinner());
-                return;
+        let mut index = self.index.load(Ordering::Relaxed);
+        if index >= slide_show.slide_show.len() {
+            index = slide_show.slide_show.len() - 1;
+            self.index
+                .store(slide_show.slide_show.len() - 1, Ordering::Relaxed);
+            self.next.store(false, Ordering::Relaxed);
+        }
+        if let Some(slide) = slide_show.slide_show.get(index) {
+            match slide {
+                AstObject::Slide { bg, .. } => {
+                    if let Some(b) = bg.1 {
+                        let color: Color32 =
+                            bg.0.interpolate(b.1, self.time, b.0.as_secs_f32()).into();
+                        self.clear_color = color;
+                    }
+                }
+                _ => {}
             }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let available = ui.available_size();
-                let window_size = [available.x as u32, available.y as u32];
+        }
+
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(self.clear_color))
+            .show(ctx, |ui| {
+                let window_size = ui.available_size();
                 if self.window_size != window_size {
-                    self.time = 0.0;
                     self.window_size = window_size;
                     self.resolved_viewboxes.clear();
                     self.resolved_actions = None;
                     self.resolved_slide = None;
                 }
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            if self.clear_resolved.load(Ordering::Relaxed) {
-                self.resolved_actions = None;
-                self.resolved_slide = None;
-                self.resolved_viewboxes.clear();
-                self.clear_resolved.store(false, Ordering::Relaxed);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            if self.restart_timer.load(Ordering::Relaxed) {
-                self.time = 0.0;
-                self.restart_timer.store(false, Ordering::Relaxed);
-            }
+                if self.clear_resolved.load(Ordering::Relaxed) {
+                    self.resolved_actions = None;
+                    self.resolved_slide = None;
+                    self.resolved_viewboxes.clear();
+                    self.clear_resolved.store(false, Ordering::Relaxed);
+                }
+                if self.restart_timer.load(Ordering::Relaxed) {
+                    self.time = 0.0;
+                    self.restart_timer.store(false, Ordering::Relaxed);
+                }
 
-            let mut index = self.index.load(Ordering::Relaxed);
-            if index >= slide_show.slide_show.len() {
-                index = slide_show.slide_show.len() - 1;
-                self.index
-                    .store(slide_show.slide_show.len() - 1, Ordering::Relaxed);
-                self.next.store(false, Ordering::Relaxed);
-            }
-            // This is safe because the resolution functions do not touch self.slide_show.slide_show
-            let resolved_slide = {
-                if let Some(slide) = slide_show.slide_show.get(index) {
-                    match &self.resolved_slide {
-                        None => match slide {
-                            AstObject::Slide {
-                                objects: slide,
-                                actions,
-                                ..
-                            } => {
-                                let resolved_slide = self.resolve_slide(
-                                    slide,
-                                    ui,
-                                    Vec2::new(
-                                        self.window_size[0] as f32,
-                                        self.window_size[1] as f32,
-                                    ),
-                                    &slide_show,
-                                );
-                                self.resolved_actions =
-                                    Some(self.resolve_actions(actions, &resolved_slide));
-                                self.resolved_slide = Some(resolved_slide);
-                                self.resolved_slide.as_ref().unwrap()
-                            }
-                            AstObject::Action {
-                                actions,
-                                slide_in_ast,
-                            } => {
-                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                                match slide {
-                                    AstObject::Slide { objects, .. } => {
-                                        let resolved_slide = self.resolve_slide(
-                                            objects,
-                                            ui,
-                                            Vec2::new(
-                                                self.window_size[0] as f32,
-                                                self.window_size[1] as f32,
-                                            ),
-                                            &slide_show,
-                                        );
-                                        self.resolved_actions =
-                                            Some(self.resolve_actions(actions, &resolved_slide));
-                                        self.resolved_slide = Some(resolved_slide);
-                                        self.resolved_slide.as_ref().unwrap()
+                // This is safe because the resolution functions do not touch self.slide_show.slide_show
+                let resolved_slide = {
+                    if let Some(slide) = slide_show.slide_show.get(index) {
+                        match &self.resolved_slide {
+                            None => match slide {
+                                AstObject::Slide {
+                                    objects: slide,
+                                    actions,
+                                    ..
+                                } => {
+                                    let resolved_slide = self.resolve_slide(
+                                        slide,
+                                        ui,
+                                        self.window_size,
+                                        &slide_show,
+                                    );
+                                    self.resolved_actions =
+                                        Some(self.resolve_actions(actions, &resolved_slide));
+                                    self.resolved_slide = Some(resolved_slide);
+                                    self.resolved_slide.as_ref().unwrap()
+                                }
+                                AstObject::Action {
+                                    actions,
+                                    slide_in_ast,
+                                } => {
+                                    let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
+                                    match slide {
+                                        AstObject::Slide { objects, .. } => {
+                                            let resolved_slide = self.resolve_slide(
+                                                objects,
+                                                ui,
+                                                self.window_size,
+                                                &slide_show,
+                                            );
+                                            self.resolved_actions = Some(
+                                                self.resolve_actions(actions, &resolved_slide),
+                                            );
+                                            self.resolved_slide = Some(resolved_slide);
+                                            self.resolved_slide.as_ref().unwrap()
+                                        }
+                                        _ => todo!(),
                                     }
-                                    _ => todo!(),
+                                }
+                            },
+                            Some(resolved) => resolved,
+                        }
+                    } else {
+                        return;
+                    }
+                };
+                if let Some(slide) = slide_show.slide_show.get(index) {
+                    let resolved_actions = match &self.resolved_actions {
+                        None => unreachable!(),
+                        Some(resolved) => resolved,
+                    };
+
+                    match slide {
+                        AstObject::Slide { max_time, next, .. } => {
+                            self.draw_slide(resolved_slide, ui, self.time);
+                            self.draw_actions(resolved_actions, ui, self.time);
+
+                            if self.time < *max_time {
+                                ctx.request_repaint();
+                            } else if *next && self.next.load(Ordering::Relaxed) {
+                                self.index.fetch_add(1, Ordering::Relaxed);
+                                self.resolved_actions = None;
+                                self.resolved_slide = None;
+                                self.time = 0.0;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.vb_dbg.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.obj_dbg.store(0, Ordering::Relaxed);
+                            }
+                        }
+                        AstObject::Action { slide_in_ast, .. } => {
+                            let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
+                            match slide {
+                                AstObject::Slide { max_time, .. } => {
+                                    self.draw_slide(resolved_slide, ui, *max_time);
+                                }
+                                _ => todo!(),
+                            }
+                            self.draw_actions(resolved_actions, ui, self.time);
+
+                            if self.time < 0.5 {
+                                ctx.request_repaint();
+                            }
+                        }
+                    }
+
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        let vb_dbg = self.vb_dbg.load(Ordering::Relaxed);
+                        if vb_dbg > 0 {
+                            if let Some(vb) = self.resolved_viewboxes.get(&vb_dbg) {
+                                for rect in vb {
+                                    ctx.debug_painter().rect_stroke(
+                                        *rect,
+                                        Rounding::ZERO,
+                                        Stroke::new(2.0, Color32::RED),
+                                    );
                                 }
                             }
-                        },
-                        Some(resolved) => resolved,
-                    }
-                } else {
-                    return;
-                }
-            };
-            if let Some(slide) = slide_show.slide_show.get(index) {
-                let resolved_actions = match &self.resolved_actions {
-                    None => unreachable!(),
-                    Some(resolved) => resolved,
-                };
-
-                match slide {
-                    AstObject::Slide { max_time, next, .. } => {
-                        self.draw_slide(resolved_slide, ui, self.time);
-                        self.draw_actions(resolved_actions, ui, self.time);
-
-                        if self.time < *max_time {
-                            ctx.request_repaint();
-                        } else if *next && self.next.load(Ordering::Relaxed) {
-                            self.index.fetch_add(1, Ordering::Relaxed);
-                            self.resolved_actions = None;
-                            self.resolved_slide = None;
-                            self.time = 0.0;
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.vb_dbg.store(0, Ordering::Relaxed);
-                            #[cfg(not(target_arch = "wasm32"))]
-                            self.obj_dbg.store(0, Ordering::Relaxed);
-                        }
-                    }
-                    AstObject::Action { slide_in_ast, .. } => {
-                        let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                        match slide {
-                            AstObject::Slide { max_time, .. } => {
-                                self.draw_slide(resolved_slide, ui, *max_time);
-                            }
-                            _ => todo!(),
-                        }
-                        self.draw_actions(resolved_actions, ui, self.time);
-
-                        if self.time < 0.5 {
-                            ctx.request_repaint();
                         }
                     }
                 }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let vb_dbg = self.vb_dbg.load(Ordering::Relaxed);
-                    if vb_dbg > 0 {
-                        if let Some(vb) = self.resolved_viewboxes.get(&vb_dbg) {
-                            for rect in vb {
-                                ctx.debug_painter().rect_stroke(
-                                    *rect,
-                                    Rounding::ZERO,
-                                    Stroke::new(2.0, Color32::RED),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        if slide_show.slide_show.is_empty() {
-            return;
-        }
+            });
         #[cfg(target_arch = "wasm32")]
         egui::TopBottomPanel::bottom("controls")
             .exact_height(32.0)
@@ -1065,7 +1217,9 @@ impl eframe::App for MyEguiApp {
                                 if index == slide_show.slide_show.len() - 1 {
                                     #[cfg(not(target_arch = "wasm32"))]
                                     if !self.dont_exit {
-                                        frame.close();
+                                        if let Some(&mut ref mut frame) = frame {
+                                            frame.close();
+                                        }
                                     }
                                     None
                                 } else {
@@ -1142,22 +1296,20 @@ impl eframe::App for MyEguiApp {
             }
         })
     }
+}
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn post_rendering(&mut self, window_size_px: [u32; 2], _frame: &eframe::Frame) {
-        if self.window_size != window_size_px {
-            self.time = 0.0;
-            self.window_size = window_size_px;
-            self.resolved_viewboxes.clear();
-            self.resolved_actions = None;
-            self.resolved_slide = None;
-        }
+impl eframe::App for MyEguiApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.update(ctx, Some(frame))
     }
 }
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    use eframe::egui::ImageSize;
+    use rand::{Rng, SeedableRng};
+
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let args: Args = clap::Parser::parse();
@@ -1167,7 +1319,7 @@ fn main() -> eframe::Result<()> {
         vsync: true,
         ..Default::default()
     };
-    let app = MyEguiApp::new(&args);
+    let mut app = MyEguiApp::new(&args);
     let init_app = app.0.clone();
 
     if args.fmt {
@@ -1197,6 +1349,36 @@ fn main() -> eframe::Result<()> {
             }
         }
         return Ok(());
+    } else if args.thumbnail {
+        let slide_num = {
+            let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
+            rand_xoshiro::Xoshiro128PlusPlus::seed_from_u64(
+                hasher.hash_one(&*app.0.slide_show_file.lock()),
+            )
+            .gen_range(0..app.0.slide_show.read().slide_show.len())
+        };
+        app.0.index.store(slide_num, Ordering::SeqCst);
+        let size = Vec2::new(args.size.unwrap_or(128.0), args.size.unwrap_or(128.0));
+        let fit = ImageSize {
+            max_size: size,
+            ..Default::default()
+        }
+        .calc_size(size, Vec2::new(1920.0, 1080.0));
+        let pixmap = egui_rasterizer::rasterize((fit.x, fit.y), |ctx| {
+            app.0.time = f32::MAX;
+            app.0.init_app(ctx, app.1, app.2).update(ctx, None)
+        });
+
+        image::save_buffer(
+            args.output.unwrap(),
+            pixmap.data(),
+            pixmap.width(),
+            pixmap.height(),
+            image::ColorType::Rgba8,
+        )
+        .unwrap();
+
+        return Ok(());
     }
 
     eframe::run_native(
@@ -1213,7 +1395,7 @@ fn main() -> eframe::Result<()> {
                 std::thread::spawn(move || lsp::start_lsp(app.0, current_thread, lsp_egui_ctx));
                 std::thread::park();
             }
-            Box::new(init_app.init_app(cc, app.1))
+            Box::new(init_app.init_app(&cc.egui_ctx, app.1, app.2))
         }),
     )
 }
@@ -1237,7 +1419,12 @@ fn main() {
                 Box::new(|cc| {
                     Box::new({
                         let app = MyEguiApp::new();
-                        app.0.init_app(cc, app.1)
+                        app.0.init_app(
+                            &cc.egui_ctx,
+                            app.1,
+                            app.2,
+                            &cc.integration_info.web_info.location.hash[1..],
+                        )
                     })
                 }),
             )

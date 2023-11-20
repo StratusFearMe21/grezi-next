@@ -3,4 +3,5 @@
 (obj
     name: (identifier) @obj)
 (register
-    name: (identifier) @obj)
+    (obj_param
+        key: (identifier) @obj))

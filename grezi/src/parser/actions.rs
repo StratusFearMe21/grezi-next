@@ -21,7 +21,12 @@ pub enum Actions {
 
 #[derive(Debug, Clone)]
 pub enum ResolvedActions {
-    Highlight { locations: Rect, persist: bool },
+    Highlight {
+        locations: Rect,
+        persist: bool,
+        locations_of_object: [[f32; 2]; 2],
+        scaled_time: [f32; 2],
+    },
 }
 
 #[cfg(not(target_arch = "wasm32"))]
