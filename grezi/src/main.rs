@@ -102,8 +102,6 @@ pub struct Args {
     pub export: bool,
     #[clap(long)]
     pub lsp: bool,
-    #[clap(short, long)]
-    pub pdf: bool,
     #[clap(long)]
     pub fmt: bool,
     #[clap(short, long)]
