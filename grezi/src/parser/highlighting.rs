@@ -159,31 +159,34 @@ pub fn highlight_text(
 
                 for line in slice.lines() {
                     let line_str: std::borrow::Cow<'_, str> = line.into();
-                    layout_job.append(
-                        line_str.as_ref(),
-                        0.0,
-                        TextFormat {
-                            font_id: font_id.clone(),
-                            color: Color32::from_rgb(f_r, f_g, f_b),
-                            background: Color32::TRANSPARENT,
-                            italics: style.add_modifier.contains(Modifier::ITALIC),
-                            underline: if style.underline_style.is_some() {
-                                let Color::Rgb(u_r, u_g, u_b) = style.underline_color.unwrap()
-                                else {
-                                    unreachable!()
-                                };
-                                Stroke::new(3.0, Color32::from_rgb(u_r, u_g, u_b))
-                            } else {
-                                Stroke::NONE
+                    if !line_str.is_empty() {
+                        layout_job.append(
+                            line_str.as_ref(),
+                            0.0,
+                            TextFormat {
+                                font_id: font_id.clone(),
+                                color: Color32::from_rgb(f_r, f_g, f_b),
+                                background: Color32::TRANSPARENT,
+                                italics: style.add_modifier.contains(Modifier::ITALIC),
+                                underline: if style.underline_style.is_some() {
+                                    let Color::Rgb(u_r, u_g, u_b) = style.underline_color.unwrap()
+                                    else {
+                                        unreachable!()
+                                    };
+                                    Stroke::new(3.0, Color32::from_rgb(u_r, u_g, u_b))
+                                } else {
+                                    Stroke::NONE
+                                },
+                                strikethrough: if style.add_modifier.contains(Modifier::CROSSED_OUT)
+                                {
+                                    Stroke::new(3.0, Color32::from_rgb(f_r, f_g, f_b))
+                                } else {
+                                    Stroke::NONE
+                                },
+                                ..Default::default()
                             },
-                            strikethrough: if style.add_modifier.contains(Modifier::CROSSED_OUT) {
-                                Stroke::new(3.0, Color32::from_rgb(f_r, f_g, f_b))
-                            } else {
-                                Stroke::NONE
-                            },
-                            ..Default::default()
-                        },
-                    );
+                        );
+                    }
                 }
             }
         }

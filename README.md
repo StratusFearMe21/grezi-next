@@ -31,3 +31,15 @@ Try [Helix](https://github.com/helix-editor/helix)
 Grezi allows you to hot reload your presentation *as* you create it. There are 2 hot reloading implementations
 - LSP (ideal): Just run the LSP, every keystroke you make will be reflected in the slideshow window.
 - Watching: When not in LSP mode, Grezi will watch the open presentation for changes. This implementation is slower than using the LSP hot reloading, but if you don't have an IDE, this should work for you. 
+
+### Cairo based exporting
+Grezi allows you to export your presentation to PDF/PostScript using the `cairo` library. Just use the export flag
+```sh
+grezi -eo new.pdf new.grz 
+grezi -eo new.ps new.grz 
+grezi -eo new.png -i 6 new.grz 
+grezi -eo new.png -i 6..8 new.grz 
+grezi -eo new.png -i 6..8 -s 512 new.grz 
+grezi -eo new.png -i 6..8 -s 1920x1080 new.grz 
+```
+Warning: You can also export to SVG, however, this method is not very reliable.

@@ -378,23 +378,25 @@ pub fn parse_objects(
 
                     macro_rules! layout_append {
                         ($layout_job:expr,$text:expr,$font_id:expr) => {
-                            $layout_job.append(
-                                $text,
-                                0.0,
-                                TextFormat {
-                                    font_id: $font_id,
-                                    color: color.unwrap_or(Color32::WHITE),
-                                    background: bg.unwrap_or(Color32::TRANSPARENT),
-                                    italics: tags.contains(&Tag::Emphasis),
-                                    underline: Stroke::NONE,
-                                    strikethrough: if tags.contains(&Tag::Strikethrough) {
-                                        Stroke::new(3.0, Color32::WHITE)
-                                    } else {
-                                        Stroke::NONE
+                            if !$text.is_empty() {
+                                $layout_job.append(
+                                    $text,
+                                    0.0,
+                                    TextFormat {
+                                        font_id: $font_id,
+                                        color: color.unwrap_or(Color32::WHITE),
+                                        background: bg.unwrap_or(Color32::TRANSPARENT),
+                                        italics: tags.contains(&Tag::Emphasis),
+                                        underline: Stroke::NONE,
+                                        strikethrough: if tags.contains(&Tag::Strikethrough) {
+                                            Stroke::new(3.0, Color32::WHITE)
+                                        } else {
+                                            Stroke::NONE
+                                        },
+                                        ..Default::default()
                                     },
-                                    ..Default::default()
-                                },
-                            );
+                                );
+                            }
                         };
                     }
 
