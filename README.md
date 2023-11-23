@@ -33,7 +33,7 @@ Grezi allows you to hot reload your presentation *as* you create it. There are 2
 - Watching: When not in LSP mode, Grezi will watch the open presentation for changes. This implementation is slower than using the LSP hot reloading, but if you don't have an IDE, this should work for you. 
 
 ### Cairo based exporting
-Grezi allows you to export your presentation to PDF/PostScript using the `cairo` library. Just use the export flag
+Grezi allows you to export your presentation to PDF, PostScript, and many image formats using the `cairo` library. Just use the export flag like so
 ```sh
 grezi -eo new.pdf new.grz 
 grezi -eo new.ps new.grz 
