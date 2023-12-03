@@ -45,7 +45,7 @@ pub fn parse_color_keyword(ident: &str) -> Result<Color, ()> {
 /// Parse a CSS color using the specified [`ColorParser`] and return a new color
 /// value on success.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn parse_color_with<'i, 't, P>(
+pub fn parse_color_with<'i, 't>(
     color_parser: &mut DefaultColorParser<'_>,
     input: &mut Parser<'i, 't>,
 ) -> Result<(std::time::Duration, Color), ParseError<'i, super::Error>> {
@@ -63,7 +63,7 @@ pub fn parse_color_with<'i, 't, P>(
                 match_ignore_ascii_case! { unit.as_ref(),
                     "s" => duration = Duration::from_secs_f32(value),
                     "ms" => duration = Duration::from_secs_f32(value / 1000.0),
-                    _ => return Err(location.new_unexpected_token_error(Token::Ident(unit.clone())))
+                    _ => return dbg!(Err(location.new_unexpected_token_error(Token::Ident(unit.clone()))))
                 }
                 continue;
             }
@@ -89,23 +89,19 @@ pub fn parse_color_with<'i, 't, P>(
             }
             Token::Function(ref name) => {
                 let name = name.clone();
-                let t = token.clone();
                 break input
                     .parse_nested_block(|arguments| {
                         parse_color_function(color_parser, name, arguments)
                     })
-                    .map_or_else(
-                        |_| Err(location.new_unexpected_token_error(t)),
-                        |v| Ok((duration, v)),
-                    )?;
+                    .map_or_else(|e| Err(e), |v| Ok((duration, v)))?;
             }
-            _ => return Err(location.new_unexpected_token_error(token.clone())),
+            _ => return dbg!(Err(location.new_unexpected_token_error(token.clone())),),
         };
     };
     match colorspace_in {
         Some((location, color)) => match_ignore_ascii_case! { color.as_ref(),
             "rgb" | "rgba" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: palette::LinSrgba = (**reference).into_color();
                     **reference = Color::LinSrgb(color);
                 }
@@ -114,7 +110,7 @@ pub fn parse_color_with<'i, 't, P>(
             },
 
             "hsl" | "hsla" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: Alpha<Hsl<Linear<Srgb>>, f32> = (**reference).into_color();
                     **reference = Color::Hsl(color);
                 }
@@ -123,7 +119,7 @@ pub fn parse_color_with<'i, 't, P>(
             },
 
             "hwb" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: Alpha<Hwb<Linear<Srgb>>, f32> = (**reference).into_color();
                     **reference = Color::Hwb(color);
                 }
@@ -134,7 +130,7 @@ pub fn parse_color_with<'i, 't, P>(
             // for L: 0% = 0.0, 100% = 100.0
             // for a and b: -100% = -125, 100% = 125
             "lab" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: palette::Laba = (**reference).into_color();
                     **reference = Color::Lab(color);
                 }
@@ -145,7 +141,7 @@ pub fn parse_color_with<'i, 't, P>(
             // for L: 0% = 0.0, 100% = 100.0
             // for C: 0% = 0, 100% = 150
             "lch" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: palette::Lcha = (**reference).into_color();
                     **reference = Color::Lch(color);
                 }
@@ -156,7 +152,7 @@ pub fn parse_color_with<'i, 't, P>(
             // for L: 0% = 0.0, 100% = 1.0
             // for a and b: -100% = -0.4, 100% = 0.4
             "oklab" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: palette::Oklaba = (**reference).into_color();
                     **reference = Color::Oklab(color);
                 }
@@ -167,14 +163,14 @@ pub fn parse_color_with<'i, 't, P>(
             // for L: 0% = 0.0, 100% = 1.0
             // for C: 0% = 0.0 100% = 0.4
             "oklch" => {
-                if let Some(ref mut reference) = color_parser.reference {
+                if let Some(ref mut reference) = color_parser.reference() {
                     let color: palette::Oklcha = (**reference).into_color();
                     **reference = Color::Oklch(color);
                 }
                 let color: palette::Oklcha = color_result.1.into_color();
                 color_result.1 = Color::Oklch(color);
             },
-            _ => return Err(location.new_unexpected_token_error(Token::Ident(color.clone()))),
+            _ => return dbg!(Err(location.new_unexpected_token_error(Token::Ident(color.clone()))),)
         },
         None => {}
     }
@@ -189,74 +185,50 @@ fn parse_color_function<'i, 't>(
     name: CowRcStr<'i>,
     arguments: &mut Parser<'i, 't>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
+    if let Some(ref mut cp) = color_parser.reference() {
+        cp.convert_color(name.as_ref());
+    }
+
     let color = match_ignore_ascii_case! { &name,
         "rgb" | "rgba" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: palette::LinSrgba = (**reference).into_color();
-                **reference = Color::LinSrgb(color);
-            }
             parse_rgb(color_parser, arguments)
         },
 
         "hsl" | "hsla" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: Alpha<Hsl<Linear<Srgb>>, f32> = (**reference).into_color();
-                **reference = Color::Hsl(color);
-            }
             parse_hsl(color_parser, arguments)
         },
 
         "hwb" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: Alpha<Hwb<Linear<Srgb>>, f32> = (**reference).into_color();
-                **reference = Color::Hwb(color);
-            }
             parse_hwb(color_parser, arguments)
         },
 
         // for L: 0% = 0.0, 100% = 100.0
         // for a and b: -100% = -125, 100% = 125
         "lab" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: palette::Laba = (**reference).into_color();
-                **reference = Color::Lab(color);
-            }
             parse_lab_like(color_parser, arguments, 100.0, 125.0, Color::from_lab)
         },
 
         // for L: 0% = 0.0, 100% = 100.0
         // for C: 0% = 0, 100% = 150
         "lch" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: palette::Lcha = (**reference).into_color();
-                **reference = Color::Lch(color);
-            }
             parse_lch_like(color_parser, arguments, 100.0, 150.0, Color::from_lch)
         },
 
         // for L: 0% = 0.0, 100% = 1.0
         // for a and b: -100% = -0.4, 100% = 0.4
         "oklab" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: palette::Oklaba = (**reference).into_color();
-                **reference = Color::Oklab(color);
-            }
             parse_lab_like(color_parser, arguments, 1.0, 0.4, Color::from_oklab)
         },
 
         // for L: 0% = 0.0, 100% = 1.0
         // for C: 0% = 0.0 100% = 0.4
         "oklch" => {
-            if let Some(ref mut reference) = color_parser.reference {
-                let color: palette::Oklcha = (**reference).into_color();
-                **reference = Color::Oklch(color);
-            }
             parse_lch_like(color_parser, arguments, 1.0, 0.4, Color::from_oklch)
         },
 
         "color" => parse_color_with_color_space(color_parser, arguments),
 
-        _ => return Err(arguments.new_unexpected_token_error(Token::Ident(name))),
+        _ => return dbg!(Err(arguments.new_unexpected_token_error(Token::Ident(name))),)
     }?;
 
     arguments.expect_exhausted()?;
@@ -499,24 +471,24 @@ fn parse_color_with_color_space<'i, 't>(
 
     match color_space {
         PredefinedColorSpace::Srgb | PredefinedColorSpace::SrgbLinear => {
-            if let Some(ref mut reference) = color_parser.reference {
+            if let Some(ref mut reference) = color_parser.reference() {
                 let color: palette::LinSrgba = (**reference).into_color();
                 **reference = Color::LinSrgb(color);
             }
         }
         PredefinedColorSpace::XyzD50 => {
-            if let Some(ref mut reference) = color_parser.reference {
+            if let Some(ref mut reference) = color_parser.reference() {
                 let color: palette::Xyza<D65, f32> = (**reference).into_color();
                 **reference = Color::XyzD50(color.adapt_into());
             }
         }
         PredefinedColorSpace::XyzD65 => {
-            if let Some(ref mut reference) = color_parser.reference {
+            if let Some(ref mut reference) = color_parser.reference() {
                 let color: palette::Xyza<D65, f32> = (**reference).into_color();
                 **reference = Color::XyzD65(color);
             }
         }
-        _ => return Err(arguments.new_error_for_next_token()),
+        _ => return dbg!(Err(arguments.new_error_for_next_token()),),
     }
 
     let (c1, c2, c3, alpha) = parse_components(
@@ -589,6 +561,7 @@ fn normalize_hue(hue: f32) -> f32 {
 }
 
 /// Either a number or a percentage.
+#[derive(Debug)]
 pub enum NumberOrPercentage {
     /// `<number>`.
     Number {
@@ -601,6 +574,114 @@ pub enum NumberOrPercentage {
         /// 0.0 to 1.0.
         unit_value: f32,
     },
+}
+
+impl std::ops::Add for NumberOrPercentage {
+    type Output = NumberOrPercentage;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        match self {
+            NumberOrPercentage::Number { value } => match rhs {
+                NumberOrPercentage::Number { value: rhs } => {
+                    NumberOrPercentage::Number { value: value + rhs }
+                }
+                NumberOrPercentage::Percentage { unit_value } => NumberOrPercentage::Number {
+                    value: value + (value * unit_value),
+                },
+            },
+            NumberOrPercentage::Percentage { unit_value } => match rhs {
+                NumberOrPercentage::Number { value } => NumberOrPercentage::Percentage {
+                    unit_value: unit_value + (value / 100.0),
+                },
+                NumberOrPercentage::Percentage { unit_value: rhs } => {
+                    NumberOrPercentage::Percentage {
+                        unit_value: unit_value + rhs,
+                    }
+                }
+            },
+        }
+    }
+}
+
+impl std::ops::Sub for NumberOrPercentage {
+    type Output = NumberOrPercentage;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        match self {
+            NumberOrPercentage::Number { value } => match rhs {
+                NumberOrPercentage::Number { value: rhs } => {
+                    NumberOrPercentage::Number { value: value - rhs }
+                }
+                NumberOrPercentage::Percentage { unit_value } => NumberOrPercentage::Number {
+                    value: value - (value * unit_value),
+                },
+            },
+            NumberOrPercentage::Percentage { unit_value } => match rhs {
+                NumberOrPercentage::Number { value } => NumberOrPercentage::Percentage {
+                    unit_value: unit_value - (value / 100.0),
+                },
+                NumberOrPercentage::Percentage { unit_value: rhs } => {
+                    NumberOrPercentage::Percentage {
+                        unit_value: unit_value - rhs,
+                    }
+                }
+            },
+        }
+    }
+}
+
+impl std::ops::Mul for NumberOrPercentage {
+    type Output = NumberOrPercentage;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        match self {
+            NumberOrPercentage::Number { value } => match rhs {
+                NumberOrPercentage::Number { value: rhs } => {
+                    NumberOrPercentage::Number { value: value * rhs }
+                }
+                NumberOrPercentage::Percentage { unit_value } => NumberOrPercentage::Number {
+                    value: value * (value * unit_value),
+                },
+            },
+            NumberOrPercentage::Percentage { unit_value } => match rhs {
+                NumberOrPercentage::Number { value } => NumberOrPercentage::Percentage {
+                    unit_value: unit_value * (value / 100.0),
+                },
+                NumberOrPercentage::Percentage { unit_value: rhs } => {
+                    NumberOrPercentage::Percentage {
+                        unit_value: unit_value * rhs,
+                    }
+                }
+            },
+        }
+    }
+}
+
+impl std::ops::Div for NumberOrPercentage {
+    type Output = NumberOrPercentage;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match self {
+            NumberOrPercentage::Number { value } => match rhs {
+                NumberOrPercentage::Number { value: rhs } => {
+                    NumberOrPercentage::Number { value: value / rhs }
+                }
+                NumberOrPercentage::Percentage { unit_value } => NumberOrPercentage::Number {
+                    value: value / (value * unit_value),
+                },
+            },
+            NumberOrPercentage::Percentage { unit_value } => match rhs {
+                NumberOrPercentage::Number { value } => NumberOrPercentage::Percentage {
+                    unit_value: unit_value / (value / 100.0),
+                },
+                NumberOrPercentage::Percentage { unit_value: rhs } => {
+                    NumberOrPercentage::Percentage {
+                        unit_value: unit_value / rhs,
+                    }
+                }
+            },
+        }
+    }
 }
 
 impl NumberOrPercentage {
@@ -623,6 +704,7 @@ impl NumberOrPercentage {
 }
 
 /// Either an angle or a number.
+#[derive(Debug)]
 pub enum AngleOrNumber {
     /// `<number>`.
     Number {
@@ -634,6 +716,66 @@ pub enum AngleOrNumber {
         /// The value as a number of degrees.
         degrees: f32,
     },
+}
+
+impl std::ops::Add for AngleOrNumber {
+    type Output = AngleOrNumber;
+
+    fn add(self, rhs: AngleOrNumber) -> Self::Output {
+        match self {
+            AngleOrNumber::Angle { degrees } => AngleOrNumber::Angle {
+                degrees: degrees + rhs.degrees(),
+            },
+            AngleOrNumber::Number { value } => AngleOrNumber::Number {
+                value: value + rhs.degrees(),
+            },
+        }
+    }
+}
+
+impl std::ops::Sub for AngleOrNumber {
+    type Output = AngleOrNumber;
+
+    fn sub(self, rhs: AngleOrNumber) -> Self::Output {
+        match self {
+            AngleOrNumber::Angle { degrees } => AngleOrNumber::Angle {
+                degrees: degrees - rhs.degrees(),
+            },
+            AngleOrNumber::Number { value } => AngleOrNumber::Number {
+                value: value - rhs.degrees(),
+            },
+        }
+    }
+}
+
+impl std::ops::Mul for AngleOrNumber {
+    type Output = AngleOrNumber;
+
+    fn mul(self, rhs: AngleOrNumber) -> Self::Output {
+        match self {
+            AngleOrNumber::Angle { degrees } => AngleOrNumber::Angle {
+                degrees: degrees * rhs.degrees(),
+            },
+            AngleOrNumber::Number { value } => AngleOrNumber::Number {
+                value: value * rhs.degrees(),
+            },
+        }
+    }
+}
+
+impl std::ops::Div for AngleOrNumber {
+    type Output = AngleOrNumber;
+
+    fn div(self, rhs: AngleOrNumber) -> Self::Output {
+        match self {
+            AngleOrNumber::Angle { degrees } => AngleOrNumber::Angle {
+                degrees: degrees / rhs.degrees(),
+            },
+            AngleOrNumber::Number { value } => AngleOrNumber::Number {
+                value: value / rhs.degrees(),
+            },
+        }
+    }
 }
 
 impl AngleOrNumber {
@@ -661,7 +803,8 @@ impl<'a, 'i> DefaultColorParser<'a> {
         input: &mut Parser<'i, 't>,
     ) -> Result<AngleOrNumber, ParseError<'i, super::Error>> {
         let location = input.current_source_location();
-        Ok(match *input.next()? {
+        let token = input.next()?;
+        Ok(match *token {
             Token::Number { value, .. } => AngleOrNumber::Number { value },
             Token::Dimension {
                 value: v, ref unit, ..
@@ -672,40 +815,78 @@ impl<'a, 'i> DefaultColorParser<'a> {
                     "rad" => v * 360. / (2. * PI),
                     "turn" => v * 360.,
                     _ => {
-                        return Err(location.new_unexpected_token_error(Token::Ident(unit.clone())))
+                        return dbg!(Err(location.new_unexpected_token_error(Token::Ident(unit.clone()))))
                     }
                 };
 
                 AngleOrNumber::Angle { degrees }
             }
-            ref t @ Token::Ident(ref i) => match self.reference {
-                Some(Color::Hsl(hsl)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "h" => AngleOrNumber::Angle { degrees: hsl.hue.into_positive_degrees() },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
+            Token::Function(ref name) => {
+                let t = token.clone();
+                match_ignore_ascii_case! { name.as_ref(),
+                    "calc" => input.parse_nested_block(|args| {
+                        let num = self.parse_angle_or_number(args)?;
+                        let Token::Delim(d) = *args.next()? else {
+                            return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                        };
+                        let den = self.parse_angle_or_number(args)?;
+                        let res = match d {
+                            '+' => num + den,
+                            '-' => num - den,
+                            '*' => num * den,
+                            '/' => num / den,
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        };
+                        Ok(res)
+                    })?,
+                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                }
+            }
+            Token::Ident(ref i) => {
+                let t = token.clone();
+                match_ignore_ascii_case! { i.as_ref(),
+                    "from" => {
+                        let reference_type = self.reference().map(|c| c.as_str());
+                        let mut reference = parse_color_with(self, input)?.1;
+                        if let Some(ref mut cp) = self.reference() {
+                            cp.convert_color(reference_type.unwrap());
+                            reference.convert_color(reference_type.unwrap());
+                        }
+                        self.owned_reference = Some(reference);
+                        self.parse_angle_or_number(input)?
+                    },
+                    _ => {
+                        match self.reference() {
+                            Some(Color::Hsl(hsl)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "h" => AngleOrNumber::Angle { degrees: hsl.hue.into_positive_degrees() },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Hwb(hwb)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "h" => AngleOrNumber::Angle { degrees: hwb.hue.into_positive_degrees() },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Lch(lch)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "h" => AngleOrNumber::Angle { degrees: lch.hue.into_positive_degrees() },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Oklch(oklch)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "h" => AngleOrNumber::Angle { degrees: oklch.hue.into_positive_degrees() },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        }
                     }
                 }
-                Some(Color::Hwb(hwb)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "h" => AngleOrNumber::Angle { degrees: hwb.hue.into_positive_degrees() },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                Some(Color::Lch(lch)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "h" => AngleOrNumber::Angle { degrees: lch.hue.into_positive_degrees() },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                Some(Color::Oklch(oklch)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "h" => AngleOrNumber::Angle { degrees: oklch.hue.into_positive_degrees() },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                _ => return Err(location.new_unexpected_token_error(t.clone())),
-            },
-            ref t => return Err(location.new_unexpected_token_error(t.clone())),
+            }
+            ref t => return dbg!(Err(location.new_unexpected_token_error(t.clone())),),
         })
     }
 
@@ -719,35 +900,72 @@ impl<'a, 'i> DefaultColorParser<'a> {
         let location = input.current_source_location();
         Ok(match *input.next()? {
             Token::Percentage { unit_value, .. } => unit_value,
-            ref t @ Token::Ident(ref i) => match self.reference {
-                Some(Color::LinSrgb(srgb)) => {
-                    let non_linear: palette::Srgba = (*srgb).into_color();
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "r" => non_linear.red,
-                        "g" => non_linear.green,
-                        "b" => non_linear.blue,
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
+            ref t @ Token::Ident(ref i) => {
+                match_ignore_ascii_case! { i.as_ref(),
+                    "from" => {
+                        let reference_type = self.reference().map(|c| c.as_str());
+                        let mut reference = parse_color_with(self, input)?.1;
+                        if let Some(ref mut cp) = self.reference() {
+                            cp.convert_color(reference_type.unwrap());
+                            reference.convert_color(reference_type.unwrap());
+                        }
+                        self.owned_reference = Some(reference);
+                        self.parse_percentage(input)?
+                    },
+                    _ => {
+                        match self.reference() {
+                            Some(Color::LinSrgb(srgb)) => {
+                                let non_linear: palette::Srgba = (*srgb).into_color();
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "r" => non_linear.red,
+                                    "g" => non_linear.green,
+                                    "b" => non_linear.blue,
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Hsl(hsl)) => {
+                                let non_linear: palette::Hsla<Srgb> = (*hsl).into_color();
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "s" => non_linear.saturation,
+                                    "l" => non_linear.lightness,
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Hwb(hwb)) => {
+                                let non_linear: palette::Hwba<Srgb> = (*hwb).into_color();
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "w" => non_linear.whiteness,
+                                    "b" => non_linear.blackness,
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        }
                     }
                 }
-                Some(Color::Hsl(hsl)) => {
-                    let non_linear: palette::Hsla<Srgb> = (*hsl).into_color();
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "s" => non_linear.saturation,
-                        "l" => non_linear.lightness,
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
+            }
+            ref token @ Token::Function(ref name) => {
+                let t = token.clone();
+                match_ignore_ascii_case! { name.as_ref(),
+                    "calc" => input.parse_nested_block(|args| {
+                        let num = self.parse_percentage(args)?;
+                        let Token::Delim(d) = *args.next()? else {
+                            return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                        };
+                        let den = self.parse_percentage(args)?;
+                        let res = match d {
+                            '+' => num + den,
+                            '-' => num - den,
+                            '*' => num * den,
+                            '/' => num / den,
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        };
+                        Ok(res)
+                    })?,
+                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
                 }
-                Some(Color::Hwb(hwb)) => {
-                    let non_linear: palette::Hwba<Srgb> = (*hwb).into_color();
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "w" => non_linear.whiteness,
-                        "b" => non_linear.blackness,
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                _ => return Err(location.new_unexpected_token_error(t.clone())),
-            },
-            ref t => return Err(location.new_unexpected_token_error(t.clone())),
+            }
+            ref t => return dbg!(Err(location.new_unexpected_token_error(t.clone())),),
         })
     }
 
@@ -759,19 +977,56 @@ impl<'a, 'i> DefaultColorParser<'a> {
         let location = input.current_source_location();
         Ok(match *input.next()? {
             Token::Number { value, .. } => value,
-            ref t @ Token::Ident(ref i) => match self.reference {
-                Some(Color::LinSrgb(srgb)) => {
-                    let non_linear: palette::Srgba = (*srgb).into_color();
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "r" => non_linear.red * 255.0,
-                        "g" => non_linear.green * 255.0,
-                        "b" => non_linear.blue * 255.0,
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
+            ref t @ Token::Ident(ref i) => {
+                match_ignore_ascii_case! { i.as_ref(),
+                    "from" => {
+                        let reference_type = self.reference().map(|c| c.as_str());
+                        let mut reference = parse_color_with(self, input)?.1;
+                        if let Some(ref mut cp) = self.reference() {
+                            cp.convert_color(reference_type.unwrap());
+                            reference.convert_color(reference_type.unwrap());
+                        }
+                        self.owned_reference = Some(reference);
+                        self.parse_number(input)?
+                    },
+                    _ => {
+                        match self.reference() {
+                            Some(Color::LinSrgb(srgb)) => {
+                                let non_linear: palette::Srgba = (*srgb).into_color();
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "r" => non_linear.red * 255.0,
+                                    "g" => non_linear.green * 255.0,
+                                    "b" => non_linear.blue * 255.0,
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        }
                     }
                 }
-                _ => return Err(location.new_unexpected_token_error(t.clone())),
-            },
-            ref t => return Err(location.new_unexpected_token_error(t.clone())),
+            }
+            ref token @ Token::Function(ref name) => {
+                let t = token.clone();
+                match_ignore_ascii_case! { name.as_ref(),
+                    "calc" => input.parse_nested_block(|args| {
+                        let num = self.parse_number(args)?;
+                        let Token::Delim(d) = *args.next()? else {
+                            return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                        };
+                        let den = self.parse_number(args)?;
+                        let res = match d {
+                            '+' => num + den,
+                            '-' => num - den,
+                            '*' => num * den,
+                            '/' => num / den,
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        };
+                        Ok(res)
+                    })?,
+                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                }
+            }
+            ref t => return dbg!(Err(location.new_unexpected_token_error(t.clone())),),
         })
     }
 
@@ -784,74 +1039,113 @@ impl<'a, 'i> DefaultColorParser<'a> {
         Ok(match *input.next()? {
             Token::Number { value, .. } => NumberOrPercentage::Number { value },
             Token::Percentage { unit_value, .. } => NumberOrPercentage::Percentage { unit_value },
-            ref t @ Token::Ident(ref i) => match self.reference {
-                Some(Color::LinSrgb(srgb)) => {
-                    let non_linear: palette::Srgba = (*srgb).into_color();
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "r" => NumberOrPercentage::Percentage { unit_value: non_linear.red },
-                        "g" => NumberOrPercentage::Percentage { unit_value: non_linear.green },
-                        "b" => NumberOrPercentage::Percentage { unit_value: non_linear.blue },
-                        "a" => NumberOrPercentage::Percentage { unit_value: non_linear.alpha },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
+            ref t @ Token::Ident(ref i) => {
+                match_ignore_ascii_case! { i.as_ref(),
+                    "from" => {
+                        let reference_type = self.reference().map(|c| c.as_str());
+                        let mut reference = parse_color_with(self, input)?.1;
+                        if let Some(ref mut cp) = self.reference() {
+                            cp.convert_color(reference_type.unwrap());
+                            reference.convert_color(reference_type.unwrap());
+                        }
+                        self.owned_reference = Some(reference);
+                        self.parse_number_or_percentage(input)?
+                    },
+                    _ => {
+                        match self.reference() {
+                            Some(Color::LinSrgb(srgb)) => {
+                                let non_linear: palette::Srgba = (*srgb).into_color();
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "r" => NumberOrPercentage::Percentage { unit_value: non_linear.red },
+                                    "g" => NumberOrPercentage::Percentage { unit_value: non_linear.green },
+                                    "b" => NumberOrPercentage::Percentage { unit_value: non_linear.blue },
+                                    "a" => NumberOrPercentage::Percentage { unit_value: non_linear.alpha },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Hsl(hsl)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "a" => NumberOrPercentage::Percentage { unit_value: hsl.alpha },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Hwb(hwb)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "a" => NumberOrPercentage::Percentage { unit_value: hwb.alpha },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Lab(lab)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "l" => NumberOrPercentage::Percentage{ unit_value: lab.l },
+                                    "b" => NumberOrPercentage::Percentage{ unit_value: lab.b },
+                                    "a" if self.in_alpha => NumberOrPercentage::Percentage { unit_value: lab.alpha },
+                                    "a" => NumberOrPercentage::Percentage { unit_value: lab.a },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Lch(lch)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "l" => NumberOrPercentage::Percentage { unit_value: lch.l },
+                                    "c" => NumberOrPercentage::Percentage { unit_value: lch.chroma },
+                                    "a" => NumberOrPercentage::Percentage { unit_value: lch.alpha },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Oklab(oklab)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "l" => NumberOrPercentage::Percentage{ unit_value: oklab.l },
+                                    "b" => NumberOrPercentage::Percentage{ unit_value: oklab.b },
+                                    "a" if self.in_alpha => NumberOrPercentage::Percentage { unit_value: oklab.alpha },
+                                    "a" => NumberOrPercentage::Percentage{ unit_value: oklab.a },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            Some(Color::Oklch(oklch)) => {
+                                match_ignore_ascii_case! { i.as_ref(),
+                                    "l" => NumberOrPercentage::Percentage { unit_value: oklch.l },
+                                    "c" => NumberOrPercentage::Percentage { unit_value: oklch.chroma },
+                                    "a" => NumberOrPercentage::Percentage { unit_value: oklch.alpha },
+                                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                                }
+                            }
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        }
                     }
                 }
-                Some(Color::Hsl(hsl)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "a" => NumberOrPercentage::Percentage { unit_value: hsl.alpha },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
+            }
+            ref token @ Token::Function(ref name) => {
+                let t = token.clone();
+                match_ignore_ascii_case! { name.as_ref(),
+                    "calc" => input.parse_nested_block(|args| {
+                        let num = self.parse_number_or_percentage(args)?;
+                        let Token::Delim(d) = *args.next()? else {
+                            return dbg!(Err(location.new_unexpected_token_error(t.clone())))
+                        };
+                        let den = self.parse_number_or_percentage(args)?;
+                        let res = match d {
+                            '+' => num + den,
+                            '-' => num - den,
+                            '*' => num * den,
+                            '/' => num / den,
+                            _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())),)
+                        };
+                        Ok(res)
+                    })?,
+                    _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
                 }
-                Some(Color::Hwb(hwb)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "a" => NumberOrPercentage::Percentage { unit_value: hwb.alpha },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                Some(Color::Lab(lab)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "l" => NumberOrPercentage::Number { value: lab.l },
-                        "b" => NumberOrPercentage::Number { value: lab.b },
-                        "a" if self.in_alpha => NumberOrPercentage::Percentage { unit_value: lab.alpha },
-                        "a" => NumberOrPercentage::Number { value: lab.a },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                Some(Color::Lch(lch)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "l" => NumberOrPercentage::Number { value: lch.l },
-                        "c" => NumberOrPercentage::Number { value: lch.chroma },
-                        "a" => NumberOrPercentage::Percentage { unit_value: lch.alpha },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                Some(Color::Oklab(oklab)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "l" => NumberOrPercentage::Number { value: oklab.l },
-                        "b" => NumberOrPercentage::Number { value: oklab.b },
-                        "a" if self.in_alpha => NumberOrPercentage::Percentage { unit_value: oklab.alpha },
-                        "a" => NumberOrPercentage::Number { value: oklab.a },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                Some(Color::Oklch(oklch)) => {
-                    match_ignore_ascii_case! { i.as_ref(),
-                        "l" => NumberOrPercentage::Number { value: oklch.l },
-                        "c" => NumberOrPercentage::Number { value: oklch.chroma },
-                        "a" => NumberOrPercentage::Percentage { unit_value: oklch.alpha },
-                        _ => return Err(location.new_unexpected_token_error(t.clone()))
-                    }
-                }
-                _ => return Err(location.new_unexpected_token_error(t.clone())),
-            },
-            ref t => return Err(location.new_unexpected_token_error(t.clone())),
+            }
+            ref t => return dbg!(Err(location.new_unexpected_token_error(t.clone())),),
         })
     }
 }
 
 /// Default implementation of a [`ColorParser`]
+#[derive(Debug)]
 pub struct DefaultColorParser<'a> {
     in_alpha: bool,
     reference: Option<&'a mut Color>,
+    owned_reference: Option<Color>,
 }
 
 impl<'a> DefaultColorParser<'a> {
@@ -859,6 +1153,19 @@ impl<'a> DefaultColorParser<'a> {
         Self {
             in_alpha: false,
             reference,
+            owned_reference: None,
+        }
+    }
+
+    pub fn reference(&mut self) -> Option<&'a mut Color> {
+        if self.owned_reference.is_some() {
+            self.owned_reference
+                .as_mut()
+                .map(|r| unsafe { std::mem::transmute::<&mut Color, &'a mut Color>(r) })
+        } else if let Some(ref mut c) = self.reference {
+            Some(unsafe { std::mem::transmute::<&mut Color, &'a mut Color>(*c) })
+        } else {
+            None
         }
     }
 }
@@ -919,6 +1226,19 @@ into_color_impl!(palette::Oklcha);
 into_color_impl!(palette::Xyza<D65>);
 
 impl Color {
+    pub fn as_str(&self) -> &'static str {
+        match *self {
+            Color::LinSrgb(_) => "rgb",
+            Color::Hsl(_) => "hsl",
+            Color::Hwb(_) => "hwb",
+            Color::Lab(_) => "lab",
+            Color::Lch(_) => "lch",
+            Color::Oklab(_) => "oklab",
+            Color::Oklch(_) => "oklch",
+            _ => "xyz",
+        }
+    }
+
     pub fn interpolate(self, to_c: Color, a: f32, max: f32) -> Color {
         let from: [f32; 4] = self.into();
         let to: [f32; 4] = to_c.into();
@@ -1090,6 +1410,57 @@ impl Color {
             }
             _ => Color::LinSrgb(Rgba::<Srgb, f32>::from_components(components).into_linear()),
         }
+    }
+
+    /// Parse one of the color functions: rgba(), lab(), color(), etc.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn convert_color<'i, 't>(&mut self, name: &str) {
+        match_ignore_ascii_case! { name,
+            "rgb" | "rgba" => {
+                let color: palette::LinSrgba = (*self).into_color();
+                *self = Color::LinSrgb(color);
+            },
+
+            "hsl" | "hsla" => {
+                let color: Alpha<Hsl<Linear<Srgb>>, f32> = (*self).into_color();
+                *self = Color::Hsl(color);
+            },
+
+            "hwb" => {
+                let color: Alpha<Hwb<Linear<Srgb>>, f32> = (*self).into_color();
+                *self = Color::Hwb(color);
+            },
+
+            // for L: 0% = 0.0, 100% = 100.0
+            // for a and b: -100% = -125, 100% = 125
+            "lab" => {
+                let color: palette::Laba = (*self).into_color();
+                *self = Color::Lab(color);
+            },
+
+            // for L: 0% = 0.0, 100% = 100.0
+            // for C: 0% = 0, 100% = 150
+            "lch" => {
+                let color: palette::Lcha = (*self).into_color();
+                *self = Color::Lch(color);
+            },
+
+            // for L: 0% = 0.0, 100% = 1.0
+            // for a and b: -100% = -0.4, 100% = 0.4
+            "oklab" => {
+                let color: palette::Oklaba = (*self).into_color();
+                *self = Color::Oklab(color);
+            },
+
+            // for L: 0% = 0.0, 100% = 1.0
+            // for C: 0% = 0.0 100% = 0.4
+            "oklch" => {
+                let color: palette::Oklcha = (*self).into_color();
+                *self = Color::Oklch(color);
+            },
+
+            _ => {},
+        };
     }
 }
 

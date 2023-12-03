@@ -182,7 +182,7 @@ pub fn parse_objects(
                         scale = Some(Vec2::new(w, h));
                     }
                     "tint" => {
-                        let t = super::color::parse_color_with::<super::color::Color>(
+                        let t = super::color::parse_color_with(
                             &mut DefaultColorParser::new(None),
                             &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                         )
@@ -274,7 +274,7 @@ pub fn parse_objects(
                         }
                     },
                     "color" => {
-                        let c = super::color::parse_color_with::<super::color::Color>(
+                        let c = super::color::parse_color_with(
                             &mut DefaultColorParser::new(None),
                             &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                         )
@@ -285,7 +285,7 @@ pub fn parse_objects(
                         color = Some(c.1.into());
                     }
                     "background" => {
-                        let c = super::color::parse_color_with::<super::color::Color>(
+                        let c = super::color::parse_color_with(
                             &mut DefaultColorParser::new(None),
                             &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                         )

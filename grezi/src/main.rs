@@ -1,3 +1,4 @@
+use grezi::MyEguiApp;
 #[cfg(not(target_arch = "wasm32"))]
 use std::str::FromStr;
 
@@ -40,7 +41,7 @@ impl FromStr for Range {
         if let Some(s) = split.next() {
             end = s.parse().or(Err(()))?;
         } else {
-            end = start + 1;
+            end = start;
         }
 
         Ok(Range(std::ops::Range {
@@ -122,7 +123,7 @@ pub struct Args {
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> eframe::Result<()> {
+fn main() -> miette::Result<()> {
     use std::collections::HashMap;
     use std::io::BufWriter;
     use std::sync::atomic::Ordering;
@@ -132,7 +133,7 @@ fn main() -> eframe::Result<()> {
     use eframe::egui;
     use eframe::epaint::{Pos2, Rect, TextureId};
     use eframe::{egui::ImageSize, epaint::Vec2};
-    use grezi::MyEguiApp;
+    use miette::{Context, IntoDiagnostic};
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
@@ -177,10 +178,15 @@ fn main() -> eframe::Result<()> {
         let output = args.output.unwrap_or_else(|| "out.slideshow".to_owned());
         if output.ends_with("slideshow") {
             bincode::serialize_into(
-                BufWriter::new(std::fs::File::create(output).unwrap()),
+                BufWriter::new(
+                    std::fs::File::create(&output)
+                        .into_diagnostic()
+                        .with_context(|| format!("Error with creating {}", output))?,
+                ),
                 &(app.1, &*app.0.slide_show.read()),
             )
-            .unwrap();
+            .into_diagnostic()
+            .with_context(|| format!("Error seriaizing {}", &*init_app.slide_show_file.lock()))?;
 
             return Ok(());
         }
@@ -200,29 +206,54 @@ fn main() -> eframe::Result<()> {
         let mut path;
         let mut ctx = if output.ends_with("pdf") {
             multi_page = true;
-            cairo::Context::new(&PdfSurface::new(fit.x as f64, fit.y as f64, &output).unwrap())
+            let surface = PdfSurface::new(fit.x as f64, fit.y as f64, &output)
+                .into_diagnostic()
+                .with_context(|| {
+                    format!(
+                        "Error creating pdf surface with size {:?} at {}",
+                        fit, &output
+                    )
+                })?;
+            cairo::Context::new(&surface)
         } else if output.ends_with("ps") {
             multi_page = true;
-            cairo::Context::new(&PsSurface::new(fit.x as f64, fit.y as f64, &output).unwrap())
+            let surface = PsSurface::new(fit.x as f64, fit.y as f64, &output)
+                .into_diagnostic()
+                .with_context(|| {
+                    format!(
+                        "Error creating ps surface with size {:?} at {}",
+                        fit, &output
+                    )
+                })?;
+            cairo::Context::new(&surface)
         } else if output.ends_with("svg") {
-            cairo::Context::new(&SvgSurface::new(fit.x as f64, fit.y as f64, None::<&str>).unwrap())
+            let surface = SvgSurface::new(fit.x as f64, fit.y as f64, None::<&str>)
+                .into_diagnostic()
+                .with_context(|| format!("Error creating svg surface with size {:?}", fit))?;
+            cairo::Context::new(&surface)
         } else {
             let stride = cairo::Format::ARgb32
                 .stride_for_width(fit.x as u32)
-                .unwrap();
+                .into_diagnostic()
+                .with_context(|| {
+                    format!("Error calculating ARGB stride for width: {}", fit.x as u32)
+                })?;
             image_data = vec![0; stride as usize * fit.y as usize];
-            cairo::Context::new(unsafe {
-                &ImageSurface::create_for_data_unsafe(
+            let surface = unsafe {
+                ImageSurface::create_for_data_unsafe(
                     image_data.as_mut_ptr(),
                     cairo::Format::ARgb32,
                     fit.x as i32,
                     fit.y as i32,
                     stride,
                 )
-                .unwrap()
-            })
+                .into_diagnostic()
+                .with_context(|| format!("Error creating image surface with size {:?}", fit))?
+            };
+            cairo::Context::new(&surface)
         }
-        .unwrap();
+        .into_diagnostic()
+        .with_context(|| "Error creating cairo surface")?;
 
         let egui_ctx = egui::Context::default();
 
@@ -260,10 +291,15 @@ fn main() -> eframe::Result<()> {
                 init_app.index.store(i, Ordering::SeqCst);
                 if image_data.is_empty() {
                     if range.len() <= 1 {
-                        ctx = cairo::Context::new(
-                            &SvgSurface::new(fit.x as f64, fit.y as f64, Some(&output)).unwrap(),
-                        )
-                        .unwrap();
+                        let surface = SvgSurface::new(fit.x as f64, fit.y as f64, Some(&output))
+                            .into_diagnostic()
+                            .with_context(|| {
+                                format!(
+                                    "Error creating svg surface with size {:?} at {}",
+                                    fit, &output
+                                )
+                            })?;
+                        ctx = cairo::Context::new(&surface).unwrap();
                     } else {
                         let o = output.rsplit_once('.').unwrap();
                         path = format!("{}_{}.{}", o.0, i + 1, o.1);
@@ -291,19 +327,21 @@ fn main() -> eframe::Result<()> {
                         chunk[2] = b;
                     });
                     let o = output.rsplit_once('.').unwrap();
+                    let p: &str = if range.len() <= 1 {
+                        &output
+                    } else {
+                        path = format!("{}_{}.{}", o.0, i + 1, o.1);
+                        &path
+                    };
                     image::save_buffer(
-                        if range.len() <= 1 {
-                            &output
-                        } else {
-                            path = format!("{}_{}.{}", o.0, i + 1, o.1);
-                            &path
-                        },
+                        p,
                         &image_data,
                         fit.x as u32,
                         fit.y as u32,
                         image::ColorType::Rgba8,
                     )
-                    .unwrap();
+                    .into_diagnostic()
+                    .with_context(|| format!("Error saving image {} with size {:?}", p, fit))?;
                     image_data.iter_mut().for_each(|n| *n = 0);
                     let stride = cairo::Format::ARgb32
                         .stride_for_width(fit.x as u32)
@@ -345,6 +383,9 @@ fn main() -> eframe::Result<()> {
             Box::new(init_app.init_app(&cc.egui_ctx, app.1, app.2))
         }),
     )
+    .into_diagnostic()?;
+
+    Ok(())
 }
 
 // When compiling to web using trunk:

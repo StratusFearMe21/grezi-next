@@ -168,9 +168,7 @@ impl Anim {
         );
         let mut frame_on = self.frame_on.load(std::sync::atomic::Ordering::Relaxed);
 
-        if (elapsed.as_millis() as u32, elapsed.subsec_nanos() as u32)
-            >= self.frames[frame_on].1.numer_denom_ms()
-        {
+        if Delay::from_saturating_duration(elapsed) >= self.frames[frame_on].1 {
             self.delta.store(0.0, std::sync::atomic::Ordering::Relaxed);
             frame_on += 1;
             if frame_on == self.frames.len() {

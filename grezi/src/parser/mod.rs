@@ -570,7 +570,7 @@ pub fn parse_file(
                         Ok((key, value)) => {
                             let value: std::borrow::Cow<'_, str> = value.into();
                             if key == "BACKGROUND" {
-                                match color::parse_color_with::<Color>(
+                                match color::parse_color_with(
                                     &mut color::DefaultColorParser::new(Some(&mut bg.0)),
                                     &mut cssparser::Parser::new(&mut cssparser::ParserInput::new(
                                         value.as_ref(),

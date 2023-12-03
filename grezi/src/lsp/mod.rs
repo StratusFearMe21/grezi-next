@@ -7,7 +7,7 @@ use std::{
     sync::atomic::Ordering,
 };
 
-mod you_can;
+pub mod you_can;
 
 use crate::{
     parser::{Error, GrzCursor, NodeKind},
