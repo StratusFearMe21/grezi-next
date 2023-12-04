@@ -1054,7 +1054,7 @@ impl<'a, 'i> DefaultColorParser<'a> {
                     _ => {
                         match self.reference() {
                             Some(Color::LinSrgb(srgb)) => {
-                                let non_linear: palette::Srgba = (*srgb).into_color();
+                                let non_linear = palette::Srgba::from_linear(*srgb);
                                 match_ignore_ascii_case! { i.as_ref(),
                                     "r" => NumberOrPercentage::Percentage { unit_value: non_linear.red },
                                     "g" => NumberOrPercentage::Percentage { unit_value: non_linear.green },
@@ -1077,35 +1077,35 @@ impl<'a, 'i> DefaultColorParser<'a> {
                             }
                             Some(Color::Lab(lab)) => {
                                 match_ignore_ascii_case! { i.as_ref(),
-                                    "l" => NumberOrPercentage::Percentage{ unit_value: lab.l },
-                                    "b" => NumberOrPercentage::Percentage{ unit_value: lab.b },
+                                    "l" => NumberOrPercentage::Number { value: lab.l },
+                                    "b" => NumberOrPercentage::Number { value: lab.b },
                                     "a" if self.in_alpha => NumberOrPercentage::Percentage { unit_value: lab.alpha },
-                                    "a" => NumberOrPercentage::Percentage { unit_value: lab.a },
+                                    "a" => NumberOrPercentage::Number { value: lab.a },
                                     _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
                                 }
                             }
                             Some(Color::Lch(lch)) => {
                                 match_ignore_ascii_case! { i.as_ref(),
-                                    "l" => NumberOrPercentage::Percentage { unit_value: lch.l },
-                                    "c" => NumberOrPercentage::Percentage { unit_value: lch.chroma },
-                                    "a" => NumberOrPercentage::Percentage { unit_value: lch.alpha },
+                                    "l" => NumberOrPercentage::Number { value: lch.l },
+                                    "c" => NumberOrPercentage::Number { value: lch.chroma },
+                                    "a" => NumberOrPercentage::Number { value: lch.alpha },
                                     _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
                                 }
                             }
                             Some(Color::Oklab(oklab)) => {
                                 match_ignore_ascii_case! { i.as_ref(),
-                                    "l" => NumberOrPercentage::Percentage{ unit_value: oklab.l },
-                                    "b" => NumberOrPercentage::Percentage{ unit_value: oklab.b },
+                                    "l" => NumberOrPercentage::Number { value: oklab.l },
+                                    "b" => NumberOrPercentage::Number { value: dbg!(oklab.b) },
                                     "a" if self.in_alpha => NumberOrPercentage::Percentage { unit_value: oklab.alpha },
-                                    "a" => NumberOrPercentage::Percentage{ unit_value: oklab.a },
+                                    "a" => NumberOrPercentage::Number { value: oklab.a },
                                     _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
                                 }
                             }
                             Some(Color::Oklch(oklch)) => {
                                 match_ignore_ascii_case! { i.as_ref(),
-                                    "l" => NumberOrPercentage::Percentage { unit_value: oklch.l },
-                                    "c" => NumberOrPercentage::Percentage { unit_value: oklch.chroma },
-                                    "a" => NumberOrPercentage::Percentage { unit_value: oklch.alpha },
+                                    "l" => NumberOrPercentage::Number { value: oklch.l },
+                                    "c" => NumberOrPercentage::Number { value: oklch.chroma },
+                                    "a" => NumberOrPercentage::Number { value: oklch.alpha },
                                     _ => return dbg!(Err(location.new_unexpected_token_error(t.clone())))
                                 }
                             }
@@ -1362,6 +1362,7 @@ impl Color {
         b: Option<f32>,
         alpha: Option<f32>,
     ) -> Self {
+        dbg!(b);
         Color::Oklab(palette::Oklaba::new(
             lightness.unwrap_or(1.0),
             a.unwrap_or(1.0),
