@@ -1362,7 +1362,6 @@ impl Color {
         b: Option<f32>,
         alpha: Option<f32>,
     ) -> Self {
-        dbg!(b);
         Color::Oklab(palette::Oklaba::new(
             lightness.unwrap_or(1.0),
             a.unwrap_or(1.0),
