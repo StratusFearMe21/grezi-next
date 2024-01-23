@@ -61,7 +61,7 @@ pub struct AnimLoader {
 }
 
 impl AnimLoader {
-    pub const ID: &str = egui::generate_loader_id!(ImageLoader);
+    pub const ID: &'static str = egui::generate_loader_id!(ImageLoader);
 }
 
 impl ImageLoader for AnimLoader {

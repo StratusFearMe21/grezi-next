@@ -366,10 +366,12 @@ fn parse_slide_function(
                 NodeKind::NumberLiteral => {
                     let scaler: f32 = scaler.parse().unwrap();
                     let mut min_time = 0.0;
-                    for object in slide_objects.iter_mut().skip(1) {
-                        *max_time += scaler;
-                        min_time += scaler;
-                        object.scaled_time[0] = min_time;
+                    for object in slide_objects.iter_mut() {
+                        if object.locations[0] != object.locations[1] {
+                            object.scaled_time[0] = min_time;
+                            *max_time += scaler;
+                            min_time += scaler;
+                        }
                     }
                     Ok(None)
                 }

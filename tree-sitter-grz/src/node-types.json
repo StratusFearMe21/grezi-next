@@ -151,21 +151,38 @@
   {
     "type": "slide_from",
     "named": true,
-    "fields": {},
+    "fields": {
+      "viewbox": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "size",
+            "named": true
+          }
+        ]
+      },
+      "viewbox_index": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "index_parser",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
-      "multiple": true,
-      "required": true,
+      "multiple": false,
+      "required": false,
       "types": [
         {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "index_parser",
-          "named": true
-        },
-        {
-          "type": "size",
+          "type": "inherit",
           "named": true
         }
       ]
@@ -278,16 +295,6 @@
     "type": "slide_vb",
     "named": true,
     "fields": {
-      "attached_box": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "index_parser",
-            "named": true
-          }
-        ]
-      },
       "body": {
         "multiple": false,
         "required": false,
@@ -313,7 +320,7 @@
         ]
       },
       "viewbox_index": {
-        "multiple": false,
+        "multiple": true,
         "required": false,
         "types": [
           {
@@ -328,15 +335,7 @@
       "required": false,
       "types": [
         {
-          "type": "identifier",
-          "named": true
-        },
-        {
           "type": "inherit",
-          "named": true
-        },
-        {
-          "type": "size",
           "named": true
         }
       ]
@@ -404,16 +403,6 @@
     "type": "viewbox",
     "named": true,
     "fields": {
-      "attached_box": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "index_parser",
-            "named": true
-          }
-        ]
-      },
       "body": {
         "multiple": false,
         "required": true,
@@ -433,18 +422,38 @@
             "named": true
           }
         ]
+      },
+      "viewbox": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "size",
+            "named": true
+          }
+        ]
+      },
+      "viewbox_index": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "index_parser",
+            "named": true
+          }
+        ]
       }
     },
     "children": {
       "multiple": false,
-      "required": true,
+      "required": false,
       "types": [
         {
-          "type": "identifier",
-          "named": true
-        },
-        {
-          "type": "size",
+          "type": "inherit",
           "named": true
         }
       ]

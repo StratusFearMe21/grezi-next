@@ -10,7 +10,6 @@ module.exports = grammar({
     $.string_content,
     $.raw_string_content,
     $.obj_other,
-    $.until_nl
   ],
 
 
@@ -108,29 +107,28 @@ module.exports = grammar({
 
     edge_parser: _ => /[><^_.|]+/,
 
-    _vb_identifier: $ => choice(alias('Size', $.size), $.identifier),
+    _vb_identifier: $ => choice(
+      seq(
+        field("viewbox", choice(alias('Size', $.size), $.identifier)),
+        field('viewbox_index', $.index_parser)
+      ),
+      seq(
+        alias('()', $.inherit),
+        optional(field('viewbox_index', $.index_parser))
+      )
+    ),
 
     slide_from: $ => seq(
-      '{', $._vb_identifier, $.index_parser, '}'
+      '{', $._vb_identifier, '}'
     ),
 
     slide_vb: $ => choice(
       seq(
         ':',
-        choice(
-          seq(
-            field("viewbox", $._vb_identifier),
-            field('viewbox_index', $.index_parser)
-          ),
-          seq(
-            alias('()', $.inherit),
-            optional(field('viewbox_index', $.index_parser))
-          )
-        )
+        $._vb_identifier,
       ),
       seq('|', 
         $._vb_identifier,
-        field('attached_box', $.index_parser),
         field('body', $.viewbox_inner),
         field('viewbox_index', $.index_parser),
       ),
@@ -197,7 +195,6 @@ module.exports = grammar({
         field('name', $.identifier),
         ':',
         $._vb_identifier,
-        field('attached_box', $.index_parser),
         field('body', $.viewbox_inner)
       ),
 

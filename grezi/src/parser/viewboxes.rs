@@ -10,7 +10,7 @@ use super::GrzCursor;
 use super::NodeKind;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub enum LineUp {
     /// .. or <> or ^_
     CenterCenter,
