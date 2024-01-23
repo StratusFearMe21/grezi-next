@@ -43,7 +43,7 @@ pub fn parse_slides(
     source: &helix_core::ropey::Rope,
     errors_present: &mut Vec<super::Error>,
     bg: (super::Color, Option<(std::time::Duration, super::Color)>),
-    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+    viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
     tree_cursor.goto_first_child()?;
     tree_cursor.goto_first_child()?;
@@ -52,11 +52,25 @@ pub fn parse_slides(
         HashMap::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
         tree_cursor.fork(|cursor| {
-            match parse_slide_object(cursor, hasher, on_screen, objects, source, viewboxes) {
-                Ok(object) => {
+            match parse_slide_object(
+                cursor,
+                hasher,
+                on_screen,
+                objects,
+                source,
+                viewboxes,
+                // SAFETY: We don't remove slides when parsing them
+                unsafe {
+                    slide_objects
+                        .last()
+                        .map(|o| crate::lsp::you_can::borrow_unchecked(o))
+                },
+                |object| {
                     slide_on_screen.insert(object.object, slide_objects.len());
                     slide_objects.push(object);
-                }
+                },
+            ) {
+                Ok(()) => {}
                 Err(e) => errors_present.push(e),
             }
         });
@@ -114,26 +128,68 @@ pub fn parse_slide_object(
     on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
     source: &helix_core::ropey::Rope,
-    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
-) -> Result<SlideObj, super::Error> {
+    viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+    last_obj: Option<&SlideObj>,
+    mut insert_fn: impl FnMut(SlideObj) -> (),
+) -> Result<(), super::Error> {
     use super::Error;
 
     tree_cursor.goto_first_child()?;
+    let name = source.byte_slice(tree_cursor.node().byte_range());
     let object_name = {
         let mut hasher = hasher.build_hasher();
-        std::hash::Hash::hash(
-            &source.byte_slice(tree_cursor.node().byte_range()),
-            &mut hasher,
-        );
+        std::hash::Hash::hash(&name, &mut hasher);
         hasher.finish()
     };
     let object = objects
         .get_mut(&object_name)
         .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
     tree_cursor.goto_next_sibling()?;
-    let viewbox = super::viewboxes::parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?;
-    tree_cursor.goto_next_sibling()?;
-    let from: Option<ViewboxIn>;
+    let mut viewbox = if tree_cursor.node().kind_id() == NodeKind::SlideVb as u16 {
+        tree_cursor.goto_first_child_raw()?;
+        let current_char = source.byte_slice(tree_cursor.node().byte_range());
+        tree_cursor.goto_next_sibling()?;
+        let vb = if current_char == ":" {
+            super::viewboxes::parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?
+        } else if current_char == "|" {
+            let name = {
+                let mut hasher = hasher.build_hasher();
+                std::hash::Hash::hash(&name, &mut hasher);
+                std::hash::Hash::hash("__viewbox__", &mut hasher);
+                hasher.finish()
+            };
+            let vb_range = tree_cursor.node().range();
+            let vb =
+                super::viewboxes::parse_viewbox_inner(tree_cursor, source, hasher, &viewboxes)?;
+            if vb.constraints.len() == 0 {
+                return Err(super::Error::KnownMissing(vb_range.into(), "constraints"));
+            }
+            tree_cursor.goto_next_sibling()?;
+            tree_cursor.goto_first_child()?;
+            let vb_index: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+            let vb_index: usize = vb_index.parse().unwrap();
+            tree_cursor.goto_parent();
+
+            if vb.constraints.get(vb_index).is_none() {
+                return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+            }
+            viewboxes.insert(name, vb);
+
+            ViewboxIn::Custom(name, vb_index)
+        } else {
+            object
+                .viewbox
+                .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+        };
+        tree_cursor.goto_parent();
+        tree_cursor.goto_next_sibling()?;
+        vb
+    } else {
+        object
+            .viewbox
+            .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+    };
+    let mut from: Option<ViewboxIn>;
     match NodeKind::from(tree_cursor.node().kind_id()) {
         NodeKind::SlideFrom => {
             tree_cursor.goto_first_child()?;
@@ -149,6 +205,41 @@ pub fn parse_slide_object(
         _ => from = None,
     }
 
+    if let ViewboxIn::Inherit(index) = viewbox {
+        viewbox = last_obj
+            .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+            .locations[1]
+            .1;
+
+        if let Some(idx) = index {
+            if let ViewboxIn::Custom(vb, vb_idx) = &mut viewbox {
+                if let Some(vb) = viewboxes.get(vb) {
+                    if vb.constraints.get(idx).is_none() {
+                        return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                    }
+                    *vb_idx = idx
+                }
+            }
+        }
+    }
+    if let Some(ViewboxIn::Inherit(index)) = from {
+        let mut viewbox = last_obj
+            .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+            .locations[1]
+            .1;
+        if let Some(idx) = index {
+            if let ViewboxIn::Custom(vb, vb_idx) = &mut viewbox {
+                if let Some(vb) = viewboxes.get(vb) {
+                    if vb.constraints.get(idx).is_none() {
+                        return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                    }
+                    *vb_idx = idx
+                }
+            }
+        }
+        from = Some(viewbox);
+    }
+
     let mut state = if on_screen.contains_key(&object_name) {
         ObjectState::OnScreen
     } else {
@@ -161,7 +252,7 @@ pub fn parse_slide_object(
         let lineup_first;
         let viewbox_first = from.unwrap_or_else(|| object.viewbox.unwrap_or(viewbox));
         let line_up_now;
-        if &edges[..1] == "[" || &edges[..1] == "{" {
+        if &edges[..1] == ":" || &edges[..1] == "|" || &edges[..1] == "{" || edges == name {
             let object_position = object
                 .position
                 .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?;
@@ -226,12 +317,27 @@ pub fn parse_slide_object(
         object.viewbox = Some(viewbox);
     }
 
-    Ok(SlideObj {
+    if let Some(source) = object.source_obj {
+        if objects.contains_key(&source) {
+            insert_fn(SlideObj {
+                object: source,
+                locations: [
+                    (LineUp::BottomRight, ViewboxIn::Size),
+                    (LineUp::BottomRight, ViewboxIn::Size),
+                ],
+                scaled_time: [0.0, 0.5],
+                state,
+            });
+        }
+    }
+
+    insert_fn(SlideObj {
         object: object_name,
         locations,
         state,
         scaled_time: [0.0, 0.5],
-    })
+    });
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -245,6 +351,11 @@ fn parse_slide_function(
     slide_on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
     errors_present: &mut Vec<super::Error>,
 ) -> Result<Option<Actions>, super::Error> {
+    use cssparser::ParserInput;
+    use ecolor::Color32;
+
+    use crate::parser::{actions::HIGHLIGHT_COLOR_DEFAULT, color::DefaultColorParser};
+
     tree_cursor.goto_first_child()?;
     let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
     match key.as_ref() {
@@ -272,7 +383,7 @@ fn parse_slide_function(
             let time: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
             match NodeKind::from(tree_cursor.node().kind_id()) {
                 NodeKind::NumberLiteral => {
-                    let time: f32 = (time.parse::<f32>().unwrap() - 0.5).abs();
+                    let time: f32 = time.parse::<f32>().unwrap() - 0.5;
                     *max_time += time;
                     for object in slide_objects.iter_mut() {
                         object.scaled_time[1] += time;
@@ -313,7 +424,7 @@ fn parse_slide_function(
                         Ok(from) => from,
                         Err(e) => {
                             errors_present.push(e);
-                            PCursor::default()
+                            Some(PCursor::default())
                         }
                     };
                     tree_cursor.goto_next_sibling()?;
@@ -331,10 +442,13 @@ fn parse_slide_function(
                                 Ok(to) => to,
                                 Err(e) => {
                                     errors_present.push(e);
-                                    PCursor::default()
+                                    Some(PCursor::default())
                                 }
                             };
-                            Some([from, to])
+                            match (from, to) {
+                                (Some(from), Some(to)) => Some([from, to]),
+                                _ => None,
+                            }
                         }
                         _ => None,
                     }
@@ -342,10 +456,40 @@ fn parse_slide_function(
                 // "number_literal" => &source[tree_cursor.node().byte_range()],
                 _ => None,
             };
+
+            tree_cursor.goto_next_sibling()?;
+            let color: Color32 = match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::StringLiteral => {
+                    let value: Cow<'_, str> = source
+                        .byte_slice(
+                            tree_cursor
+                                .node()
+                                .child(1 /* second child */)
+                                .unwrap_or(tree_cursor.node())
+                                .byte_range(),
+                        )
+                        .into();
+                    let t = super::color::parse_color_with(
+                        &mut DefaultColorParser::new(None),
+                        &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                    )
+                    .map_err(|e| {
+                        super::Error::ColorError(
+                            tree_cursor.node().range().into(),
+                            format!("{:?}", e),
+                        )
+                    })?;
+
+                    t.1.into()
+                }
+                _ => HIGHLIGHT_COLOR_DEFAULT,
+            };
+
             Ok(Some(Actions::Highlight {
                 locations,
                 index: *object,
                 persist: true,
+                color,
             }))
         }
         _ => Err(super::Error::ActionNotFound(

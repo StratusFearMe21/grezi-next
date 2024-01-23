@@ -51,7 +51,7 @@ impl FromStr for Range {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 #[cfg(not(target_arch = "wasm32"))]
 pub struct Fit(eframe::egui::Vec2);
 
@@ -119,6 +119,8 @@ pub struct Args {
     /// Specifies the expected run time of the presentation
     #[clap(long)]
     pub duration: Option<humantime::Duration>,
+    #[clap(short, long, value_parser = FitParser)]
+    pub window_size: Option<Fit>,
 }
 
 // When compiling natively:
@@ -140,8 +142,11 @@ fn main() -> miette::Result<()> {
     let args: Args = clap::Parser::parse();
     let native_options = eframe::NativeOptions {
         fullscreen: !args.lsp,
-        resizable: true,
+        resizable: args.window_size.is_none(),
         vsync: true,
+        initial_window_size: args.window_size.map(|f| f.0),
+        min_window_size: args.window_size.map(|f| f.0),
+        max_window_size: args.window_size.map(|f| f.0),
         ..Default::default()
     };
     let app = MyEguiApp::new(args.lsp, args.presentation, args.dont_close);
@@ -183,7 +188,7 @@ fn main() -> miette::Result<()> {
                         .into_diagnostic()
                         .with_context(|| format!("Error with creating {}", output))?,
                 ),
-                &(app.1, &*app.0.slide_show.read()),
+                &(&app.0.fonts, &*app.0.slide_show.read()),
             )
             .into_diagnostic()
             .with_context(|| format!("Error seriaizing {}", &*init_app.slide_show_file.lock()))?;
@@ -257,11 +262,11 @@ fn main() -> miette::Result<()> {
 
         let egui_ctx = egui::Context::default();
 
-        let ft = grezi::new_ft();
+        let mut init_app = app.0.init_app(&egui_ctx, app.1);
+        let ft = grezi::cairo::new_ft();
 
-        let font_defs = app.1.clone();
-        let font_defs_ft = grezi::font_defs_to_ft(font_defs, ft);
-        let mut init_app = app.0.init_app(&egui_ctx, app.1, app.2);
+        let font_defs = init_app.fonts.clone();
+        let font_defs_ft = grezi::cairo::font_defs_to_ft(font_defs, ft);
         init_app.time = f32::MAX;
         init_app.dont_animate = true;
         let input = egui::RawInput {
@@ -280,7 +285,7 @@ fn main() -> miette::Result<()> {
                 init_app.resolved_slide = None;
                 init_app.resolved_viewboxes.clear();
 
-                grezi::cairo_draw(output, &mut textures, &ctx, &font_defs_ft);
+                grezi::cairo::cairo_draw(output, &mut textures, &ctx, &font_defs_ft);
 
                 ctx.show_page().unwrap();
             }
@@ -316,7 +321,7 @@ fn main() -> miette::Result<()> {
                 init_app.resolved_slide = None;
                 init_app.resolved_viewboxes.clear();
 
-                grezi::cairo_draw(e_output, &mut textures, &ctx, &font_defs_ft);
+                grezi::cairo::cairo_draw(e_output, &mut textures, &ctx, &font_defs_ft);
 
                 ctx.target().finish();
 
@@ -380,7 +385,7 @@ fn main() -> miette::Result<()> {
                 });
                 std::thread::park();
             }
-            Box::new(init_app.init_app(&cc.egui_ctx, app.1, app.2))
+            Box::new(init_app.init_app(&cc.egui_ctx, app.1))
         }),
     )
     .into_diagnostic()?;

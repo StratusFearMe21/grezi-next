@@ -32,9 +32,10 @@ pub enum LineUp {
     CenterTop,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 pub enum ViewboxIn {
     Size,
+    Inherit(Option<usize>),
     Custom(u64, usize),
 }
 
@@ -119,7 +120,27 @@ pub fn parse_viewbox(
     tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());
     tree_cursor.goto_next_sibling()?;
+    let mut name_hash = hasher.build_hasher();
+    std::hash::Hash::hash(&name, &mut name_hash);
+    let name_hash = name_hash.finish();
+    let vb = parse_viewbox_inner(tree_cursor, source, hasher, viewboxes)?;
+    tree_cursor.goto_parent();
+    Ok((name_hash, vb))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn parse_viewbox_inner(
+    tree_cursor: &mut GrzCursor<'_>,
+    source: &helix_core::ropey::Rope,
+    hasher: &ahash::RandomState,
+    viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+) -> Result<UnresolvedLayout, super::Error> {
     let attached_box = parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?;
+    if matches!(attached_box, ViewboxIn::Inherit(_)) {
+        return Err(super::Error::InvalidParameter(
+            tree_cursor.node().range().into(),
+        ));
+    }
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
     let direction: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
@@ -155,19 +176,13 @@ pub fn parse_viewbox(
         tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
-    tree_cursor.goto_parent();
-    let mut hasher = hasher.build_hasher();
-    std::hash::Hash::hash(&name, &mut hasher);
-    Ok((
-        hasher.finish(),
-        UnresolvedLayout {
-            direction: crate::layout::Direction::from(direction),
-            margin: 15.0,
-            constraints,
-            expand_to_fill: true,
-            split_on: attached_box,
-        },
-    ))
+    Ok(UnresolvedLayout {
+        direction: crate::layout::Direction::from(direction),
+        margin: 15.0,
+        constraints,
+        expand_to_fill: true,
+        split_on: attached_box,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -185,6 +200,18 @@ pub fn parse_viewbox_ident(
         NodeKind::Size => {
             tree_cursor.goto_next_sibling()?;
             Ok(ViewboxIn::Size)
+        }
+        NodeKind::Inherit => {
+            tree_cursor.goto_next_sibling()?;
+            let mut vb_index_res: Option<usize> = None;
+            if tree_cursor.node().kind_id() == NodeKind::IndexParser as u16 {
+                tree_cursor.goto_first_child()?;
+                let vb_index: Cow<'_, str> =
+                    source.byte_slice(tree_cursor.node().byte_range()).into();
+                vb_index_res = Some(vb_index.parse().unwrap());
+                tree_cursor.goto_parent();
+            }
+            Ok(ViewboxIn::Inherit(vb_index_res))
         }
         NodeKind::Identifier => {
             let mut hasher = hasher.build_hasher();

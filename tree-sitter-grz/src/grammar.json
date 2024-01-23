@@ -595,6 +595,117 @@
         }
       ]
     },
+    "slide_vb": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": ":"
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "FIELD",
+                      "name": "viewbox",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "_vb_identifier"
+                      }
+                    },
+                    {
+                      "type": "FIELD",
+                      "name": "viewbox_index",
+                      "content": {
+                        "type": "SYMBOL",
+                        "name": "index_parser"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "SEQ",
+                  "members": [
+                    {
+                      "type": "ALIAS",
+                      "content": {
+                        "type": "STRING",
+                        "value": "()"
+                      },
+                      "named": true,
+                      "value": "inherit"
+                    },
+                    {
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "FIELD",
+                          "name": "viewbox_index",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "index_parser"
+                          }
+                        },
+                        {
+                          "type": "BLANK"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "|"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_vb_identifier"
+            },
+            {
+              "type": "FIELD",
+              "name": "attached_box",
+              "content": {
+                "type": "SYMBOL",
+                "name": "index_parser"
+              }
+            },
+            {
+              "type": "FIELD",
+              "name": "body",
+              "content": {
+                "type": "SYMBOL",
+                "name": "viewbox_inner"
+              }
+            },
+            {
+              "type": "FIELD",
+              "name": "viewbox_index",
+              "content": {
+                "type": "SYMBOL",
+                "name": "index_parser"
+              }
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "~"
+        }
+      ]
+    },
     "slide_obj": {
       "type": "SEQ",
       "members": [
@@ -607,24 +718,16 @@
           }
         },
         {
-          "type": "STRING",
-          "value": ":"
-        },
-        {
-          "type": "FIELD",
-          "name": "viewbox",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_vb_identifier"
-          }
-        },
-        {
-          "type": "FIELD",
-          "name": "viewbox_index",
-          "content": {
-            "type": "SYMBOL",
-            "name": "index_parser"
-          }
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "slide_vb"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "CHOICE",

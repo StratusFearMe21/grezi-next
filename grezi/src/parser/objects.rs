@@ -27,6 +27,7 @@ use super::{
 pub struct Object {
     pub position: Option<LineUp>,
     pub viewbox: Option<ViewboxIn>,
+    pub source_obj: Option<u64>,
     pub object: ObjectType,
 }
 
@@ -34,12 +35,17 @@ pub struct Object {
 pub enum ObjectType {
     Text {
         layout_job: LayoutJob,
+        source: bool,
     },
     Image {
         uri: String,
         bytes: Arc<[u8]>,
         scale: Option<Vec2>,
         tint: Color32,
+    },
+    Rect {
+        color: Color32,
+        height: f32,
     },
     Spinner,
 }
@@ -56,6 +62,10 @@ pub enum ResolvedObject {
         anim: egui_anim::Anim,
         scale: Option<Vec2>,
         tint: Color32,
+    },
+    Rect {
+        color: Color32,
+        rect: Rect,
     },
     Spinner,
 }
@@ -86,6 +96,7 @@ impl ResolvedObject {
                     size.unwrap()
                 })
             }
+            ResolvedObject::Rect { rect, .. } => *rect,
             ResolvedObject::Spinner => Rect::from_min_size(
                 eframe::egui::pos2(0.0, 0.0),
                 ImageFit::Exact(vb).resolve(vb, Vec2::new(1.0, 1.0)),
@@ -107,16 +118,19 @@ pub fn parse_objects(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
+    fonts: &mut eframe::egui::FontDefinitions,
+    font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
     ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
     file_path: &std::path::Path,
-) -> Result<(u64, Object), super::Error> {
+    mut insert_fn: impl FnMut(u64, Object) -> (),
+) -> Result<(), super::Error> {
     use std::borrow::Cow;
 
     use super::color::DefaultColorParser;
     use cssparser::ParserInput;
     use eframe::egui::load::Bytes;
-    use helix_core::tree_sitter::Node;
+    use helix_core::tree_sitter::{Node, Point, Range};
     use lsp_types::Url;
     use pulldown_cmark::Tag;
 
@@ -148,9 +162,47 @@ pub fn parse_objects(
             }
         },
     );
+    let mut source_cited = None;
     let object = match obj_type.as_ref() {
+        "Rect" => {
+            let mut tint = None;
+            let mut height = None;
+            for parameter in parameters {
+                let parameter = parameter?;
+                let value: Cow<'_, str> = source
+                    .byte_slice(
+                        parameter
+                            .1
+                            .child(1 /* second child */)
+                            .unwrap_or(parameter.1)
+                            .byte_range(),
+                    )
+                    .into();
+                match parameter.0.as_ref() {
+                    "color" => {
+                        let t = super::color::parse_color_with(
+                            &mut DefaultColorParser::new(None),
+                            &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                        )
+                        .map_err(|e| {
+                            super::Error::ColorError(parameter.1.range().into(), format!("{:?}", e))
+                        })?;
+
+                        tint = Some(t.1.into());
+                    }
+                    "height" => height = Some(value.parse::<f32>().unwrap()),
+                    _ => {}
+                }
+            }
+            ObjectType::Rect {
+                color: tint.unwrap_or(Color32::WHITE),
+                height: height.ok_or_else(|| {
+                    super::Error::KnownMissing(obj_range.into(), "Rectangle height")
+                })?,
+            }
+        }
         "Image" => {
-            let mut uri = String::new();
+            let mut uri = Cow::Borrowed("");
             let mut tint = None;
             let mut scale = None;
             for parameter in parameters {
@@ -165,7 +217,7 @@ pub fn parse_objects(
                     )
                     .into();
                 match parameter.0.as_ref() {
-                    "value" => uri = value.into_owned(),
+                    "value" => uri = value,
                     "scale" => {
                         let split = value.split_once('x').ok_or_else(|| {
                             super::Error::InvalidParameter(parameter.1.range().into())
@@ -192,6 +244,7 @@ pub fn parse_objects(
 
                         tint = Some(t.1.into());
                     }
+                    "source" => source_cited = Some(value),
                     _ => {}
                 }
             }
@@ -209,7 +262,7 @@ pub fn parse_objects(
                             .to_str()
                             .unwrap(),
                     );
-                    uri = new_uri.to_string();
+                    uri = Cow::Owned(new_uri.to_string());
                 }
             }
             let bytes = loop {
@@ -232,7 +285,7 @@ pub fn parse_objects(
                 }
             };
             ObjectType::Image {
-                uri,
+                uri: uri.into_owned(),
                 bytes,
                 scale,
                 tint: tint.unwrap_or(Color32::WHITE),
@@ -243,7 +296,15 @@ pub fn parse_objects(
             let mut color = None;
             let mut bg = None;
             let mut align = Align::LEFT;
-            let mut font = FontFamily::Proportional;
+            let mut font = (
+                FontFamily::Proportional,
+                Range {
+                    start_byte: 0,
+                    end_byte: 0,
+                    start_point: Point::default(),
+                    end_point: Point::default(),
+                },
+            );
             let mut font_size = match obj_type.as_ref() {
                 "Paragraph" => 48.0,
                 "Header" => 64.0,
@@ -296,16 +357,14 @@ pub fn parse_objects(
                         bg = Some(c.1.into());
                     }
                     "font_family" => {
-                        font = match value.as_ref() {
-                            "proportional" => FontFamily::Proportional,
-                            "monospace" => FontFamily::Monospace,
-                            _ => {
-                                errors_present.push(super::Error::InvalidParameter(
-                                    parameter.1.range().into(),
-                                ));
-                                continue;
-                            }
-                        };
+                        font = (
+                            match value.as_ref() {
+                                "proportional" => FontFamily::Proportional,
+                                "monospace" => FontFamily::Monospace,
+                                font => FontFamily::Name(font.into()),
+                            },
+                            parameter.1.range(),
+                        );
                     }
                     "font_size" => font_size = value.parse::<f32>().unwrap(),
                     "language" => {
@@ -314,9 +373,11 @@ pub fn parse_objects(
                             parameter.1.child(1 /* second child */).unwrap().range(),
                         ))
                     }
+                    "source" => source_cited = Some(value),
                     _ => {}
                 }
             }
+            add_font(fonts, font_strings, ctx, &font)?;
             let text = if let Some(t) = text {
                 t
             } else {
@@ -327,7 +388,7 @@ pub fn parse_objects(
                     text,
                     lang,
                     align,
-                    FontId::new(font_size, font.clone()),
+                    FontId::new(font_size, font.0.clone()),
                     helix_cell,
                     source,
                     hasher,
@@ -419,21 +480,21 @@ pub fn parse_objects(
                                 layout_append!(
                                     layout_job,
                                     "\n",
-                                    FontId::new(font_size, font.clone())
+                                    FontId::new(font_size, font.0.clone())
                                 );
                             }
                             pulldown_cmark::Event::HardBreak => {
                                 layout_append!(
                                     layout_job,
                                     "\n\n",
-                                    FontId::new(font_size, font.clone())
+                                    FontId::new(font_size, font.0.clone())
                                 );
                             }
                             pulldown_cmark::Event::Text(text) => {
                                 layout_append!(
                                     layout_job,
                                     text.as_ref(),
-                                    FontId::new(font_size, font.clone())
+                                    FontId::new(font_size, font.0.clone())
                                 );
                             }
                             _ => {}
@@ -442,13 +503,73 @@ pub fn parse_objects(
                     layout_job
                 }
             };
-            ObjectType::Text { layout_job }
+            ObjectType::Text {
+                layout_job,
+                source: false,
+            }
         }
         _ => return Err(super::Error::NotFound(obj_range.into())),
     };
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();
-    Ok((
+    let mut source_obj = None;
+    if let Some(source) = source_cited {
+        let mut hasher = hasher.build_hasher();
+        std::hash::Hash::hash("source_", &mut hasher);
+        std::hash::Hash::hash(&name, &mut hasher);
+        let s_obj = hasher.finish();
+        let mut layout_job = LayoutJob {
+            halign: Align::RIGHT,
+            break_on_newline: true,
+            wrap: TextWrapping {
+                max_width: 0.0,
+                max_rows: u32::MAX as usize,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        layout_job.append(
+            "> ",
+            1.5,
+            TextFormat {
+                font_id: FontId::proportional(24.0),
+                color: Color32::WHITE,
+                background: Color32::TRANSPARENT,
+                italics: false,
+                underline: Stroke::NONE,
+                strikethrough: Stroke::NONE,
+                ..Default::default()
+            },
+        );
+        layout_job.append(
+            source.as_ref(),
+            0.0,
+            TextFormat {
+                font_id: FontId::proportional(24.0),
+                color: Color32::WHITE,
+                background: Color32::TRANSPARENT,
+                italics: true,
+                underline: Stroke::NONE,
+                strikethrough: Stroke::NONE,
+                ..Default::default()
+            },
+        );
+        insert_fn(
+            s_obj,
+            Object {
+                position: None,
+                viewbox: None,
+                object: ObjectType::Text {
+                    layout_job,
+                    source: true,
+                },
+                source_obj: None,
+            },
+        );
+        source_obj = Some(s_obj);
+    }
+
+    insert_fn(
         {
             let mut hasher = hasher.build_hasher();
             std::hash::Hash::hash(&name, &mut hasher);
@@ -457,7 +578,46 @@ pub fn parse_objects(
         Object {
             position: None,
             viewbox: None,
+            source_obj,
             object,
         },
-    ))
+    );
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn add_font(
+    fonts: &mut eframe::egui::FontDefinitions,
+    font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
+    ctx: &eframe::egui::Context,
+    font: &(FontFamily, helix_core::tree_sitter::Range),
+) -> Result<(), super::Error> {
+    use eframe::egui::FontData;
+    use font_loader::system_fonts::FontPropertyBuilder;
+
+    if !fonts.families.contains_key(&font.0) {
+        match &font.0 {
+            FontFamily::Name(n) => {
+                if !font_strings.contains(n.as_ref()) {
+                    return Err(super::Error::KnownMissing(font.1.into(), "Font not found"));
+                }
+
+                let font_prop = FontPropertyBuilder::new().family(n.as_ref()).build();
+                if let Some(fetched_font) = font_loader::system_fonts::get(&font_prop) {
+                    // Leaking the font makes it cheaper to clone the font definitions elsewhere
+                    fonts
+                        .font_data
+                        .insert(n.to_string(), FontData::from_static(fetched_font.0.leak()));
+
+                    fonts.families.insert(font.0.clone(), vec![n.to_string()]);
+                    ctx.set_fonts(fonts.clone());
+                } else {
+                    return Err(super::Error::KnownMissing(font.1.into(), "Font not found"));
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }

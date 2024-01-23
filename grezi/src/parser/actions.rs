@@ -3,6 +3,7 @@ use std::{
     hash::{BuildHasher, BuildHasherDefault, Hasher},
 };
 
+use ecolor::Color32;
 use eframe::epaint::{text::cursor::PCursor, Rect};
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,7 @@ pub enum Actions {
         locations: Option<[PCursor; 2]>,
         index: usize,
         persist: bool,
+        color: Color32,
     },
 }
 
@@ -26,6 +28,7 @@ pub enum ResolvedActions {
         persist: bool,
         locations_of_object: [[f32; 2]; 2],
         scaled_time: [f32; 2],
+        color: Color32,
     },
 }
 
@@ -56,6 +59,16 @@ pub fn parse_actions(
     })
 }
 
+pub const HIGHLIGHT_COLOR_DEFAULT: Color32 = {
+    let color = Color32::LIGHT_YELLOW;
+    Color32::from_rgba_premultiplied(
+        (color.r() as f32 * 0.5 + 0.5) as u8,
+        (color.g() as f32 * 0.5 + 0.5) as u8,
+        (color.b() as f32 * 0.5 + 0.5) as u8,
+        (color.a() as f32 * 0.5 + 0.5) as u8,
+    )
+};
+
 #[cfg(not(target_arch = "wasm32"))]
 fn parse_single_action(
     action_walker: &mut GrzCursor<'_>,
@@ -63,6 +76,12 @@ fn parse_single_action(
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<Actions, super::Error> {
+    use std::borrow::Cow;
+
+    use cssparser::ParserInput;
+
+    use super::color::DefaultColorParser;
+
     action_walker.goto_first_child()?;
     let function_name = source.byte_slice(action_walker.node().byte_range());
 
@@ -102,15 +121,47 @@ fn parse_single_action(
                         ))
                     }
                 };
-                Some([from, to])
+                match (from, to) {
+                    (Some(from), Some(to)) => Some([from, to]),
+                    _ => None,
+                }
             }
             // "number_literal" => &source[tree_cursor.node().byte_range()],
             _ => None,
         };
+        action_walker.goto_next_sibling()?;
+        let color: Color32 = match NodeKind::from(action_walker.node().kind_id()) {
+            NodeKind::StringLiteral => {
+                let value: Cow<'_, str> = source
+                    .byte_slice(
+                        action_walker
+                            .node()
+                            .child(1 /* second child */)
+                            .unwrap_or(action_walker.node())
+                            .byte_range(),
+                    )
+                    .into();
+                let t = super::color::parse_color_with(
+                    &mut DefaultColorParser::new(None),
+                    &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                )
+                .map_err(|e| {
+                    super::Error::ColorError(
+                        action_walker.node().range().into(),
+                        format!("{:?}", e),
+                    )
+                })?;
+
+                t.1.into()
+            }
+            _ => HIGHLIGHT_COLOR_DEFAULT,
+        };
+
         Ok(Actions::Highlight {
             locations,
             index: *object,
             persist: false,
+            color,
         })
     } else {
         return Err(super::Error::ActionNotFound(
@@ -123,15 +174,18 @@ fn parse_single_action(
 pub fn parse_highlight_location(
     tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
-) -> Result<PCursor, ()> {
+) -> Result<Option<PCursor>, ()> {
     use std::borrow::Cow;
 
-    tree_cursor.goto_first_child().or(Err(()))?;
-    let value: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-    let (line, column) = value.split_once(':').ok_or(())?;
-    Ok(PCursor {
-        paragraph: line.parse().or(Err(()))?,
-        offset: column.parse().or(Err(()))?,
-        prefer_next_row: true,
-    })
+    if tree_cursor.goto_first_child().or(Err(()))? {
+        let value: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+        let (line, column) = value.split_once(':').ok_or(())?;
+        Ok(Some(PCursor {
+            paragraph: line.parse().or(Err(()))?,
+            offset: column.parse().or(Err(()))?,
+            prefer_next_row: true,
+        }))
+    } else {
+        Ok(None)
+    }
 }

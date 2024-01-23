@@ -2242,6 +2242,7 @@ dependencies = [
  "helix-view",
  "humantime",
  "image",
+ "indexmap 2.1.0",
  "keyframe",
  "libc",
  "log",

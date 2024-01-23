@@ -16,6 +16,7 @@ use crate::{
 use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Node, Point, Query, QueryCursor, Tree, TreeCursor};
+use indexmap::IndexSet;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{
@@ -107,6 +108,9 @@ pub fn start_lsp(
         include_str!("queries/obj_in_slide.scm"),
     )
     .unwrap();
+    let font_strings = font_loader::system_fonts::query_all()
+        .into_iter()
+        .collect::<IndexSet<_, ahash::RandomState>>();
 
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
@@ -580,7 +584,7 @@ pub fn start_lsp(
                                                             CompletionTextEdit::InsertAndReplace(
                                                                 InsertReplaceEdit {
                                                                     new_text: format!(
-                                                                        "{}: $0,",
+                                                                        "{}$0,",
                                                                         label
                                                                     ),
                                                                     insert: lsp_types::Range {
@@ -745,6 +749,57 @@ pub fn start_lsp(
                                         ..Default::default()
                                         },
                                         CompletionItem {
+                                        label: "Rect".to_string(),
+                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                        deprecated: Some(false),
+                                        preselect: Some(true),
+                                        insert_text_format: Some(
+                                        InsertTextFormat::PLAIN_TEXT,
+                                        ),
+                                        insert_text_mode: None,
+                                        text_edit: Some(
+                                        CompletionTextEdit::InsertAndReplace(
+                                        InsertReplaceEdit {
+                                        new_text: "Rect".to_string(),
+                                        insert: lsp_types::Range {
+                                        start: completion
+                                        .text_document_position
+                                        .position,
+                                        end: completion
+                                        .text_document_position
+                                        .position,
+                                        },
+                                        replace: lsp_types::Range {
+                                        start: Position {
+                                        line: completion_range
+                                        .start_point
+                                        .row
+                                        as u32,
+                                        character:
+                                        completion_range
+                                        .start_point
+                                        .column
+                                        as u32,
+                                        },
+                                        end: Position {
+                                        line: completion_range
+                                        .end_point
+                                        .row
+                                        as u32,
+                                        character:
+                                        completion_range
+                                        .end_point
+                                        .column
+                                        as u32,
+                                        },
+                                        },
+                                        },
+                                        ),
+                                        ),
+                                        additional_text_edits: Some(Vec::new()),
+                                        ..Default::default()
+                                        },
+                                        CompletionItem {
                                         label: "Image".to_string(),
                                         kind: Some(CompletionItemKind::TYPE_PARAMETER),
                                         deprecated: Some(false),
@@ -818,6 +873,57 @@ pub fn start_lsp(
                                                                 CompletionTextEdit::InsertAndReplace(
                                                                     InsertReplaceEdit {
                                                                         new_text: "value: \"$0\",".to_string(),
+                                                                        insert: lsp_types::Range {
+                                                                            start: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                            end: completion
+                                                                                .text_document_position
+                                                                                .position,
+                                                                        },
+                                                                        replace: lsp_types::Range {
+                                                                            start: Position {
+                                                                                line: completion_range
+                                                                                    .start_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .start_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                            end: Position {
+                                                                                line: completion_range
+                                                                                    .end_point
+                                                                                    .row
+                                                                                    as u32,
+                                                                                character:
+                                                                                    completion_range
+                                                                                        .end_point
+                                                                                        .column
+                                                                                        as u32,
+                                                                            },
+                                                                        },
+                                                                    },
+                                                                ),
+                                                            ),
+                                                            additional_text_edits: Some(Vec::new()),
+                                                            ..Default::default()
+                                                        },
+                                                        CompletionItem {
+                                                            label: "height".to_string(),
+                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                            deprecated: Some(false),
+                                                            preselect: Some(true),
+                                                            insert_text_format: Some(
+                                                                InsertTextFormat::SNIPPET,
+                                                            ),
+                                                            insert_text_mode: None,
+                                                            text_edit: Some(
+                                                                CompletionTextEdit::InsertAndReplace(
+                                                                    InsertReplaceEdit {
+                                                                        new_text: "height: \"$0\",".to_string(),
                                                                         insert: lsp_types::Range {
                                                                             start: completion
                                                                                 .text_document_position
@@ -1163,6 +1269,57 @@ pub fn start_lsp(
                                                         ..Default::default()
                                                     },
                                                     CompletionItem {
+                                                        label: "source".to_string(),
+                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                                                        deprecated: Some(false),
+                                                        preselect: Some(true),
+                                                        insert_text_format: Some(
+                                                            InsertTextFormat::SNIPPET,
+                                                        ),
+                                                        insert_text_mode: None,
+                                                        text_edit: Some(
+                                                            CompletionTextEdit::InsertAndReplace(
+                                                                InsertReplaceEdit {
+                                                                    new_text: "source: \"$0\",".to_string(),
+                                                                    insert: lsp_types::Range {
+                                                                        start: completion
+                                                                            .text_document_position
+                                                                            .position,
+                                                                        end: completion
+                                                                            .text_document_position
+                                                                            .position,
+                                                                    },
+                                                                    replace: lsp_types::Range {
+                                                                        start: Position {
+                                                                            line: completion_range
+                                                                                .start_point
+                                                                                .row
+                                                                                as u32,
+                                                                            character:
+                                                                                completion_range
+                                                                                    .start_point
+                                                                                    .column
+                                                                                    as u32,
+                                                                        },
+                                                                        end: Position {
+                                                                            line: completion_range
+                                                                                .end_point
+                                                                                .row
+                                                                                as u32,
+                                                                            character:
+                                                                                completion_range
+                                                                                    .end_point
+                                                                                    .column
+                                                                                    as u32,
+                                                                        },
+                                                                    },
+                                                                },
+                                                            ),
+                                                        ),
+                                                        additional_text_edits: Some(Vec::new()),
+                                                        ..Default::default()
+                                                    },
+                                                    CompletionItem {
                                                         label: "font_size".to_string(),
                                                         kind: Some(CompletionItemKind::TYPE_PARAMETER),
                                                         deprecated: Some(false),
@@ -1430,8 +1587,7 @@ pub fn start_lsp(
                                                 ))
                                                 .unwrap();
                                         }
-                                        node_kind => {
-                                            dbg!(node_kind);
+                                        _ => {
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
@@ -1458,9 +1614,83 @@ pub fn start_lsp(
                                         )))
                                         .unwrap();
                                 }
-                                node_kind => {
-                                    dbg!(node_kind);
+                                NodeKind::StringContent => {
+                                    let completion_range = completion_node.range();
+                                    if let Some(parent) =
+                                        completion_node.parent().and_then(|n| n.parent())
+                                    {
+                                        if parent.kind_id() == NodeKind::ObjParam as u16
+                                            && parent
+                                                .child(0)
+                                                .map(|c| {
+                                                    &current_rope.slice(c.byte_range())
+                                                        == "font_family"
+                                                })
+                                                .unwrap_or_default()
+                                        {
+                                            let fonts = font_strings
+                                                .iter()
+                                                .map(|f| CompletionItem {
+                                                    label: f.clone(),
+                                                    kind: Some(CompletionItemKind::VARIABLE),
+                                                    deprecated: Some(false),
+                                                    preselect: Some(true),
+                                                    insert_text_format: Some(
+                                                        InsertTextFormat::PLAIN_TEXT,
+                                                    ),
+                                                    insert_text_mode: None,
+                                                    text_edit: Some(
+                                                        CompletionTextEdit::InsertAndReplace(
+                                                            InsertReplaceEdit {
+                                                                new_text: f.clone(),
+                                                                insert: lsp_types::Range {
+                                                                    start: completion
+                                                                        .text_document_position
+                                                                        .position,
+                                                                    end: completion
+                                                                        .text_document_position
+                                                                        .position,
+                                                                },
+                                                                replace: lsp_types::Range {
+                                                                    start: Position {
+                                                                        line: completion_range
+                                                                            .start_point
+                                                                            .row
+                                                                            as u32,
+                                                                        character: completion_range
+                                                                            .start_point
+                                                                            .column
+                                                                            as u32,
+                                                                    },
+                                                                    end: Position {
+                                                                        line: completion_range
+                                                                            .end_point
+                                                                            .row
+                                                                            as u32,
+                                                                        character: completion_range
+                                                                            .end_point
+                                                                            .column
+                                                                            as u32,
+                                                                    },
+                                                                },
+                                                            },
+                                                        ),
+                                                    ),
+                                                    additional_text_edits: Some(Vec::new()),
+                                                    ..Default::default()
+                                                })
+                                                .collect::<Vec<_>>();
+                                            connection
+                                                .sender
+                                                .send(Message::Response(Response::new_ok(
+                                                    rqid,
+                                                    Some(CompletionResponse::Array(fonts)),
+                                                )))
+                                                .unwrap();
+                                        }
+                                    }
                                 }
+                                _ => {}
                             }
                         }
                     }
@@ -1546,6 +1776,8 @@ pub fn start_lsp(
                                         &current_rope,
                                         &mut app.helix_cell,
                                         &mut slide_show,
+                                        &font_strings,
+                                        &mut app.fonts,
                                         &lsp_egui_ctx,
                                         Path::new(currently_open.path()),
                                     );
@@ -1589,6 +1821,7 @@ pub fn start_lsp(
                                         }
                                     }
 
+                                    lsp_egui_ctx.set_fonts(app.fonts.clone());
                                     app.clear_resolved.store(true, Ordering::Relaxed);
                                     app.restart_timer.store(true, Ordering::Relaxed);
                                     lsp_egui_ctx.request_repaint();
@@ -1701,6 +1934,8 @@ pub fn start_lsp(
                             &current_rope,
                             &mut app.helix_cell,
                             &mut slide_show,
+                            &font_strings,
+                            &mut app.fonts,
                             &lsp_egui_ctx,
                             Path::new(currently_open.path()),
                         );
@@ -1743,6 +1978,7 @@ pub fn start_lsp(
                             }
                         }
 
+                        lsp_egui_ctx.set_fonts(app.fonts.clone());
                         app.clear_resolved.store(true, Ordering::Relaxed);
                     }
                     DidChangeTextDocument::METHOD => {
@@ -1807,6 +2043,8 @@ pub fn start_lsp(
                                             &current_rope,
                                             &mut app.helix_cell,
                                             &mut slide_show,
+                                            &font_strings,
+                                            &mut app.fonts,
                                             &lsp_egui_ctx,
                                             Path::new(currently_open.path()),
                                         ) {
@@ -1888,6 +2126,8 @@ pub fn start_lsp(
                                 &current_rope,
                                 &mut app.helix_cell,
                                 &mut slide_show,
+                                &font_strings,
+                                &mut app.fonts,
                                 &lsp_egui_ctx,
                                 Path::new(currently_open.path()),
                             );
@@ -2942,6 +3182,35 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
 
     formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
 
+    macro_rules! format_vb_inner {
+        ($tab:expr, $tab_two:expr) => {
+            formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+            formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+            formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+            formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+            formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+            formatting_cursor.goto_parent();
+            formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+            formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+            formatting_cursor
+                .goto_next_sibling(WhitespaceEdit::Assert(concat!("\n", $tab)), current_rope)?;
+            while formatting_cursor.node().kind_id() == NodeKind::ViewboxObj as u16 {
+                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                formatting_cursor.goto_parent();
+                formatting_cursor.goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
+                formatting_cursor
+                    .goto_next_sibling(WhitespaceEdit::Assert(concat!("\n", $tab)), current_rope)?;
+            }
+            formatting_cursor.revisit(
+                WhitespaceEdit::Assert(concat!("\n", $tab_two)),
+                current_rope,
+            );
+            formatting_cursor.goto_parent();
+        };
+    }
+
     loop {
         let node = formatting_cursor.node();
         match NodeKind::from(node.kind_id()) {
@@ -2955,16 +3224,41 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                         formatting_cursor
                             .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor
-                            .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
-                        formatting_cursor
-                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor
-                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor
-                            .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                        formatting_cursor.goto_parent();
+                        if formatting_cursor.node().kind_id() == NodeKind::SlideVb as u16 {
+                            formatting_cursor
+                                .goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                            let current_char =
+                                current_rope.byte_slice(formatting_cursor.node().byte_range());
+                            if current_char == ":" {
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                                if formatting_cursor.node().kind_id()
+                                    == NodeKind::IndexParser as u16
+                                {
+                                    formatting_cursor
+                                        .goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                                    formatting_cursor
+                                        .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                                    formatting_cursor
+                                        .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                                    formatting_cursor.goto_parent();
+                                }
+                            } else if current_char == "|" {
+                                format_vb_inner!("        ", "    ");
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                                formatting_cursor
+                                    .goto_first_child(WhitespaceEdit::Delete, current_rope)?;
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                                formatting_cursor
+                                    .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
+                                formatting_cursor.goto_parent();
+                            }
+                            formatting_cursor.goto_parent();
+                        }
                         formatting_cursor
                             .goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
                         formatting_cursor
@@ -3021,28 +3315,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
             NodeKind::Viewbox => {
                 formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
-                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                formatting_cursor.goto_parent();
-                formatting_cursor.goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
-                formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                formatting_cursor
-                    .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
-                while formatting_cursor.node().kind_id() == NodeKind::ViewboxObj as u16 {
-                    formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
-                    formatting_cursor.goto_parent();
-                    formatting_cursor
-                        .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
-                    formatting_cursor
-                        .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
-                }
-                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
-                formatting_cursor.goto_parent();
+                format_vb_inner!("    ", "");
                 formatting_cursor.goto_parent();
             }
             NodeKind::Obj => {
@@ -3054,6 +3327,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                 formatting_cursor
                     .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
                 let mut value_location = None;
+                let mut code_location = None;
                 let mut language_location = false;
                 while formatting_cursor.tree_cursor.node().kind_id() == NodeKind::ObjParam as u16 {
                     formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
@@ -3079,6 +3353,22 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         } else {
                             value_location = Some(formatting_cursor.tree_cursor.node().range())
                         }
+                    } else if value_rope == "code" {
+                        code_location = Some(formatting_cursor.edits.len());
+                        let location = formatting_cursor.tree_cursor.node().range();
+                        formatting_cursor.edits.push(TextEdit {
+                            range: lsp_types::Range {
+                                start: Position {
+                                    line: location.start_point.row as u32,
+                                    character: location.start_point.column as u32,
+                                },
+                                end: Position {
+                                    line: location.end_point.row as u32,
+                                    character: location.end_point.column as u32,
+                                },
+                            },
+                            new_text: "value".to_owned(),
+                        });
                     } else if value_rope == "language" {
                         if let Some(value_location) = value_location.take() {
                             formatting_cursor.edits.push(TextEdit {
@@ -3106,6 +3396,11 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         .goto_next_sibling(WhitespaceEdit::Trailing(","), current_rope)?;
                     formatting_cursor
                         .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
+                }
+                if let Some(code_location) = code_location.take() {
+                    if language_location {
+                        formatting_cursor.edits.remove(code_location);
+                    }
                 }
                 formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
                 formatting_cursor.goto_parent();

@@ -411,6 +411,8 @@ pub fn parse_file(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
+    font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
+    fonts: &mut eframe::egui::FontDefinitions,
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
 ) -> Result<(), Vec<Error>> {
@@ -490,7 +492,7 @@ pub fn parse_file(
                             source,
                             &mut errors_present,
                             (bg.0, bg.1.take()),
-                            &slide_show.viewboxes,
+                            &mut slide_show.viewboxes,
                         ) {
                             Ok((slide, color)) => {
                                 if is_new {
@@ -552,13 +554,16 @@ pub fn parse_file(
                             source,
                             helix_cell,
                             &hasher,
+                            fonts,
+                            font_strings,
                             egui_ctx,
                             &mut errors_present,
                             file_path,
+                            |hash, object| {
+                                slide_show.objects.insert(hash, object);
+                            },
                         ) {
-                            Ok(object) => {
-                                slide_show.objects.insert(object.0, object.1);
-                            }
+                            Ok(_) => {}
                             Err(e) => errors_present.push(e),
                         }
                     })

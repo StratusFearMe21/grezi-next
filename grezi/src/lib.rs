@@ -31,11 +31,11 @@ use helix_core::ropey::Rope;
 use helix_core::tree_sitter::Tree;
 use image::codecs::{png::PngDecoder, webp::WebPDecoder};
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
-use layout::{Constraint, UnresolvedLayout};
+use layout::{Constraint, Direction, UnresolvedLayout};
 #[cfg(not(target_arch = "wasm32"))]
 use notify::{event::ModifyKind, Watcher};
 use parser::{
-    actions::{Actions, ResolvedActions},
+    actions::{Actions, ResolvedActions, HIGHLIGHT_COLOR_DEFAULT},
     color::Color,
     objects::{Object, ObjectState},
     slides::{ResolvedSlideObj, SlideObj},
@@ -48,6 +48,8 @@ use serde::{Deserialize, Serialize};
 use crate::parser::highlighting::HelixCell;
 use crate::parser::objects::ResolvedObject;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cairo;
 mod layout;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod lsp;
@@ -88,6 +90,7 @@ pub struct MyEguiApp {
     pub parser: Arc<Mutex<helix_core::tree_sitter::Parser>>,
     pub dont_animate: bool,
     pub clear_color: Color32,
+    pub fonts: FontDefinitions,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -130,6 +133,7 @@ impl SlideShow {
                     locations: None,
                     index: 1,
                     persist: true,
+                    color: HIGHLIGHT_COLOR_DEFAULT,
                 }],
                 bg: (Color::default(), None),
                 max_time: 0.5,
@@ -157,6 +161,7 @@ impl SlideShow {
                         position: None,
                         viewbox: None,
                         object: parser::objects::ObjectType::Spinner,
+                        source_obj: None,
                     },
                 );
                 map.insert(
@@ -179,7 +184,9 @@ impl SlideShow {
                                 );
                                 job
                             },
+                            source: false,
                         },
+                        source_obj: None,
                     },
                 );
                 map
@@ -193,11 +200,28 @@ pub enum SlideShowSource {
     Http,
 }
 
+fn resolve_layout_raw(
+    size: Rect,
+    direction: Direction,
+    mut constraints: Vec<Constraint>,
+    split: Rect,
+) -> Vec<Rect> {
+    constraints.iter_mut().for_each(|c| match c {
+        layout::Constraint::Length(length) => *length *= size.max.x / 1920.0,
+        layout::Constraint::Min(min) => *min *= size.max.x / 1920.0,
+        layout::Constraint::Max(max) => *max *= size.max.x / 1920.0,
+        _ => {}
+    });
+    layout::Layout::default()
+        .direction(direction)
+        .constraints(&constraints)
+        .split(split)
+}
+
 impl MyEguiApp {
     pub fn init_app(
         mut self,
         egui_ctx: &egui::Context,
-        fonts: FontDefinitions,
         slide_show_source: SlideShowSource,
         #[cfg(target_arch = "wasm32")] hash: &str,
     ) -> Self {
@@ -247,6 +271,7 @@ impl MyEguiApp {
                     let watcher_restart_timer = Arc::clone(&self.restart_timer);
                     let watcher_parser = Arc::clone(&self.parser);
                     let watcher_slide_show = Arc::clone(&self.slide_show);
+                    let mut fonts = self.fonts.clone();
                     let mut instant = Instant::now();
                     let mut w = ManuallyDrop::new(
                         notify::recommended_watcher(
@@ -300,15 +325,25 @@ impl MyEguiApp {
 
                                                 let mut slide_show = watcher_slide_show.write();
 
-                                                let ast = parser::parse_file(
-                                                    &tree,
-                                                    Some(&info),
-                                                    &new_file,
-                                                    &mut self.helix_cell,
-                                                    &mut slide_show,
-                                                    &watcher_context,
-                                                    std::path::Path::new(&watcher_file_name),
-                                                );
+                                                let ast =
+                                                    parser::parse_file(
+                                                        &tree,
+                                                        Some(&info),
+                                                        &new_file,
+                                                        &mut self.helix_cell,
+                                                        &mut slide_show,
+                                                        &font_loader::system_fonts::query_all()
+                                                            .iter()
+                                                            .cloned()
+                                                            .collect::<indexmap::IndexSet<
+                                                                _,
+                                                                ahash::RandomState,
+                                                            >>(
+                                                            ),
+                                                        &mut fonts,
+                                                        &watcher_context,
+                                                        std::path::Path::new(&watcher_file_name),
+                                                    );
                                                 *info = tree;
                                                 match ast {
                                                     Ok(_) => {
@@ -344,12 +379,11 @@ impl MyEguiApp {
 
                     w.watch(self.file_name.as_ref(), notify::RecursiveMode::NonRecursive)
                         .unwrap();
+
+                    egui_ctx.set_fonts(self.fonts.clone());
                 }
             }
         }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        egui_ctx.set_fonts(fonts);
 
         MyEguiApp {
             #[cfg(not(target_arch = "wasm32"))]
@@ -361,7 +395,7 @@ impl MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))] lsp: bool,
         #[cfg(not(target_arch = "wasm32"))] presentation: Option<String>,
         #[cfg(not(target_arch = "wasm32"))] dont_exit: bool,
-    ) -> (Self, FontDefinitions, SlideShowSource) {
+    ) -> (Self, SlideShowSource) {
         // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
         // Restore app state using cc.storage (requires the "persistence" feature).
         // Use the cc.gl (a glo::Context) to create graphics shaders and buffers that you can use
@@ -387,10 +421,18 @@ impl MyEguiApp {
         let slide_show: (SlideShow, SlideShowSource) = {
             let viewboxes = HashMap::default();
             let objects = HashMap::default();
-            if lsp {
-                (SlideShow::default(), SlideShowSource::Loaded)
-            } else if presentation.as_ref().unwrap().ends_with("slideshow") {
-                if presentation.as_ref().unwrap().starts_with("http") {
+            if presentation
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or_default()
+                .ends_with("slideshow")
+            {
+                if presentation
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or_default()
+                    .starts_with("http")
+                {
                     (SlideShow::exercise_jit(), SlideShowSource::Http)
                 } else {
                     let file = std::fs::read(presentation.as_ref().unwrap()).unwrap();
@@ -404,9 +446,10 @@ impl MyEguiApp {
             } else {
                 let fira_code_prop = FontPropertyBuilder::new().family("Fira Code").build();
                 if let Some(font) = font_loader::system_fonts::get(&fira_code_prop) {
+                    // Leaking the font makes it cheaper to clone the font definitions elsewhere
                     fonts
                         .font_data
-                        .insert("Fira Code".to_owned(), FontData::from_owned(font.0));
+                        .insert("Fira Code".to_owned(), FontData::from_static(font.0.leak()));
 
                     fonts
                         .families
@@ -414,63 +457,73 @@ impl MyEguiApp {
                         .unwrap()
                         .insert(0, "Fira Code".to_owned());
                 }
-                let mut slide_show = SlideShow {
-                    slide_show: Vec::new(),
-                    viewboxes,
-                    objects,
-                };
-                let mut tree_info = tree_info.lock();
-                let file =
-                    Rope::from_reader(std::fs::File::open(presentation.as_ref().unwrap()).unwrap())
-                        .unwrap();
-
-                let tree = parser
-                    .parse_with(
-                        &mut |byte, _| {
-                            if byte <= file.len_bytes() {
-                                let (chunk, start_byte, _, _) = file.chunk_at_byte(byte);
-                                &chunk.as_bytes()[byte - start_byte..]
-                            } else {
-                                // out of range
-                                &[]
-                            }
-                        },
-                        None,
+                if lsp {
+                    (SlideShow::default(), SlideShowSource::Loaded)
+                } else {
+                    let mut slide_show = SlideShow {
+                        slide_show: Vec::new(),
+                        viewboxes,
+                        objects,
+                    };
+                    let mut tree_info = tree_info.lock();
+                    let file = Rope::from_reader(
+                        std::fs::File::open(presentation.as_ref().unwrap()).unwrap(),
                     )
                     .unwrap();
-                let ast = {
-                    let ctx = eframe::egui::Context::default();
-                    egui_extras::install_image_loaders(&ctx);
-                    if !ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
-                        ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
-                    }
-                    parser::parse_file(
-                        &tree,
-                        None,
-                        &file,
-                        &mut helix_cell,
-                        &mut slide_show,
-                        &ctx,
-                        &std::fs::canonicalize(presentation.as_ref().unwrap()).unwrap(),
-                    )
-                };
-                match ast {
-                    Ok(_) => {
-                        *tree_info = Some(tree);
-                        *slide_show_file.lock() = file;
-                        (slide_show, SlideShowSource::Loaded)
-                    }
-                    Err(errors) => {
-                        for error in errors {
-                            eprintln!(
-                                "{:?}",
-                                parser::ErrWithSource {
-                                    error,
-                                    source_code: file.to_string()
+
+                    let tree = parser
+                        .parse_with(
+                            &mut |byte, _| {
+                                if byte <= file.len_bytes() {
+                                    let (chunk, start_byte, _, _) = file.chunk_at_byte(byte);
+                                    &chunk.as_bytes()[byte - start_byte..]
+                                } else {
+                                    // out of range
+                                    &[]
                                 }
-                            );
+                            },
+                            None,
+                        )
+                        .unwrap();
+                    let ast = {
+                        let ctx = eframe::egui::Context::default();
+                        egui_extras::install_image_loaders(&ctx);
+                        if !ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+                            ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
                         }
-                        std::process::exit(1);
+                        parser::parse_file(
+                            &tree,
+                            None,
+                            &file,
+                            &mut helix_cell,
+                            &mut slide_show,
+                            &font_loader::system_fonts::query_all()
+                                .iter()
+                                .cloned()
+                                .collect::<indexmap::IndexSet<_, ahash::RandomState>>(),
+                            &mut fonts,
+                            &ctx,
+                            &std::fs::canonicalize(presentation.as_ref().unwrap()).unwrap(),
+                        )
+                    };
+                    match ast {
+                        Ok(_) => {
+                            *tree_info = Some(tree);
+                            *slide_show_file.lock() = file;
+                            (slide_show, SlideShowSource::Loaded)
+                        }
+                        Err(errors) => {
+                            for error in errors {
+                                eprintln!(
+                                    "{:?}",
+                                    parser::ErrWithSource {
+                                        error,
+                                        source_code: file.to_string()
+                                    }
+                                );
+                            }
+                            std::process::exit(1);
+                        }
                     }
                 }
             }
@@ -514,8 +567,8 @@ impl MyEguiApp {
                 #[cfg(not(target_arch = "wasm32"))]
                 parser: Arc::new(Mutex::new(parser)),
                 clear_color: Color::default().into(),
+                fonts,
             },
-            fonts,
             slide_show.1,
         )
     }
@@ -632,6 +685,11 @@ impl MyEguiApp {
                         .tint(tint)
                         .paint_at(ui, obj_pos)
                 }
+                ResolvedObject::Rect { color, rect } => ui.painter().rect_filled(
+                    rect.translate(obj_pos.min.to_vec2()),
+                    Rounding::ZERO,
+                    *color,
+                ),
                 ResolvedObject::Spinner => egui::Spinner::new().paint_at(&ui, obj_pos),
             }
         }
@@ -645,6 +703,7 @@ impl MyEguiApp {
                     persist,
                     locations_of_object,
                     scaled_time,
+                    color,
                 } => {
                     let time = if !*persist {
                         scaled_time[1]
@@ -671,7 +730,7 @@ impl MyEguiApp {
                                         locations.min.x,
                                         locations.max.x,
                                         time,
-                                        0.5,
+                                        scaled_time[1],
                                     )
                                 },
                                 locations.min.y,
@@ -682,14 +741,14 @@ impl MyEguiApp {
                                     locations.min.x,
                                     locations.max.x,
                                     time,
-                                    0.5,
+                                    scaled_time[1],
                                 ),
                                 locations.max.y,
                             ),
                         }
                         .translate(obj_pos),
                         Rounding::ZERO,
-                        Color32::LIGHT_YELLOW.gamma_multiply(0.5),
+                        *color,
                     );
                 }
             }
@@ -711,20 +770,13 @@ impl MyEguiApp {
                     ViewboxIn::Custom(hash, index) => {
                         self.resolve_layout(hash, index, size, slide_show)
                     }
+                    ViewboxIn::Inherit(_) => unreachable!(),
                 };
 
                 let unresolved_layout = slide_show.viewboxes.get(&hash).unwrap();
-                let mut constraints = unresolved_layout.constraints.clone();
-                constraints.iter_mut().for_each(|c| match c {
-                    layout::Constraint::Length(length) => *length *= size.max.x / 1920.0,
-                    layout::Constraint::Min(min) => *min *= size.max.x / 1920.0,
-                    layout::Constraint::Max(max) => *max *= size.max.x / 1920.0,
-                    _ => {}
-                });
-                let layout = layout::Layout::default()
-                    .direction(unresolved_layout.direction)
-                    .constraints(&unresolved_layout.constraints)
-                    .split(split);
+                let constraints = unresolved_layout.constraints.clone();
+                let layout =
+                    resolve_layout_raw(size, unresolved_layout.direction, constraints, split);
                 let rect = layout[index];
                 self.resolved_viewboxes.insert(hash, layout);
                 rect
@@ -743,19 +795,23 @@ impl MyEguiApp {
         let mut resolved_slides = Vec::new();
         let size = Rect::from_min_size(Pos2::ZERO, size);
         let mut images = Vec::with_capacity(3);
+        let mut source_offset = 0.0;
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => size.shrink(15.0),
                 ViewboxIn::Custom(hash, index) => {
                     self.resolve_layout(hash, index, size, slide_show)
                 }
+                ViewboxIn::Inherit(_) => unreachable!(),
             };
             let second_viewbox = match object.locations[1].1 {
                 ViewboxIn::Size => size.shrink(15.0),
                 ViewboxIn::Custom(hash, index) => {
                     self.resolve_layout(hash, index, size, slide_show)
                 }
+                ViewboxIn::Inherit(_) => unreachable!(),
             };
+
             let obj = slide_show.objects.get(&object.object).unwrap();
             match &obj.object {
                 parser::objects::ObjectType::Spinner => {
@@ -777,14 +833,15 @@ impl MyEguiApp {
                         state: object.state,
                     });
                 }
-                parser::objects::ObjectType::Text { layout_job } => {
-                    let mut layout_job = layout_job.clone();
-                    layout_job.wrap.max_width = second_viewbox.width();
-                    for row in layout_job.sections.iter_mut() {
-                        row.format.font_id.size *= size.max.x / 1920.0;
-                    }
-                    let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
-                    let resolved_obj = ResolvedObject::Text(galley);
+                parser::objects::ObjectType::Rect { color, height } => {
+                    let mut rect = second_viewbox
+                        .translate(Vec2::new(-second_viewbox.min.x, -second_viewbox.min.y));
+                    rect.max.y = *height * (size.height() / 1080.0);
+                    let resolved_obj = ResolvedObject::Rect {
+                        color: *color,
+                        rect,
+                    };
+
                     let size = resolved_obj.bounds(second_viewbox.size(), ui);
                     let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, size).into(),
@@ -795,6 +852,78 @@ impl MyEguiApp {
                         get_pos!(object.locations[1].0, second_viewbox, size).into(),
                         size.size().into(),
                     );
+                    let second_pos = [second_pos.min, second_pos.max];
+                    resolved_slides.push(ResolvedSlideObj {
+                        object: resolved_obj,
+                        locations: [first_pos.map(|f| f.into()), second_pos.map(|f| f.into())],
+                        scaled_time: object.scaled_time,
+                        state: object.state,
+                    });
+                }
+                parser::objects::ObjectType::Text { layout_job, source } => {
+                    let mut layout_job = layout_job.clone();
+                    layout_job.wrap.max_width = second_viewbox.width();
+                    for row in layout_job.sections.iter_mut() {
+                        row.format.font_id.size *= size.max.x / 1920.0;
+                    }
+                    let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
+                    let resolved_obj = ResolvedObject::Text(galley);
+                    let size = resolved_obj.bounds(second_viewbox.size(), ui);
+                    let mut first_pos = Rect::from_min_size(
+                        get_pos!(object.locations[0].0, first_viewbox, size).into(),
+                        size.size().into(),
+                    );
+                    let mut second_pos = Rect::from_min_size(
+                        get_pos!(object.locations[1].0, second_viewbox, size).into(),
+                        size.size().into(),
+                    );
+                    if *source {
+                        second_pos = second_pos.translate(Vec2::new(
+                            if object.state == ObjectState::Exiting {
+                                size.width()
+                                    - match &resolved_obj {
+                                        ResolvedObject::Text(galley) => galley
+                                            .pos_from_pcursor(
+                                                eframe::epaint::text::cursor::PCursor {
+                                                    paragraph: 0,
+                                                    offset: 2,
+                                                    prefer_next_row: false,
+                                                },
+                                            )
+                                            .width(),
+                                        _ => unreachable!(),
+                                    }
+                            } else {
+                                0.0
+                            },
+                            -source_offset,
+                        ));
+
+                        first_pos = first_pos.translate(Vec2::new(
+                            if object.state == ObjectState::Entering {
+                                size.width()
+                                    - match &resolved_obj {
+                                        ResolvedObject::Text(galley) => galley
+                                            .pos_from_pcursor(
+                                                eframe::epaint::text::cursor::PCursor {
+                                                    paragraph: 0,
+                                                    offset: 2,
+                                                    prefer_next_row: false,
+                                                },
+                                            )
+                                            .width(),
+                                        _ => unreachable!(),
+                                    }
+                            } else {
+                                0.0
+                            },
+                            -source_offset,
+                        ));
+                        if object.state != ObjectState::Exiting {
+                            source_offset += size.max.y + 5.0;
+                        }
+                    }
+                    let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved_slides.push(ResolvedSlideObj {
                         object: resolved_obj,
@@ -940,6 +1069,7 @@ impl MyEguiApp {
                     locations,
                     index,
                     persist,
+                    color,
                 } => {
                     let text_object = slide.get(*index).unwrap();
                     let locations = if let Some(locations) = locations {
@@ -952,17 +1082,18 @@ impl MyEguiApp {
                         };
                         from_rect.union(to_rect)
                     } else {
-                        match &text_object.object {
-                            ResolvedObject::Text(_) => {
-                                let to_rect = Rect::from([
-                                    Pos2::from(text_object.locations[1][0]),
-                                    Pos2::from(text_object.locations[1][1]),
-                                ]);
-                                Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size())
-                            }
-                            _ => todo!(),
-                        }
+                        let to_rect = Rect::from([
+                            Pos2::from(text_object.locations[1][0]),
+                            Pos2::from(text_object.locations[1][1]),
+                        ]);
+                        Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size())
                     };
+                    let scaled_time = if text_object.scaled_time[1] < 0.1 {
+                        [0.0, 0.0]
+                    } else {
+                        text_object.scaled_time
+                    };
+
                     resolved_actions.push(ResolvedActions::Highlight {
                         locations,
                         persist: *persist,
@@ -970,7 +1101,8 @@ impl MyEguiApp {
                             text_object.locations[0][0],
                             text_object.locations[1][0],
                         ],
-                        scaled_time: text_object.scaled_time,
+                        scaled_time,
+                        color: *color,
                     });
                 }
             }
@@ -1270,300 +1402,5 @@ impl MyEguiApp {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.update(ctx, Some(frame))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-use cairo::ImageSurface;
-#[cfg(not(target_arch = "wasm32"))]
-use eframe::epaint::TextureId;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn font_defs_to_ft(
-    font_defs: FontDefinitions,
-    ft: cairo::freetype::freetype::FT_Library,
-) -> HashMap<FontFamily, (cairo::freetype::freetype::FT_Face, cairo::FontFace)> {
-    use cairo::freetype::freetype;
-    use cairo::FontFace;
-
-    font_defs
-        .families
-        .into_iter()
-        .map(|f| {
-            let data = font_defs.font_data.get(&f.1[0]).unwrap();
-            let mut face = std::ptr::null_mut();
-            unsafe {
-                freetype::FT_New_Memory_Face(
-                    ft,
-                    data.font.as_ptr(),
-                    data.font.len() as i64,
-                    data.index as i64,
-                    &mut face,
-                );
-            }
-            (
-                f.0,
-                (face, unsafe { FontFace::create_from_ft(face).unwrap() }),
-            )
-        })
-        .collect()
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn new_ft() -> cairo::freetype::freetype::FT_Library {
-    use cairo::freetype::freetype;
-    use libc::{c_long, size_t};
-    use std::ffi::c_void;
-
-    extern "C" fn alloc_library(_memory: freetype::FT_Memory, size: c_long) -> *mut c_void {
-        unsafe { libc::malloc(size as size_t) }
-    }
-
-    extern "C" fn free_library(_memory: freetype::FT_Memory, block: *mut c_void) {
-        unsafe { libc::free(block) }
-    }
-
-    extern "C" fn realloc_library(
-        _memory: freetype::FT_Memory,
-        _cur_size: c_long,
-        new_size: c_long,
-        block: *mut c_void,
-    ) -> *mut c_void {
-        unsafe { libc::realloc(block, new_size as size_t) }
-    }
-
-    static mut MEMORY: freetype::FT_MemoryRec_ = freetype::FT_MemoryRec_ {
-        user: 0 as *mut c_void,
-        alloc: Some(alloc_library),
-        free: Some(free_library),
-        realloc: Some(realloc_library),
-    };
-
-    let mut ft = core::ptr::null_mut();
-
-    unsafe {
-        freetype::FT_New_Library(&mut MEMORY, &mut ft);
-        freetype::FT_Add_Default_Modules(ft);
-    }
-
-    ft
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn cairo_draw(
-    output: egui::FullOutput,
-    textures: &mut HashMap<TextureId, ImageSurface>,
-    ctx: &cairo::Context,
-    fonts: &HashMap<FontFamily, (cairo::freetype::freetype::FT_Face, cairo::FontFace)>,
-) {
-    for (id, tex) in output.textures_delta.set {
-        let surface = match tex.image {
-            egui::ImageData::Color(c) => ImageSurface::create_for_data(
-                c.pixels
-                    .iter()
-                    .flat_map(|c| {
-                        let c = c.to_array();
-                        [c[2], c[1], c[0], c[3]]
-                    })
-                    .collect::<Vec<_>>(),
-                cairo::Format::ARgb32,
-                c.width() as i32,
-                c.height() as i32,
-                cairo::Format::ARgb32
-                    .stride_for_width(c.width() as u32)
-                    .unwrap(),
-            )
-            .unwrap(),
-            _ => continue,
-        };
-
-        if let Some(pos) = tex.pos {
-            let texture = textures.get_mut(&id).unwrap();
-
-            let ctx = cairo::Context::new(texture).unwrap();
-
-            ctx.set_source_surface(&surface, 0.0, 0.0).unwrap();
-            ctx.rectangle(
-                pos[0] as f64,
-                pos[1] as f64,
-                surface.width() as f64,
-                surface.height() as f64,
-            );
-            ctx.fill().unwrap();
-        } else {
-            textures.insert(id, surface);
-        }
-    }
-
-    for shape in output.shapes {
-        ctx.reset_clip();
-
-        ctx.rectangle(
-            shape.clip_rect.min.x as f64,
-            shape.clip_rect.min.y as f64,
-            shape.clip_rect.width() as f64,
-            shape.clip_rect.height() as f64,
-        );
-
-        ctx.clip();
-
-        cairo_draw_shape(ctx, shape.shape, textures, fonts);
-    }
-
-    for id in output.textures_delta.free {
-        textures.remove(&id);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn cairo_draw_shape(
-    ctx: &cairo::Context,
-    shape: eframe::epaint::Shape,
-    textures: &HashMap<TextureId, ImageSurface>,
-    fonts: &HashMap<FontFamily, (cairo::freetype::freetype::FT_Face, cairo::FontFace)>,
-) {
-    use cairo::{freetype::freetype::FT_Get_Char_Index, SurfacePattern, TextCluster};
-
-    match shape {
-        egui::Shape::Noop => {}
-        egui::Shape::Vec(shapes) => {
-            for shape in shapes {
-                cairo_draw_shape(ctx, shape, textures, fonts);
-            }
-        }
-        egui::Shape::Rect(rect) => {
-            let texture = textures.get(&rect.fill_texture_id);
-            if let Some(texture) = texture {
-                ctx.save().unwrap();
-                ctx.translate(rect.rect.min.x as f64, rect.rect.min.y as f64);
-                let ratio = rect.rect.width() as f64 / texture.width() as f64;
-                ctx.scale(ratio, ratio);
-                ctx.set_source(&SurfacePattern::create(texture)).unwrap();
-                ctx.paint().unwrap();
-                ctx.restore().unwrap();
-                ctx.set_operator(cairo::Operator::Multiply);
-            }
-            let color: palette::Srgba<u8> =
-                palette::cast::from_array(rect.fill.to_srgba_unmultiplied());
-            let color: palette::Srgba<f64> = color.into_format();
-            // let color: palette::LinSrgba<f64> = color.into_linear();
-            ctx.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-
-            ctx.rectangle(
-                rect.rect.min.x as f64,
-                rect.rect.min.y as f64,
-                rect.rect.width() as f64,
-                rect.rect.height() as f64,
-            );
-            ctx.fill().unwrap();
-
-            if texture.is_some() {
-                ctx.set_operator(cairo::Operator::Over);
-            }
-
-            ctx.set_line_width(rect.stroke.width as f64);
-            if rect.stroke.width > 0.0 {
-                let color: palette::Srgba<u8> =
-                    palette::cast::from_array(rect.stroke.color.to_srgba_unmultiplied());
-                let color: palette::Srgba<f64> = color.into_format();
-                // let color: palette::LinSrgba<f64> = color.into_linear();
-                ctx.set_source_rgba(color.red, color.green, color.blue, color.alpha);
-
-                ctx.rectangle(
-                    rect.rect.min.x as f64,
-                    rect.rect.min.y as f64,
-                    rect.rect.width() as f64,
-                    rect.rect.height() as f64,
-                );
-                ctx.stroke().unwrap();
-            }
-        }
-        egui::Shape::Text(text) => {
-            let origin = text.pos;
-
-            for row in &text.galley.rows {
-                let mut row_iter = row.glyphs.iter().map(|f| f.chr);
-
-                let mut section = row.section_index_at_start;
-                let mut next_section = section;
-
-                let mut glyphs_iter = row.glyphs.iter();
-                let mut raw_glyphs_iter = row.glyphs.iter().map(|g| g.section_index).peekable();
-
-                let mut chars_in_section = 0;
-                while let Some(g) = raw_glyphs_iter.peek().copied() {
-                    if g != section {
-                        next_section = g;
-                        break;
-                    } else {
-                        raw_glyphs_iter.next();
-                        chars_in_section += 1;
-                    }
-                }
-
-                loop {
-                    let ref layout_section = text.galley.job.sections[section as usize];
-
-                    let row_str: String = (&mut row_iter).take(chars_in_section).collect();
-
-                    ctx.set_font_size(layout_section.format.font_id.size as f64);
-                    let font = fonts.get(&layout_section.format.font_id.family).unwrap();
-                    ctx.set_font_face(&font.1);
-                    ctx.set_source_rgba(
-                        layout_section.format.color.r() as f64 / 255.0,
-                        layout_section.format.color.g() as f64 / 255.0,
-                        layout_section.format.color.b() as f64 / 255.0,
-                        layout_section.format.color.a() as f64 / 255.0,
-                    );
-                    let glyphs: Vec<_> = (&mut glyphs_iter)
-                        .take(chars_in_section)
-                        .map(|glyph| cairo::Glyph {
-                            index: unsafe { FT_Get_Char_Index(font.0, glyph.chr as u64) as u64 },
-                            x: origin.x as f64 + glyph.pos.x as f64,
-                            y: origin.y as f64 + glyph.pos.y as f64,
-                        })
-                        .collect();
-
-                    ctx.show_text_glyphs(
-                        &row_str,
-                        &glyphs,
-                        &[TextCluster {
-                            num_bytes: row_str.as_bytes().len() as i32,
-                            num_glyphs: glyphs.len() as i32,
-                        }],
-                        cairo::TextClusterFlags::None,
-                    )
-                    .unwrap();
-                    section = next_section;
-                    if (&mut raw_glyphs_iter).next().is_none() {
-                        break;
-                    }
-                    chars_in_section = 1;
-                    while let Some(g) = raw_glyphs_iter.peek().copied() {
-                        if g != section {
-                            next_section = g;
-                            break;
-                        } else {
-                            raw_glyphs_iter.next();
-                            chars_in_section += 1;
-                        }
-                    }
-                }
-            }
-        }
-        // egui::Shape::Circle(circle) => {
-        //     let matrix = ctx.matrix();
-        //     let color = circle.fill.to_srgba_unmultiplied();
-        //     ctx.set_source_rgba(
-        //         color[0] as f64 / 255.0,
-        //         color[1] as f64 / 255.0,
-        //         color[2] as f64 / 255.0,
-        //         color[3] as f64 / 255.0,
-        //     );
-
-        //     ctx.move_to(circle.center.x as f64, circle.center.y as f64);
-        //     ctx.scale(, )
-        // }
-        _ => {}
     }
 }

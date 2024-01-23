@@ -1,2 +1,3 @@
 (slide_obj
-    viewbox: (_) @name)
+    (slide_vb
+        viewbox: (_) @name))

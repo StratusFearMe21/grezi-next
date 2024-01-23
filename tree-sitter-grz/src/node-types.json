@@ -233,30 +233,6 @@
             "named": true
           }
         ]
-      },
-      "viewbox": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "size",
-            "named": true
-          }
-        ]
-      },
-      "viewbox_index": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "index_parser",
-            "named": true
-          }
-        ]
       }
     },
     "children": {
@@ -269,6 +245,10 @@
         },
         {
           "type": "slide_from",
+          "named": true
+        },
+        {
+          "type": "slide_vb",
           "named": true
         }
       ]
@@ -292,6 +272,74 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "slide_vb",
+    "named": true,
+    "fields": {
+      "attached_box": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "index_parser",
+            "named": true
+          }
+        ]
+      },
+      "body": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "viewbox_inner",
+            "named": true
+          }
+        ]
+      },
+      "viewbox": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "size",
+            "named": true
+          }
+        ]
+      },
+      "viewbox_index": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "index_parser",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "inherit",
+          "named": true
+        },
+        {
+          "type": "size",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -537,6 +585,10 @@
     "named": true
   },
   {
+    "type": "inherit",
+    "named": true
+  },
+  {
     "type": "number_literal",
     "named": true
   },
@@ -573,7 +625,15 @@
     "named": false
   },
   {
+    "type": "|",
+    "named": false
+  },
+  {
     "type": "}",
+    "named": false
+  },
+  {
+    "type": "~",
     "named": false
   }
 ]

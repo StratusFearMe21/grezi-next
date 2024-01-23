@@ -4,11 +4,10 @@
   operation: (operation) @keyword.operator)
 (viewbox_obj
   operation: (":") @keyword.operator)
-(viewbox_inner
-  direction: (direction) @keyword.control)
 (slide_function
   function: (identifier) @function)
 
+(direction) @keyword.control
 (edge_parser) @keyword.control
 (escape_sequence) @constant.character.escape
 (identifier) @variable

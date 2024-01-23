@@ -114,9 +114,32 @@ module.exports = grammar({
       '{', $._vb_identifier, $.index_parser, '}'
     ),
 
+    slide_vb: $ => choice(
+      seq(
+        ':',
+        choice(
+          seq(
+            field("viewbox", $._vb_identifier),
+            field('viewbox_index', $.index_parser)
+          ),
+          seq(
+            alias('()', $.inherit),
+            optional(field('viewbox_index', $.index_parser))
+          )
+        )
+      ),
+      seq('|', 
+        $._vb_identifier,
+        field('attached_box', $.index_parser),
+        field('body', $.viewbox_inner),
+        field('viewbox_index', $.index_parser),
+      ),
+      '~'
+    ),
+
     slide_obj: $ => seq(
-      field('object', $.identifier), ':', field("viewbox", $._vb_identifier),
-      field('viewbox_index', $.index_parser),
+      field('object', $.identifier),
+      optional($.slide_vb),
       optional($.slide_from),
       optional($.edge_parser),
     ),
