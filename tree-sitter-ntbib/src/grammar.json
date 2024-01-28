@@ -1,0 +1,83 @@
+{
+  "name": "ntbib",
+  "rules": {
+    "source_file": {
+      "type": "REPEAT",
+      "content": {
+        "type": "SYMBOL",
+        "name": "element"
+      }
+    },
+    "element": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "tag_start"
+            },
+            {
+              "type": "SYMBOL",
+              "name": "tag_end"
+            }
+          ]
+        },
+        {
+          "type": "SYMBOL",
+          "name": "content"
+        }
+      ]
+    },
+    "content": {
+      "type": "PATTERN",
+      "value": "[^<]*"
+    },
+    "tag_start": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "<"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "tag"
+        },
+        {
+          "type": "STRING",
+          "value": ">"
+        }
+      ]
+    },
+    "tag_end": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "</"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "tag"
+        },
+        {
+          "type": "STRING",
+          "value": ">"
+        }
+      ]
+    },
+    "tag": {
+      "type": "PATTERN",
+      "value": "[^>\\/]*"
+    }
+  },
+  "extras": [],
+  "conflicts": [],
+  "precedences": [],
+  "externals": [],
+  "inline": [],
+  "supertypes": []
+}
+

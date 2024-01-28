@@ -1,5 +1,5 @@
 {
-  "name": "grz_parser",
+  "name": "tree-sitter-ntbib",
   "version": "1.0.0",
   "description": "",
   "main": "bindings/node",
@@ -8,12 +8,7 @@
   },
   "author": "",
   "license": "GPL-3.0",
-  "tree-sitter": [
-    {
-      "scope": "source.grz",
-      "file-types": [
-        "grz"
-      ]
-    }
-  ]
+  "dependencies": {
+    "nan": "^2.18.0"
+  }
 }

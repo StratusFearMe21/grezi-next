@@ -3,7 +3,10 @@ use std::path::Path;
 use ecolor::Color32;
 use eframe::{
     egui::{Context, FontDefinitions, TextFormat},
-    epaint::{text::LayoutJob, FontFamily, FontId},
+    epaint::{
+        text::{LayoutJob, TextWrapping},
+        FontFamily, FontId,
+    },
 };
 use helix_core::tree_sitter::Parser;
 use indexmap::IndexSet;
@@ -46,7 +49,13 @@ pub fn parse_citations(
             let mut italics = false;
             let mut pre = false;
             let font = FontId::proportional(24.0);
-            let mut layout = LayoutJob::default();
+            let mut layout = LayoutJob {
+                wrap: TextWrapping {
+                    max_rows: u32::MAX as usize,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
             let mut header = "";
             let mut in_header = false;
             let mut height = 0.0;
@@ -199,12 +208,16 @@ pub fn parse_citations(
                     viewbox: None,
                     source_obj: None,
                     object: super::objects::ObjectType::Text {
-                        layout_job: LayoutJob::simple(
-                            header.to_string(),
-                            FontId::proportional(48.0),
-                            Color32::WHITE,
-                            f32::MAX,
-                        ),
+                        layout_job: {
+                            let mut job = LayoutJob::simple(
+                                header.to_string(),
+                                FontId::proportional(48.0),
+                                Color32::WHITE,
+                                f32::MAX,
+                            );
+                            job.wrap.max_rows = u32::MAX as usize;
+                            job
+                        },
                         source: false,
                     },
                 },

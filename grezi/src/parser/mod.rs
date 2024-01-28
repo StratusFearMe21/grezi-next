@@ -129,6 +129,12 @@ pub enum Error {
     ),
     #[error("Color error")]
     ColorError(#[label("Error parsing color: {1}")] PointFromRange, String),
+    #[error("Spell check")]
+    #[diagnostic(severity(Warning))]
+    SpellCheck(
+        #[label("Try spelling that {1:?}")] PointFromRange,
+        Vec<String>,
+    ),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -146,6 +152,7 @@ impl Error {
             Error::BadNode(range, _) => range.0,
             Error::ImageError(range, _) => range.0,
             Error::ColorError(range, _) => range.0,
+            Error::SpellCheck(range, _) => range.0,
         }
     }
 }

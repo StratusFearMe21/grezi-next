@@ -425,7 +425,6 @@ pub fn parse_objects(
                         halign: align,
                         break_on_newline: true,
                         wrap: TextWrapping {
-                            max_width: 0.0,
                             max_rows: u32::MAX as usize,
                             ..Default::default()
                         },
@@ -484,7 +483,7 @@ pub fn parse_objects(
                                                 underline: Stroke::NONE,
                                                 strikethrough: if tags.contains(&Tag::Strikethrough)
                                                 {
-                                                    Stroke::new(3.0, Color32::WHITE)
+                                                    Stroke::new(5.0, Color32::WHITE)
                                                 } else {
                                                     Stroke::NONE
                                                 },
@@ -502,7 +501,7 @@ pub fn parse_objects(
                                                 underline: Stroke::NONE,
                                                 strikethrough: if tags.contains(&Tag::Strikethrough)
                                                 {
-                                                    Stroke::new(3.0, Color32::WHITE)
+                                                    Stroke::new(5.0, Color32::WHITE)
                                                 } else {
                                                     Stroke::NONE
                                                 },
@@ -521,7 +520,7 @@ pub fn parse_objects(
                                         italics: false,
                                         underline: Stroke::NONE,
                                         strikethrough: if tags.contains(&Tag::Strikethrough) {
-                                            Stroke::new(3.0, Color32::WHITE)
+                                            Stroke::new(5.0, Color32::WHITE)
                                         } else {
                                             Stroke::NONE
                                         },
@@ -640,7 +639,6 @@ pub fn parse_objects(
             halign: Align::RIGHT,
             break_on_newline: true,
             wrap: TextWrapping {
-                max_width: 0.0,
                 max_rows: u32::MAX as usize,
                 ..Default::default()
             },

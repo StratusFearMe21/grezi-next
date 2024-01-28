@@ -254,6 +254,78 @@ pub fn cairo_draw_shape(
                         cairo::TextClusterFlags::None,
                     )
                     .unwrap();
+
+                    if layout_section.format.underline.width > 0.0
+                        && layout_section.format.underline.color.a() > 0
+                    {
+                        ctx.set_line_width(layout_section.format.underline.width as f64);
+                        ctx.set_source_rgba(
+                            layout_section.format.underline.color.r() as f64 / 255.0,
+                            layout_section.format.underline.color.g() as f64 / 255.0,
+                            layout_section.format.underline.color.b() as f64 / 255.0,
+                            layout_section.format.underline.color.a() as f64 / 255.0,
+                        );
+                        let first_glyph = glyphs.first().unwrap();
+                        ctx.move_to(first_glyph.x, first_glyph.y);
+                        let last_glyph = glyphs.last().unwrap();
+                        unsafe {
+                            freetype_sys::FT_Load_Glyph(
+                                font.0.cast(),
+                                last_glyph.index as u32,
+                                freetype_sys::FT_LOAD_NO_SCALE,
+                            );
+                        }
+                        ctx.line_to(
+                            last_glyph.x
+                                + (unsafe { &*(&*font.0).glyph }.advance.x as f64
+                                    * (layout_section.format.font_id.size as f64 / 72.0))
+                                    / 16.0,
+                            last_glyph.y,
+                        );
+                        ctx.stroke().unwrap();
+                    }
+
+                    if layout_section.format.strikethrough.width > 0.0
+                        && layout_section.format.strikethrough.color.a() > 0
+                    {
+                        ctx.set_line_width(layout_section.format.strikethrough.width as f64);
+                        ctx.set_source_rgba(
+                            layout_section.format.strikethrough.color.r() as f64 / 255.0,
+                            layout_section.format.strikethrough.color.g() as f64 / 255.0,
+                            layout_section.format.strikethrough.color.b() as f64 / 255.0,
+                            layout_section.format.strikethrough.color.a() as f64 / 255.0,
+                        );
+                        let first_glyph = glyphs.first().unwrap();
+                        unsafe {
+                            freetype_sys::FT_Load_Glyph(
+                                font.0.cast(),
+                                first_glyph.index as u32,
+                                freetype_sys::FT_LOAD_NO_SCALE,
+                            );
+                        }
+                        let font_plus = ((unsafe { &*(&*font.0).glyph }.metrics.height as f64
+                            * (layout_section.format.font_id.size as f64 / 72.0))
+                            / 16.0)
+                            / 2.0;
+                        let last_glyph = glyphs.last().unwrap();
+                        unsafe {
+                            freetype_sys::FT_Load_Glyph(
+                                font.0.cast(),
+                                last_glyph.index as u32,
+                                freetype_sys::FT_LOAD_NO_SCALE,
+                            );
+                        }
+                        ctx.move_to(first_glyph.x, first_glyph.y - font_plus);
+                        ctx.line_to(
+                            last_glyph.x
+                                + (unsafe { &*(&*font.0).glyph }.advance.x as f64
+                                    * (layout_section.format.font_id.size as f64 / 72.0))
+                                    / 16.0,
+                            last_glyph.y - font_plus,
+                        );
+                        ctx.stroke().unwrap();
+                    }
+
                     section = next_section;
                     if (&mut raw_glyphs_iter).next().is_none() {
                         break;

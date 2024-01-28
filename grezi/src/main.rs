@@ -149,7 +149,7 @@ fn main() -> miette::Result<()> {
         max_window_size: args.window_size.map(|f| f.0),
         ..Default::default()
     };
-    let app = MyEguiApp::new(args.lsp, args.presentation, args.dont_close);
+    let mut app = MyEguiApp::new(args.lsp, args.presentation, args.dont_close);
     let init_app = app.0.clone();
 
     if args.fmt {
@@ -181,6 +181,19 @@ fn main() -> miette::Result<()> {
         return Ok(());
     } else if args.export {
         let output = args.output.unwrap_or_else(|| "out.slideshow".to_owned());
+        let used_fonts = app.0.slide_show.read().used_fonts(&app.0.fonts);
+        app.0.fonts.font_data.retain(|font, _| {
+            let res = used_fonts.contains(font.as_str());
+            if !res {
+                app.0.fonts.families.values_mut().for_each(|v| {
+                    if let Some(i) = v.iter().position(|f| f.eq(font)) {
+                        v.remove(i);
+                    }
+                })
+            }
+            res
+        });
+        app.0.fonts.families.retain(|_, names| !names.is_empty());
         if output.ends_with("slideshow") {
             bincode::serialize_into(
                 BufWriter::new(
@@ -263,6 +276,7 @@ fn main() -> miette::Result<()> {
         let egui_ctx = egui::Context::default();
 
         let mut init_app = app.0.init_app(&egui_ctx, app.1);
+        egui_ctx.set_fonts(init_app.fonts.clone());
         let ft = grezi::cairo::new_ft();
 
         let font_defs = init_app.fonts.clone();

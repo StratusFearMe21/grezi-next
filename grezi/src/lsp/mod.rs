@@ -18,6 +18,7 @@ use crate::{
 use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Point, Query, QueryCursor, Tree};
+use hunspell_rs::CheckResult;
 use indexmap::IndexSet;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
@@ -110,9 +111,16 @@ pub fn start_lsp(
         include_str!("queries/obj_in_slide.scm"),
     )
     .unwrap();
+    let strings_query = Query::new(
+        tree_sitter_grz::language(),
+        include_str!("queries/strings.scm"),
+    )
+    .unwrap();
     let font_strings = font_loader::system_fonts::query_all()
         .into_iter()
         .collect::<IndexSet<_, ahash::RandomState>>();
+
+    let mut hunspell = None;
 
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
     let server_capabilities = serde_json::to_value(&ServerCapabilities {
@@ -127,7 +135,11 @@ pub fn start_lsp(
             },
         )),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec!["tree_to_dot".to_string(), "full_reparse".to_string()],
+            commands: vec![
+                "tree_to_dot".to_string(),
+                "full_reparse".to_string(),
+                "spell_check".to_string(),
+            ],
             ..Default::default()
         }),
         rename_provider: Some(OneOf::Right(RenameOptions {
@@ -1726,7 +1738,7 @@ pub fn start_lsp(
                             req.extract::<ExecuteCommandParams>(ExecuteCommand::METHOD)
                         {
                             match command.command.as_str() {
-                                "tree_to_dot" => {
+                                "treerestaurant_to_dot" => {
                                     if let Ok(process) = std::process::Command::new("dot")
                                         .stdout(std::fs::File::create("out.dot").unwrap())
                                         .stdin(Stdio::piped())
@@ -1833,6 +1845,90 @@ pub fn start_lsp(
                                     app.clear_resolved.store(true, Ordering::Relaxed);
                                     app.restart_timer.store(true, Ordering::Relaxed);
                                     lsp_egui_ctx.request_repaint();
+                                }
+                                "spell_check" => {
+                                    let hunspell = hunspell.get_or_insert_with(|| {
+                                        hunspell_rs::Hunspell::new(
+                                            "/usr/share/hunspell/en_US.aff",
+                                            "/usr/share/hunspell/en_US.dic",
+                                        )
+                                    });
+                                    query_cursor.set_point_range(
+                                        Point { row: 0, column: 0 }..Point {
+                                            row: usize::MAX,
+                                            column: usize::MAX,
+                                        },
+                                    );
+                                    let tree_info = app.tree_info.lock();
+                                    let iter = query_cursor.matches(
+                                        &strings_query,
+                                        tree_info.as_ref().unwrap().root_node(),
+                                        RopeProvider(current_rope.slice(..)),
+                                    );
+
+                                    let mut warnings = Vec::new();
+
+                                    for query_match in iter {
+                                        let source: Cow<'_, str> = current_rope
+                                            .byte_slice(query_match.captures[0].node.byte_range())
+                                            .into();
+                                        let parser = pulldown_cmark::Parser::new(source.as_ref());
+
+                                        for event in parser {
+                                            match event {
+                                                pulldown_cmark::Event::Text(t) => {
+                                                    for text in t.split_whitespace() {
+                                                        let text = text.trim_matches(|c: char| {
+                                                            c.is_ascii_punctuation()
+                                                        });
+                                                        if hunspell.check(text)
+                                                            == CheckResult::MissingInDictionary
+                                                        {
+                                                            warnings.push(
+                                                                super::parser::Error::SpellCheck(
+                                                                    query_match.captures[0]
+                                                                        .node
+                                                                        .range()
+                                                                        .into(),
+                                                                    hunspell.suggest(text),
+                                                                ),
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+
+                                    if !warnings.is_empty() {
+                                        connection
+                                        .sender
+                                        .send(Message::Notification(lsp_server::Notification::new(
+                                            PublishDiagnostics::METHOD.to_string(),
+                                            PublishDiagnosticsParams {
+                                                uri: currently_open.clone(),
+                                                diagnostics: warnings
+                                                    .into_iter()
+                                                    .map(|error| {
+                                                        let diagnostic: lsp_types::Diagnostic =
+                                                            error.into();
+                                                        diagnostic
+                                                    })
+                                                    .collect(),
+                                                version: Some(current_document_version),
+                                            },
+                                        )))
+                                        .unwrap();
+                                    }
+
+                                    connection
+                                        .sender
+                                        .send(Message::Response(Response::new_ok(
+                                            rqid,
+                                            None::<serde_json::Value>,
+                                        )))
+                                        .unwrap();
                                 }
                                 _ => {
                                     connection

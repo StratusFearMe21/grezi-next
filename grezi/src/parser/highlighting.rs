@@ -51,7 +51,6 @@ pub fn highlight_text(
         halign: align,
         break_on_newline: true,
         wrap: TextWrapping {
-            max_width: 0.0,
             max_rows: u32::MAX as usize,
             ..Default::default()
         },
@@ -173,13 +172,13 @@ pub fn highlight_text(
                                     else {
                                         unreachable!()
                                     };
-                                    Stroke::new(3.0, Color32::from_rgb(u_r, u_g, u_b))
+                                    Stroke::new(5.0, Color32::from_rgb(u_r, u_g, u_b))
                                 } else {
                                     Stroke::NONE
                                 },
                                 strikethrough: if style.add_modifier.contains(Modifier::CROSSED_OUT)
                                 {
-                                    Stroke::new(3.0, Color32::from_rgb(f_r, f_g, f_b))
+                                    Stroke::new(5.0, Color32::from_rgb(f_r, f_g, f_b))
                                 } else {
                                     Stroke::NONE
                                 },

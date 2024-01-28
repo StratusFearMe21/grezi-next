@@ -3,7 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::BuildHasherDefault,
     io::Cursor,
     mem::ManuallyDrop,
@@ -25,6 +25,7 @@ use eframe::{
 use egui_anim::Anim;
 #[cfg(not(target_arch = "wasm32"))]
 use font_loader::system_fonts::FontPropertyBuilder;
+// use frame_history::FrameHistory;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
 #[cfg(not(target_arch = "wasm32"))]
@@ -37,7 +38,7 @@ use notify::{event::ModifyKind, Watcher};
 use parser::{
     actions::{Actions, ResolvedActions, HIGHLIGHT_COLOR_DEFAULT},
     color::Color,
-    objects::{Object, ObjectState},
+    objects::{Object, ObjectState, ObjectType},
     slides::{ResolvedSlideObj, SlideObj},
     viewboxes::{LineUp, ViewboxIn},
     AstObject, PassThroughHasher,
@@ -50,6 +51,7 @@ use crate::parser::objects::ResolvedObject;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cairo;
+// mod frame_history;
 mod layout;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod lsp;
@@ -93,6 +95,7 @@ pub struct MyEguiApp {
     pub fonts: FontDefinitions,
     #[cfg(not(target_arch = "wasm32"))]
     pub sources: indexmap::IndexSet<String, ahash::RandomState>,
+    // pub frame_history: FrameHistory,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -100,6 +103,25 @@ pub struct SlideShow {
     pub slide_show: Vec<AstObject>,
     pub viewboxes: HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     pub objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
+}
+
+impl SlideShow {
+    pub fn used_fonts(&self, defs: &FontDefinitions) -> HashSet<String, ahash::RandomState> {
+        let mut hashset = HashSet::default();
+        for obj in self.objects.values() {
+            match &obj.object {
+                ObjectType::Text { layout_job, .. } => {
+                    for section in &layout_job.sections {
+                        hashset.insert(
+                            defs.families.get(&section.format.font_id.family).unwrap()[0].clone(),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        hashset
+    }
 }
 
 impl SlideShow {
@@ -210,9 +232,15 @@ fn resolve_layout_raw(
     margin: f32,
 ) -> Vec<Rect> {
     constraints.iter_mut().for_each(|c| match c {
-        layout::Constraint::Length(length) => *length *= size.max.x / 1920.0,
-        layout::Constraint::Min(min) => *min *= size.max.x / 1920.0,
-        layout::Constraint::Max(max) => *max *= size.max.x / 1920.0,
+        layout::Constraint::Length(length) => {
+            *length *= (size.max.x + size.max.y) / (1920.0 + 1080.0)
+        }
+        layout::Constraint::Min(min) => {
+            *min *= (size.max.x + size.max.y) / (1920.0 + 1080.0);
+        }
+        layout::Constraint::Max(max) => {
+            *max *= (size.max.x + size.max.y) / (1920.0 + 1080.0);
+        }
         _ => {}
     });
     layout::Layout::default()
@@ -579,6 +607,7 @@ impl MyEguiApp {
                 #[cfg(not(target_arch = "wasm32"))]
                 sources,
                 fonts,
+                // frame_history: FrameHistory::default(),
             },
             slide_show.1,
         )
@@ -880,7 +909,10 @@ impl MyEguiApp {
                     let mut layout_job = layout_job.clone();
                     layout_job.wrap.max_width = second_viewbox.width();
                     for row in layout_job.sections.iter_mut() {
-                        row.format.font_id.size *= size.max.x / 1920.0;
+                        row.format.font_id.size *= (size.max.x + size.max.y) / (1920.0 + 1080.0);
+                        row.format.strikethrough.width *=
+                            (size.max.x + size.max.y) / (1920.0 + 1080.0);
+                        row.format.underline.width *= (size.max.x + size.max.y) / (1920.0 + 1080.0);
                         row.format
                             .line_height
                             .as_mut()
@@ -1131,6 +1163,10 @@ impl MyEguiApp {
     }
 
     pub fn update(&mut self, ctx: &egui::Context, frame: Option<&mut eframe::Frame>) {
+        // if let Soce(&mut ref mut frame) = frame {
+        //     self.frame_history
+        //         .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
+        // }
         self.time += ctx.input(|i| i.stable_dt);
         #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|input| {
@@ -1171,14 +1207,14 @@ impl MyEguiApp {
             .exact_height(32.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("⬅")).clicked() {
+                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("<")).clicked() {
                         self.index.fetch_sub(1, Ordering::Relaxed);
                         self.resolved_actions = None;
                         self.next.store(false, Ordering::Relaxed);
                         self.resolved_slide = None;
                         button_hit = true;
                         self.time = 1000.0;
-                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
+                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new(">")).clicked() {
                         self.index.fetch_add(1, Ordering::Relaxed);
                         self.resolved_actions = None;
                         self.next.store(true, Ordering::Relaxed);
@@ -1186,6 +1222,10 @@ impl MyEguiApp {
                         button_hit = true;
                         self.time = 0.0;
                     }
+                    // ui.label(format!(
+                    //     "FPS: {:.1}",
+                    //     self.frame_history.fps()
+                    // ));
                     ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
                     ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
                 })
