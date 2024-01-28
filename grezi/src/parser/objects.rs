@@ -50,6 +50,31 @@ pub enum ObjectType {
     Spinner,
 }
 
+impl ObjectType {
+    fn apply_source(&mut self, index: usize) {
+        match self {
+            ObjectType::Text { layout_job, .. } => {
+                layout_job.append(
+                    &format!("{}. ", index + 1),
+                    1.5,
+                    TextFormat {
+                        font_id: FontId::proportional(24.0),
+                        color: Color32::WHITE,
+                        background: Color32::TRANSPARENT,
+                        italics: false,
+                        underline: Stroke::NONE,
+                        strikethrough: Stroke::NONE,
+                        valign: Align::TOP,
+                        ..Default::default()
+                    },
+                );
+            }
+            ObjectType::Image { .. } => {}
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ResolvedObject {
     Text(Arc<Galley>),
@@ -123,6 +148,7 @@ pub fn parse_objects(
     ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
     file_path: &std::path::Path,
+    sources: &mut indexmap::IndexSet<String, ahash::RandomState>,
     mut insert_fn: impl FnMut(u64, Object) -> (),
 ) -> Result<(), super::Error> {
     use std::borrow::Cow;
@@ -163,7 +189,7 @@ pub fn parse_objects(
         },
     );
     let mut source_cited = None;
-    let object = match obj_type.as_ref() {
+    let mut object = match obj_type.as_ref() {
         "Rect" => {
             let mut tint = None;
             let mut height = None;
@@ -197,7 +223,7 @@ pub fn parse_objects(
             ObjectType::Rect {
                 color: tint.unwrap_or(Color32::WHITE),
                 height: height.ok_or_else(|| {
-                    super::Error::KnownMissing(obj_range.into(), "Rectangle height")
+                    super::Error::KnownMissing(obj_range.into(), "Rectangle height".into())
                 })?,
             }
         }
@@ -249,7 +275,7 @@ pub fn parse_objects(
                 }
             }
             if uri.is_empty() {
-                return Err(super::Error::KnownMissing(obj_range.into(), "value"));
+                return Err(super::Error::KnownMissing(obj_range.into(), "value".into()));
             }
             if let Ok(mut new_uri) = Url::parse(&uri) {
                 if new_uri.scheme() == "file" {
@@ -377,11 +403,12 @@ pub fn parse_objects(
                     _ => {}
                 }
             }
-            add_font(fonts, font_strings, ctx, &font)?;
+            add_font(fonts, font_strings, ctx, &font.0)
+                .map_err(|()| super::Error::KnownMissing(font.1.into(), "Font not found".into()))?;
             let text = if let Some(t) = text {
                 t
             } else {
-                return Err(super::Error::KnownMissing(obj_range.into(), "value"));
+                return Err(super::Error::KnownMissing(obj_range.into(), "value".into()));
             };
             let layout_job = match language {
                 Some(lang) => highlighting::highlight_text(
@@ -436,10 +463,54 @@ pub fn parse_objects(
                     let parser = pulldown_cmark::Parser::new_ext(&string_content, options);
 
                     let mut tags = Vec::new();
+                    let mut item_number = None;
+
+                    let mut font_ids = Vec::with_capacity(2);
+                    font_ids.push(FontId::new(font_size, font.0.clone()));
 
                     macro_rules! layout_append {
                         ($layout_job:expr,$text:expr,$font_id:expr) => {
                             if !$text.is_empty() {
+                                if tags.contains(&Tag::Item) {
+                                    match item_number {
+                                        Some(n) => $layout_job.append(
+                                            &format!("{}. ", n),
+                                            1.5,
+                                            TextFormat {
+                                                font_id: $font_id,
+                                                color: color.unwrap_or(Color32::WHITE),
+                                                background: bg.unwrap_or(Color32::TRANSPARENT),
+                                                italics: false,
+                                                underline: Stroke::NONE,
+                                                strikethrough: if tags.contains(&Tag::Strikethrough)
+                                                {
+                                                    Stroke::new(3.0, Color32::WHITE)
+                                                } else {
+                                                    Stroke::NONE
+                                                },
+                                                ..Default::default()
+                                            },
+                                        ),
+                                        None => $layout_job.append(
+                                            "• ",
+                                            1.5,
+                                            TextFormat {
+                                                font_id: $font_id,
+                                                color: color.unwrap_or(Color32::WHITE),
+                                                background: bg.unwrap_or(Color32::TRANSPARENT),
+                                                italics: false,
+                                                underline: Stroke::NONE,
+                                                strikethrough: if tags.contains(&Tag::Strikethrough)
+                                                {
+                                                    Stroke::new(3.0, Color32::WHITE)
+                                                } else {
+                                                    Stroke::NONE
+                                                },
+                                                ..Default::default()
+                                            },
+                                        ),
+                                    }
+                                }
                                 $layout_job.append(
                                     $text,
                                     0.0,
@@ -447,7 +518,7 @@ pub fn parse_objects(
                                         font_id: $font_id,
                                         color: color.unwrap_or(Color32::WHITE),
                                         background: bg.unwrap_or(Color32::TRANSPARENT),
-                                        italics: tags.contains(&Tag::Emphasis),
+                                        italics: false,
                                         underline: Stroke::NONE,
                                         strikethrough: if tags.contains(&Tag::Strikethrough) {
                                             Stroke::new(3.0, Color32::WHITE)
@@ -464,9 +535,60 @@ pub fn parse_objects(
                     for event in parser {
                         match event {
                             pulldown_cmark::Event::Start(tag) => {
+                                match tag {
+                                    Tag::List(l) => item_number = l.map(|l| l - 1),
+                                    Tag::Item => {
+                                        item_number.as_mut().map(|i| *i += 1);
+                                    }
+                                    Tag::Emphasis => {
+                                        let family = match font.0.clone() {
+                                            FontFamily::Name(n) => {
+                                                FontFamily::Name(format!("{}:italic", n).into())
+                                            }
+                                            FontFamily::Proportional => {
+                                                FontFamily::Name("Ubuntu:light:italic".into())
+                                            }
+                                            FontFamily::Monospace => FontFamily::Monospace,
+                                        };
+                                        add_font(fonts, font_strings, ctx, &family).unwrap();
+                                        font_ids.push(FontId::new(font_size, family));
+                                    }
+                                    Tag::Strong => {
+                                        let family = if tags.contains(&Tag::Emphasis) {
+                                            match font.0.clone() {
+                                                FontFamily::Name(n) => FontFamily::Name(
+                                                    format!("{}:bold:italic", n).into(),
+                                                ),
+                                                FontFamily::Proportional => {
+                                                    FontFamily::Name("Ubuntu:bold:italic".into())
+                                                }
+                                                FontFamily::Monospace => FontFamily::Monospace,
+                                            }
+                                        } else {
+                                            match font.0.clone() {
+                                                FontFamily::Name(n) => {
+                                                    FontFamily::Name(format!("{}:bold", n).into())
+                                                }
+                                                FontFamily::Proportional => {
+                                                    FontFamily::Name("Ubuntu:bold".into())
+                                                }
+                                                FontFamily::Monospace => FontFamily::Monospace,
+                                            }
+                                        };
+                                        add_font(fonts, font_strings, ctx, &family).unwrap();
+                                        font_ids.push(FontId::new(font_size, family));
+                                    }
+                                    _ => {}
+                                }
                                 tags.push(tag);
                             }
-                            pulldown_cmark::Event::End(_) => {
+                            pulldown_cmark::Event::End(tag) => {
+                                match tag {
+                                    Tag::Emphasis | Tag::Strong => {
+                                        font_ids.pop();
+                                    }
+                                    _ => {}
+                                }
                                 tags.pop();
                             }
                             pulldown_cmark::Event::Code(text) => {
@@ -477,24 +599,20 @@ pub fn parse_objects(
                                 );
                             }
                             pulldown_cmark::Event::SoftBreak => {
-                                layout_append!(
-                                    layout_job,
-                                    "\n",
-                                    FontId::new(font_size, font.0.clone())
-                                );
+                                layout_append!(layout_job, "\n", font_ids.last().unwrap().clone());
                             }
                             pulldown_cmark::Event::HardBreak => {
                                 layout_append!(
                                     layout_job,
                                     "\n\n",
-                                    FontId::new(font_size, font.0.clone())
+                                    font_ids.last().unwrap().clone()
                                 );
                             }
                             pulldown_cmark::Event::Text(text) => {
                                 layout_append!(
                                     layout_job,
                                     text.as_ref(),
-                                    FontId::new(font_size, font.0.clone())
+                                    font_ids.last().unwrap().clone()
                                 );
                             }
                             _ => {}
@@ -515,8 +633,8 @@ pub fn parse_objects(
     let mut source_obj = None;
     if let Some(source) = source_cited {
         let mut hasher = hasher.build_hasher();
-        std::hash::Hash::hash("source_", &mut hasher);
-        std::hash::Hash::hash(&name, &mut hasher);
+        std::hash::Hash::hash("__source__", &mut hasher);
+        std::hash::Hash::hash(&source, &mut hasher);
         let s_obj = hasher.finish();
         let mut layout_job = LayoutJob {
             halign: Align::RIGHT,
@@ -528,11 +646,32 @@ pub fn parse_objects(
             },
             ..Default::default()
         };
+        let source_index = sources.get_index_of(source.as_ref()).unwrap_or_else(|| {
+            let index = sources.len();
+            sources.insert(source.clone().into_owned());
+            index
+        });
+        let family = FontFamily::Name("Ubuntu:light:italic".into());
+        add_font(fonts, font_strings, ctx, &family).unwrap();
         layout_job.append(
-            "> ",
+            &format!("{}. ", source_index + 1),
             1.5,
             TextFormat {
-                font_id: FontId::proportional(24.0),
+                font_id: FontId::proportional(18.0),
+                color: Color32::WHITE,
+                background: Color32::TRANSPARENT,
+                italics: false,
+                underline: Stroke::NONE,
+                strikethrough: Stroke::NONE,
+                valign: Align::TOP,
+                ..Default::default()
+            },
+        );
+        layout_job.append(
+            source.as_ref(),
+            0.0,
+            TextFormat {
+                font_id: FontId::new(24.0, family),
                 color: Color32::WHITE,
                 background: Color32::TRANSPARENT,
                 italics: false,
@@ -541,19 +680,7 @@ pub fn parse_objects(
                 ..Default::default()
             },
         );
-        layout_job.append(
-            source.as_ref(),
-            0.0,
-            TextFormat {
-                font_id: FontId::proportional(24.0),
-                color: Color32::WHITE,
-                background: Color32::TRANSPARENT,
-                italics: true,
-                underline: Stroke::NONE,
-                strikethrough: Stroke::NONE,
-                ..Default::default()
-            },
-        );
+        object.apply_source(source_index);
         insert_fn(
             s_obj,
             Object {
@@ -587,33 +714,66 @@ pub fn parse_objects(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn add_font(
+pub fn add_font(
     fonts: &mut eframe::egui::FontDefinitions,
     font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
     ctx: &eframe::egui::Context,
-    font: &(FontFamily, helix_core::tree_sitter::Range),
-) -> Result<(), super::Error> {
+    font: &FontFamily,
+) -> Result<(), ()> {
     use eframe::egui::FontData;
     use font_loader::system_fonts::FontPropertyBuilder;
 
-    if !fonts.families.contains_key(&font.0) {
-        match &font.0 {
+    if !fonts.families.contains_key(font) {
+        match font {
             FontFamily::Name(n) => {
-                if !font_strings.contains(n.as_ref()) {
-                    return Err(super::Error::KnownMissing(font.1.into(), "Font not found"));
+                let mut split = n.split(':');
+                let base = split.next().unwrap();
+                if !font_strings.contains(base) {
+                    return Err(());
                 }
 
-                let font_prop = FontPropertyBuilder::new().family(n.as_ref()).build();
+                let mut font_prop = FontPropertyBuilder::new().family(base);
+                for s in split {
+                    match s {
+                        "italic" => font_prop = font_prop.italic(),
+                        "bold" => font_prop = font_prop.bold(),
+                        "monospace" => font_prop = font_prop.monospace(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "thin" => font_prop = font_prop.thin(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "extralight" => font_prop = font_prop.extralight(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "light" => font_prop = font_prop.light(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "demilight" => font_prop = font_prop.demilight(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "book" => font_prop = font_prop.book(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "regular" => font_prop = font_prop.regular(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "medium" => font_prop = font_prop.medium(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "demibold" => font_prop = font_prop.demibold(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "extrabold" => font_prop = font_prop.extrabold(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "black" => font_prop = font_prop.black(),
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        "extra_black" => font_prop = font_prop.extra_black(),
+                        _ => {}
+                    }
+                }
+                let font_prop = font_prop.build();
                 if let Some(fetched_font) = font_loader::system_fonts::get(&font_prop) {
                     // Leaking the font makes it cheaper to clone the font definitions elsewhere
                     fonts
                         .font_data
                         .insert(n.to_string(), FontData::from_static(fetched_font.0.leak()));
 
-                    fonts.families.insert(font.0.clone(), vec![n.to_string()]);
+                    fonts.families.insert(font.clone(), vec![n.to_string()]);
                     ctx.set_fonts(fonts.clone());
                 } else {
-                    return Err(super::Error::KnownMissing(font.1.into(), "Font not found"));
+                    return Err(());
                 }
             }
             _ => {}

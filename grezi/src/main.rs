@@ -154,7 +154,7 @@ fn main() -> miette::Result<()> {
 
     if args.fmt {
         let mut file = app.0.slide_show_file.lock();
-        match grezi::lsp::format_code(&app.0, &file) {
+        match grezi::lsp::formatter::format_code(&app.0, &file) {
             Ok(edits) => {
                 let transaction = helix_lsp::util::generate_transaction_from_edits(
                     &file,
@@ -415,7 +415,6 @@ fn main() {
                         app.0.init_app(
                             &cc.egui_ctx,
                             app.1,
-                            app.2,
                             &cc.integration_info.web_info.location.hash[1..],
                         )
                     })

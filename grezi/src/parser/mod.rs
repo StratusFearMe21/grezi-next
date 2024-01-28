@@ -2,12 +2,15 @@ pub mod actions;
 pub mod color;
 use color::Color;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod citations;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod highlighting;
 pub mod objects;
 pub mod slides;
 pub mod viewboxes;
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::{Debug, Display},
     hash::{BuildHasherDefault, Hasher},
@@ -112,7 +115,7 @@ pub enum Error {
     #[error("Missing error")]
     KnownMissing(
         #[label("a {1} is missing here")] PointFromRange,
-        &'static str,
+        Cow<'static, str>,
     ),
     #[error("Bad node")]
     BadNode(
@@ -412,6 +415,7 @@ pub fn parse_file(
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
     font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
+    sources: &mut indexmap::IndexSet<String, ahash::RandomState>,
     fonts: &mut eframe::egui::FontDefinitions,
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
@@ -448,7 +452,7 @@ pub fn parse_file(
 
                 if matches!(
                     NodeKind::from(n.kind_id()),
-                    NodeKind::Slide | NodeKind::SlideFunctions
+                    NodeKind::Slide | NodeKind::SlideFunctions | NodeKind::Register
                 ) {
                     is_new = true;
                 }
@@ -471,6 +475,7 @@ pub fn parse_file(
         slide_show.slide_show.clear();
         slide_show.viewboxes.clear();
         slide_show.objects.clear();
+        sources.clear();
     }
 
     let mut ast_object_at = 0;
@@ -522,6 +527,7 @@ pub fn parse_file(
                                 object.position = Some(obj.locations[1].0);
                             }
                         }
+                        color.0 = bg.0;
                         if let Some(color) = color.1 {
                             bg.0 = color.1;
                         }
@@ -559,6 +565,7 @@ pub fn parse_file(
                             egui_ctx,
                             &mut errors_present,
                             file_path,
+                            sources,
                             |hash, object| {
                                 slide_show.objects.insert(hash, object);
                             },
@@ -636,6 +643,15 @@ pub fn parse_file(
     if is_new {
         slide_show.viewboxes.shrink_to_fit();
         slide_show.objects.shrink_to_fit();
+        citations::parse_citations(
+            file_path,
+            egui_ctx,
+            &hasher,
+            slide_show,
+            fonts,
+            font_strings,
+        )
+        .unwrap();
     }
     drop(old_tree_cursor);
     drop(new_tree_cursor);

@@ -91,6 +91,8 @@ pub struct MyEguiApp {
     pub dont_animate: bool,
     pub clear_color: Color32,
     pub fonts: FontDefinitions,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub sources: indexmap::IndexSet<String, ahash::RandomState>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -205,6 +207,7 @@ fn resolve_layout_raw(
     direction: Direction,
     mut constraints: Vec<Constraint>,
     split: Rect,
+    margin: f32,
 ) -> Vec<Rect> {
     constraints.iter_mut().for_each(|c| match c {
         layout::Constraint::Length(length) => *length *= size.max.x / 1920.0,
@@ -214,6 +217,7 @@ fn resolve_layout_raw(
     });
     layout::Layout::default()
         .direction(direction)
+        .margin(margin)
         .constraints(&constraints)
         .split(split)
 }
@@ -273,6 +277,7 @@ impl MyEguiApp {
                     let watcher_slide_show = Arc::clone(&self.slide_show);
                     let mut fonts = self.fonts.clone();
                     let mut instant = Instant::now();
+                    let mut sources = self.sources.clone();
                     let mut w = ManuallyDrop::new(
                         notify::recommended_watcher(
                             move |res: Result<notify::Event, notify::Error>| {
@@ -340,6 +345,7 @@ impl MyEguiApp {
                                                                 ahash::RandomState,
                                                             >>(
                                                             ),
+                                                        &mut sources,
                                                         &mut fonts,
                                                         &watcher_context,
                                                         std::path::Path::new(&watcher_file_name),
@@ -410,6 +416,8 @@ impl MyEguiApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut helix_cell = None;
+        #[cfg(not(target_arch = "wasm32"))]
+        let mut sources = indexmap::IndexSet::default();
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut parser = {
@@ -501,6 +509,7 @@ impl MyEguiApp {
                                 .iter()
                                 .cloned()
                                 .collect::<indexmap::IndexSet<_, ahash::RandomState>>(),
+                            &mut sources,
                             &mut fonts,
                             &ctx,
                             &std::fs::canonicalize(presentation.as_ref().unwrap()).unwrap(),
@@ -567,6 +576,8 @@ impl MyEguiApp {
                 #[cfg(not(target_arch = "wasm32"))]
                 parser: Arc::new(Mutex::new(parser)),
                 clear_color: Color::default().into(),
+                #[cfg(not(target_arch = "wasm32"))]
+                sources,
                 fonts,
             },
             slide_show.1,
@@ -775,8 +786,13 @@ impl MyEguiApp {
 
                 let unresolved_layout = slide_show.viewboxes.get(&hash).unwrap();
                 let constraints = unresolved_layout.constraints.clone();
-                let layout =
-                    resolve_layout_raw(size, unresolved_layout.direction, constraints, split);
+                let layout = resolve_layout_raw(
+                    size,
+                    unresolved_layout.direction,
+                    constraints,
+                    split,
+                    unresolved_layout.margin,
+                );
                 let rect = layout[index];
                 self.resolved_viewboxes.insert(hash, layout);
                 rect
@@ -865,6 +881,10 @@ impl MyEguiApp {
                     layout_job.wrap.max_width = second_viewbox.width();
                     for row in layout_job.sections.iter_mut() {
                         row.format.font_id.size *= size.max.x / 1920.0;
+                        row.format
+                            .line_height
+                            .as_mut()
+                            .map(|lh| *lh *= row.format.font_id.size);
                     }
                     let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
                     let resolved_obj = ResolvedObject::Text(galley);
@@ -1146,6 +1166,40 @@ impl MyEguiApp {
             }
         }
 
+        #[cfg(target_arch = "wasm32")]
+        egui::TopBottomPanel::bottom("controls")
+            .exact_height(32.0)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("⬅")).clicked() {
+                        self.index.fetch_sub(1, Ordering::Relaxed);
+                        self.resolved_actions = None;
+                        self.next.store(false, Ordering::Relaxed);
+                        self.resolved_slide = None;
+                        button_hit = true;
+                        self.time = 1000.0;
+                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
+                        self.index.fetch_add(1, Ordering::Relaxed);
+                        self.resolved_actions = None;
+                        self.next.store(true, Ordering::Relaxed);
+                        self.resolved_slide = None;
+                        button_hit = true;
+                        self.time = 0.0;
+                    }
+                    ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
+                    ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
+                })
+            });
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.lsp {
+            egui::TopBottomPanel::bottom("controls")
+                .exact_height(32.0)
+                .show(ctx, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        ui.label(format!("{}", index + 1));
+                    })
+                });
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::default().fill(self.clear_color))
             .show(ctx, |ui| {
@@ -1175,8 +1229,10 @@ impl MyEguiApp {
                                 AstObject::Slide {
                                     objects: slide,
                                     actions,
+                                    bg,
                                     ..
                                 } => {
+                                    self.clear_color = bg.0.into();
                                     let resolved_slide = self.resolve_slide(
                                         slide,
                                         ui,
@@ -1194,7 +1250,8 @@ impl MyEguiApp {
                                 } => {
                                     let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
                                     match slide {
-                                        AstObject::Slide { objects, .. } => {
+                                        AstObject::Slide { objects, bg, .. } => {
+                                            self.clear_color = bg.0.into();
                                             let resolved_slide = self.resolve_slide(
                                                 objects,
                                                 ui,
@@ -1273,30 +1330,6 @@ impl MyEguiApp {
                         }
                     }
                 }
-            });
-        #[cfg(target_arch = "wasm32")]
-        egui::TopBottomPanel::bottom("controls")
-            .exact_height(32.0)
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("⬅")).clicked() {
-                        self.index.fetch_sub(1, Ordering::Relaxed);
-                        self.resolved_actions = None;
-                        self.next.store(false, Ordering::Relaxed);
-                        self.resolved_slide = None;
-                        button_hit = true;
-                        self.time = 1000.0;
-                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new("➡")).clicked() {
-                        self.index.fetch_add(1, Ordering::Relaxed);
-                        self.resolved_actions = None;
-                        self.next.store(true, Ordering::Relaxed);
-                        self.resolved_slide = None;
-                        button_hit = true;
-                        self.time = 0.0;
-                    }
-                    ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
-                    ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
-                })
             });
         ctx.input(|input| {
             for event in input.events.iter() {

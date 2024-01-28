@@ -23,10 +23,11 @@ bincode = "1.3.3"
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
-font-loader = "0.11.0"
+font-loader = { git = "https://github.com/StratusFearMe21/rust-font-loader", version = "0.11.0" }
 miette = { version = "5.10.0", features = ["fancy", "backtrace"] }
 pulldown-cmark = { version = "0.9.3", default-features = false }
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
+tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
 helix-core = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 helix-loader = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
 helix-term = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
@@ -61,7 +62,9 @@ eframe = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_ove
 wasm-bindgen-futures = "0.4.38"
 
 [build-dependencies]
+tree-sitter = "0.20.10"
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
+tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
 case = "1.0.0"
 
 [profile.dev.package."*"]

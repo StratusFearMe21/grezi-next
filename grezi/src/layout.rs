@@ -140,6 +140,12 @@ impl<'a> Layout<'a> {
         self
     }
 
+    #[inline]
+    pub fn margin(mut self, margin: f32) -> Layout<'a> {
+        self.margin = margin;
+        self
+    }
+
     /// Wrapper function around the cassowary-rs solver to be able to split a given
     /// viewbox into smaller ones based on the constraints and the direction.
     ///

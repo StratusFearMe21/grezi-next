@@ -6,10 +6,9 @@ use std::{
 
 use case::CaseExt;
 
-fn main() {
-    let lang = tree_sitter_grz::language();
+fn create_ts_kinds(lang: tree_sitter::Language, file_name: &str, parser: &str) {
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let mut out_enum = BufWriter::new(File::create(Path::new(&out_dir).join("kinds.rs")).unwrap());
+    let mut out_enum = BufWriter::new(File::create(Path::new(&out_dir).join(file_name)).unwrap());
 
     out_enum
         .write_all(b"#[repr(u16)] #[derive(Default,FromPrimitive,Debug)] pub enum NodeKind {")
@@ -39,5 +38,18 @@ fn main() {
     }
 
     out_enum.write_all(b"#[default] Invalid}").unwrap();
-    println!("cargo:rerun-if-changed=../tree-sitter-grz/src/parser.c");
+    println!("cargo:rerun-if-changed={}", parser);
+}
+
+fn main() {
+    create_ts_kinds(
+        tree_sitter_grz::language(),
+        "kinds.rs",
+        "../tree-sitter-grz/src/parser.c",
+    );
+    create_ts_kinds(
+        tree_sitter_ntbib::language(),
+        "kinds_ntbib.rs",
+        "../tree-sitter-ntbib/src/parser.c",
+    );
 }
