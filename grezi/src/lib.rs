@@ -109,15 +109,12 @@ impl SlideShow {
     pub fn used_fonts(&self, defs: &FontDefinitions) -> HashSet<String, ahash::RandomState> {
         let mut hashset = HashSet::default();
         for obj in self.objects.values() {
-            match &obj.object {
-                ObjectType::Text { layout_job, .. } => {
-                    for section in &layout_job.sections {
-                        hashset.insert(
-                            defs.families.get(&section.format.font_id.family).unwrap()[0].clone(),
-                        );
-                    }
+            if let ObjectType::Text { layout_job, .. } = &obj.object {
+                for section in &layout_job.sections {
+                    hashset.insert(
+                        defs.families.get(&section.format.font_id.family).unwrap()[0].clone(),
+                    );
                 }
-                _ => {}
             }
         }
         hashset
@@ -911,10 +908,9 @@ impl MyEguiApp {
                         row.format.strikethrough.width *=
                             (size.max.x + size.max.y) / (1920.0 + 1080.0);
                         row.format.underline.width *= (size.max.x + size.max.y) / (1920.0 + 1080.0);
-                        row.format
-                            .line_height
-                            .as_mut()
-                            .map(|lh| *lh *= row.format.font_id.size);
+                        if let Some(lh) = row.format.line_height.as_mut() {
+                            *lh *= row.format.font_id.size
+                        }
                     }
                     let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
                     let resolved_obj = ResolvedObject::Text(galley);
