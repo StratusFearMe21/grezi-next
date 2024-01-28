@@ -25,8 +25,7 @@ impl TypedValueParser for RangeParser {
     ) -> Result<Self::Value, clap::Error> {
         let parsed = StringValueParser::new().parse_ref(cmd, arg, value)?;
 
-        Ok(Range::from_str(&parsed)
-            .or_else(|_| Err(clap::Error::new(clap::error::ErrorKind::InvalidValue)))?)
+        Range::from_str(&parsed).map_err(|_| clap::Error::new(clap::error::ErrorKind::InvalidValue))
     }
 }
 
@@ -71,8 +70,7 @@ impl TypedValueParser for FitParser {
     ) -> Result<Self::Value, clap::Error> {
         let parsed = StringValueParser::new().parse_ref(cmd, arg, value)?;
 
-        Ok(Fit::from_str(&parsed)
-            .or_else(|_| Err(clap::Error::new(clap::error::ErrorKind::InvalidValue)))?)
+        Fit::from_str(&parsed).map_err(|_| clap::Error::new(clap::error::ErrorKind::InvalidValue))
     }
 }
 
@@ -81,7 +79,7 @@ impl FromStr for Fit {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut split = s.split("x");
+        let mut split = s.split('x');
         let start: f32 = split.next().unwrap().parse().or(Err(()))?;
         let fit = if let Some(s) = split.next() {
             let fit: f32 = s.parse().or(Err(()))?;
@@ -341,9 +339,7 @@ fn main() -> miette::Result<()> {
 
                 if !image_data.is_empty() {
                     image_data.chunks_mut(4).for_each(|chunk| {
-                        let b = chunk[0];
-                        chunk[0] = chunk[2];
-                        chunk[2] = b;
+                        chunk.swap(0, 2);
                     });
                     let o = output.rsplit_once('.').unwrap();
                     let p: &str = if range.len() <= 1 {
