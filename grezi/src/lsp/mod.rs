@@ -123,7 +123,7 @@ pub fn start_lsp(
     let mut hunspell = None;
 
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
-    let server_capabilities = serde_json::to_value(&ServerCapabilities {
+    let server_capabilities = serde_json::to_value(ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Options(
             TextDocumentSyncOptions {
                 open_close: Some(true),
@@ -301,7 +301,7 @@ pub fn start_lsp(
                                                         &[]
                                                     }
                                                 },
-                                                Some(&tree_info),
+                                                Some(tree_info),
                                             )
                                             .unwrap();
 
@@ -1625,7 +1625,7 @@ pub fn start_lsp(
                                             complete_source_file(
                                                 completion,
                                                 &slide_complete_query,
-                                                &*tree_info,
+                                                tree_info,
                                                 &current_rope,
                                                 &mut query_cursor,
                                             )
@@ -2421,7 +2421,7 @@ fn inlay_hints(
         RopeProvider(current_rope.slice(..)),
     );
 
-    while let Some(query_match) = edge_iter.next() {
+    for query_match in edge_iter {
         match query_match.pattern_index {
             0 => {
                 let query_node = query_match.captures[0].node;
@@ -2458,18 +2458,18 @@ fn inlay_hints(
                     .into();
                     if vb.starts_with('|') {
                         vb = Cow::Borrowed(": InlineVb[_]");
-                        inlay_vb_map.insert(query_slice.clone(), vb);
+                        inlay_vb_map.insert(query_slice, vb);
                     } else if vb.starts_with('~') {
                         if let Some(vb) = inlay_vb_map.get(&query_slice) {
                             std::fmt::Write::write_fmt(&mut hint, format_args!("{}", &vb[1..]))
                                 .unwrap();
                         }
                     } else {
-                        inlay_vb_map.insert(query_slice.clone(), vb);
+                        inlay_vb_map.insert(query_slice, vb);
                     }
                 } else {
                     let entry = inlay_vb_map
-                        .entry(query_slice.clone())
+                        .entry(query_slice)
                         .or_insert(Cow::Borrowed(": Unknown[_]"));
 
                     std::fmt::Write::write_fmt(&mut hint, format_args!("{}", entry)).unwrap();
@@ -2480,7 +2480,7 @@ fn inlay_hints(
                         you_can::borrow_unchecked(current_rope.byte_slice(edge.byte_range()))
                     };
                     let entry = inlay_edge_map
-                        .entry(query_slice.clone())
+                        .entry(query_slice)
                         .or_insert_with(|| {
                             if edge.byte_range().len() == 4 {
                                 slice.byte_slice(2..)
@@ -2502,7 +2502,7 @@ fn inlay_hints(
                         *entry = slice.byte_slice(2..);
                     }
                 } else {
-                    let entry = inlay_edge_map.entry(query_slice.clone());
+                    let entry = inlay_edge_map.entry(query_slice);
                     let entry = entry.or_insert_with(|| RopeSlice::from(""));
 
                     std::fmt::Write::write_fmt(&mut hint, format_args!("{}{}", entry, entry))
@@ -2915,7 +2915,7 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let mut tree_cursor = GrzCursor::new(&*tree_info);
+    let mut tree_cursor = GrzCursor::new(tree_info);
     let mut symbols = Vec::new();
 
     let _ = tree_cursor.goto_first_child();
@@ -3165,9 +3165,9 @@ pub fn hover(
                 if let Some(name_node) = node.named_child(0) {
                     let vb_name = current_rope.byte_slice(name_node.byte_range());
                     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-                    let mut hasher = hasher.build_hasher();
-                    vb_name.hash(&mut hasher);
-                    let hashed_vb = hasher.finish();
+                    
+                    
+                    let hashed_vb = hasher.hash_one(&vb_name);
                     if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
                         query_cursor.set_point_range(
                             name_node.range().start_point..Point {
@@ -3269,9 +3269,9 @@ pub fn hover(
                 if let Some(name_node) = node.named_child(0) {
                     let obj_name = current_rope.byte_slice(name_node.byte_range());
                     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-                    let mut hasher = hasher.build_hasher();
-                    obj_name.hash(&mut hasher);
-                    let hashed_obj = hasher.finish();
+                    
+                    
+                    let hashed_obj = hasher.hash_one(&obj_name);
                     if app.obj_dbg.swap(hashed_obj, Ordering::Relaxed) != hashed_obj {
                         query_cursor.set_point_range(
                             name_node.range().start_point..Point {

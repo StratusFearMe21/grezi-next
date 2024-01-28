@@ -13,7 +13,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let mut formatting_cursor = FormattingCursor::new(&*tree_info);
+    let mut formatting_cursor = FormattingCursor::new(tree_info);
 
     formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
 

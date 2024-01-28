@@ -149,7 +149,7 @@ pub fn parse_objects(
     errors_present: &mut Vec<super::Error>,
     file_path: &std::path::Path,
     sources: &mut indexmap::IndexSet<String, ahash::RandomState>,
-    mut insert_fn: impl FnMut(u64, Object) -> (),
+    mut insert_fn: impl FnMut(u64, Object),
 ) -> Result<(), super::Error> {
     use std::borrow::Cow;
 

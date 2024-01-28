@@ -222,7 +222,7 @@ pub fn cairo_draw_shape(
                 }
 
                 loop {
-                    let ref layout_section = text.galley.job.sections[section as usize];
+                    let layout_section = &text.galley.job.sections[section as usize];
 
                     let row_str: String = (&mut row_iter).take(chars_in_section).collect();
 
@@ -277,7 +277,7 @@ pub fn cairo_draw_shape(
                         }
                         ctx.line_to(
                             last_glyph.x
-                                + (unsafe { &*(&*font.0).glyph }.advance.x as f64
+                                + (unsafe { &*(*font.0).glyph }.advance.x as f64
                                     * (layout_section.format.font_id.size as f64 / 72.0))
                                     / 16.0,
                             last_glyph.y,
@@ -303,7 +303,7 @@ pub fn cairo_draw_shape(
                                 freetype_sys::FT_LOAD_NO_SCALE,
                             );
                         }
-                        let font_plus = ((unsafe { &*(&*font.0).glyph }.metrics.height as f64
+                        let font_plus = ((unsafe { &*(*font.0).glyph }.metrics.height as f64
                             * (layout_section.format.font_id.size as f64 / 72.0))
                             / 16.0)
                             / 2.0;
@@ -318,7 +318,7 @@ pub fn cairo_draw_shape(
                         ctx.move_to(first_glyph.x, first_glyph.y - font_plus);
                         ctx.line_to(
                             last_glyph.x
-                                + (unsafe { &*(&*font.0).glyph }.advance.x as f64
+                                + (unsafe { &*(*font.0).glyph }.advance.x as f64
                                     * (layout_section.format.font_id.size as f64 / 72.0))
                                     / 16.0,
                             last_glyph.y - font_plus,
@@ -327,7 +327,7 @@ pub fn cairo_draw_shape(
                     }
 
                     section = next_section;
-                    if (&mut raw_glyphs_iter).next().is_none() {
+                    if raw_glyphs_iter.next().is_none() {
                         break;
                     }
                     chars_in_section = 1;

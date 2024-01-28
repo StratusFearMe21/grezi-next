@@ -136,7 +136,7 @@ pub fn parse_slide_object(
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     last_obj: Option<&SlideObj>,
     sources_on_screen: &mut std::collections::HashSet<u64, BuildHasherDefault<PassThroughHasher>>,
-    mut insert_fn: impl FnMut(SlideObj) -> (),
+    mut insert_fn: impl FnMut(SlideObj),
 ) -> Result<(), super::Error> {
     use super::Error;
 
@@ -166,9 +166,9 @@ pub fn parse_slide_object(
             };
             let vb_range = tree_cursor.node().range();
             let mut vb =
-                super::viewboxes::parse_viewbox_inner(tree_cursor, source, hasher, &viewboxes)?;
+                super::viewboxes::parse_viewbox_inner(tree_cursor, source, hasher, viewboxes)?;
             vb.margin = 0.0;
-            if vb.constraints.len() == 0 {
+            if vb.constraints.is_empty() {
                 return Err(super::Error::KnownMissing(
                     vb_range.into(),
                     "constraints".into(),

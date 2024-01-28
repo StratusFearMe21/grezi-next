@@ -45,9 +45,9 @@ pub fn parse_color_keyword(ident: &str) -> Result<Color, ()> {
 /// Parse a CSS color using the specified [`ColorParser`] and return a new color
 /// value on success.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn parse_color_with<'i, 't>(
+pub fn parse_color_with<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    input: &mut Parser<'i, 't>,
+    input: &mut Parser<'i, '_>,
 ) -> Result<(std::time::Duration, Color), ParseError<'i, super::Error>> {
     use std::time::Duration;
 
@@ -93,7 +93,7 @@ pub fn parse_color_with<'i, 't>(
                     .parse_nested_block(|arguments| {
                         parse_color_function(color_parser, name, arguments)
                     })
-                    .map_or_else(|e| Err(e), |v| Ok((duration, v)))?;
+                    .map_or_else(Err, |v| Ok((duration, v)))?;
             }
             _ => return dbg!(Err(location.new_unexpected_token_error(token.clone())),),
         };
@@ -180,10 +180,10 @@ pub fn parse_color_with<'i, 't>(
 /// Parse one of the color functions: rgba(), lab(), color(), etc.
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_color_function<'i, 't>(
+fn parse_color_function<'i>(
     color_parser: &mut DefaultColorParser<'_>,
     name: CowRcStr<'i>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
     if let Some(ref mut cp) = color_parser.reference() {
         cp.convert_color(name.as_ref());
@@ -240,9 +240,9 @@ fn parse_color_function<'i, 't>(
 /// clipping the result to [0.0..1.0].
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_alpha_component<'i, 't>(
+fn parse_alpha_component<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<f32, ParseError<'i, super::Error>>
 where
 {
@@ -256,9 +256,9 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_legacy_alpha<'i, 't>(
+fn parse_legacy_alpha<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<f32, ParseError<'i, super::Error>> {
     Ok(if !arguments.is_exhausted() {
         arguments.expect_comma()?;
@@ -269,9 +269,9 @@ fn parse_legacy_alpha<'i, 't>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_modern_alpha<'i, 't>(
+fn parse_modern_alpha<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<Option<f32>, ParseError<'i, super::Error>> {
     if !arguments.is_exhausted() {
         arguments.expect_delim('/')?;
@@ -283,9 +283,9 @@ fn parse_modern_alpha<'i, 't>(
 
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_rgb<'i, 't>(
+fn parse_rgb<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
     let maybe_red = parse_none_or(arguments, |p| color_parser.parse_number_or_percentage(p))?;
 
@@ -347,9 +347,9 @@ fn parse_rgb<'i, 't>(
 /// <https://drafts.csswg.org/css-color/#the-hsl-notation>
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_hsl<'i, 't>(
+fn parse_hsl<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
     let maybe_hue = parse_none_or(arguments, |p| color_parser.parse_angle_or_number(p))?;
 
@@ -384,9 +384,9 @@ fn parse_hsl<'i, 't>(
 /// <https://drafts.csswg.org/css-color/#the-hbw-notation>
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_hwb<'i, 't>(
+fn parse_hwb<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
     let (hue, whiteness, blackness, alpha) = parse_components(
         color_parser,
@@ -408,9 +408,9 @@ type IntoColorFn<Output> =
 
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_lab_like<'i, 't>(
+fn parse_lab_like<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
     lightness_range: f32,
     a_b_range: f32,
     into_color: IntoColorFn<Color>,
@@ -432,9 +432,9 @@ fn parse_lab_like<'i, 't>(
 
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_lch_like<'i, 't>(
+fn parse_lch_like<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
     lightness_range: f32,
     chroma_range: f32,
     into_color: IntoColorFn<Color>,
@@ -457,9 +457,9 @@ fn parse_lch_like<'i, 't>(
 /// Parse the color() function.
 #[inline]
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_color_with_color_space<'i, 't>(
+fn parse_color_with_color_space<'i>(
     color_parser: &mut DefaultColorParser<'_>,
-    arguments: &mut Parser<'i, 't>,
+    arguments: &mut Parser<'i, '_>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
     let color_space = {
         let location = arguments.current_source_location();
@@ -1464,9 +1464,9 @@ impl Color {
     }
 }
 
-impl Into<Color32> for Color {
-    fn into(self) -> Color32 {
-        let color: PaletteColor32 = match self {
+impl From<Color> for Color32 {
+    fn from(val: Color) -> Self {
+        let color: PaletteColor32 = match val {
             Color::Hsl(hsl) => {
                 let color: UnmultipliedPaletteColorF32 = hsl.into_color();
                 color.premultiply()
@@ -1508,9 +1508,9 @@ impl Into<Color32> for Color {
     }
 }
 
-impl Into<[f32; 4]> for Color {
-    fn into(self) -> [f32; 4] {
-        match self {
+impl From<Color> for [f32; 4] {
+    fn from(val: Color) -> Self {
+        match val {
             Color::Hsl(hsl) => hsl.into(),
             Color::Hwb(hwb) => hwb.into(),
             Color::Lab(lab) => lab.into(),

@@ -352,7 +352,7 @@ impl MyEguiApp {
                                                                 &[]
                                                             }
                                                         },
-                                                        Some(&info),
+                                                        Some(info),
                                                     )
                                                     .unwrap();
 
@@ -361,7 +361,7 @@ impl MyEguiApp {
                                                 let ast =
                                                     parser::parse_file(
                                                         &tree,
-                                                        Some(&info),
+                                                        Some(info),
                                                         &new_file,
                                                         &mut self.helix_cell,
                                                         &mut slide_show,
@@ -457,15 +457,11 @@ impl MyEguiApp {
         let slide_show: (SlideShow, SlideShowSource) = {
             let viewboxes = HashMap::default();
             let objects = HashMap::default();
-            if presentation
-                .as_ref()
-                .map(|s| s.as_str())
+            if presentation.as_deref()
                 .unwrap_or_default()
                 .ends_with("slideshow")
             {
-                if presentation
-                    .as_ref()
-                    .map(|s| s.as_str())
+                if presentation.as_deref()
                     .unwrap_or_default()
                     .starts_with("http")
                 {
@@ -730,7 +726,7 @@ impl MyEguiApp {
                     Rounding::ZERO,
                     *color,
                 ),
-                ResolvedObject::Spinner => egui::Spinner::new().paint_at(&ui, obj_pos),
+                ResolvedObject::Spinner => egui::Spinner::new().paint_at(ui, obj_pos),
             }
         }
     }
@@ -863,12 +859,12 @@ impl MyEguiApp {
                     let size = ResolvedObject::Spinner.bounds(second_viewbox.size(), ui);
                     let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, size).into(),
-                        size.size().into(),
+                        size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
                         get_pos!(object.locations[1].0, second_viewbox, size).into(),
-                        size.size().into(),
+                        size.size(),
                     );
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved_slides.push(ResolvedSlideObj {
@@ -890,12 +886,12 @@ impl MyEguiApp {
                     let size = resolved_obj.bounds(second_viewbox.size(), ui);
                     let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, size).into(),
-                        size.size().into(),
+                        size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
                         get_pos!(object.locations[1].0, second_viewbox, size).into(),
-                        size.size().into(),
+                        size.size(),
                     );
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved_slides.push(ResolvedSlideObj {
@@ -923,11 +919,11 @@ impl MyEguiApp {
                     let size = resolved_obj.bounds(second_viewbox.size(), ui);
                     let mut first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, size).into(),
-                        size.size().into(),
+                        size.size(),
                     );
                     let mut second_pos = Rect::from_min_size(
                         get_pos!(object.locations[1].0, second_viewbox, size).into(),
-                        size.size().into(),
+                        size.size(),
                     );
                     if *source {
                         second_pos = second_pos.translate(Vec2::new(
@@ -1087,12 +1083,12 @@ impl MyEguiApp {
                     // };
                     let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, first_size).into(),
-                        first_size.size().into(),
+                        first_size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
                         get_pos!(object.locations[1].0, second_viewbox, second_size).into(),
-                        second_size.size().into(),
+                        second_size.size(),
                     );
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved_slides.push(ResolvedSlideObj {
