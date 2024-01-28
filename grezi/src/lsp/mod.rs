@@ -2415,7 +2415,7 @@ fn inlay_hints(
 
     let mut slide_num = 0;
 
-    let mut edge_iter = query_cursor.matches(
+    let edge_iter = query_cursor.matches(
         inlay_edge_query,
         tree_info.root_node(),
         RopeProvider(current_rope.slice(..)),
@@ -3167,7 +3167,7 @@ pub fn hover(
                     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
                     
                     
-                    let hashed_vb = hasher.hash_one(&vb_name);
+                    let hashed_vb = hasher.hash_one(vb_name);
                     if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
                         query_cursor.set_point_range(
                             name_node.range().start_point..Point {
@@ -3271,7 +3271,7 @@ pub fn hover(
                     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
                     
                     
-                    let hashed_obj = hasher.hash_one(&obj_name);
+                    let hashed_obj = hasher.hash_one(obj_name);
                     if app.obj_dbg.swap(hashed_obj, Ordering::Relaxed) != hashed_obj {
                         query_cursor.set_point_range(
                             name_node.range().start_point..Point {
