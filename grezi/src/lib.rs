@@ -457,11 +457,13 @@ impl MyEguiApp {
         let slide_show: (SlideShow, SlideShowSource) = {
             let viewboxes = HashMap::default();
             let objects = HashMap::default();
-            if presentation.as_deref()
+            if presentation
+                .as_deref()
                 .unwrap_or_default()
                 .ends_with("slideshow")
             {
-                if presentation.as_deref()
+                if presentation
+                    .as_deref()
                     .unwrap_or_default()
                     .starts_with("http")
                 {
@@ -1185,17 +1187,12 @@ impl MyEguiApp {
                 .store(slide_show.slide_show.len() - 1, Ordering::Relaxed);
             self.next.store(false, Ordering::Relaxed);
         }
-        if let Some(slide) = slide_show.slide_show.get(index) {
-            match slide {
-                AstObject::Slide { bg, .. } => {
-                    if let Some(b) = bg.1 {
-                        let color: Color32 =
-                            bg.0.interpolate(b.1, self.time, b.0.as_secs_f32()).into();
-                        self.clear_color = color;
-                    }
-                }
-                _ => {}
-            }
+        if let Some(AstObject::Slide {
+            bg: (bg, Some(b)), ..
+        }) = slide_show.slide_show.get(index)
+        {
+            let color: Color32 = bg.interpolate(b.1, self.time, b.0.as_secs_f32()).into();
+            self.clear_color = color;
         }
 
         #[cfg(target_arch = "wasm32")]
