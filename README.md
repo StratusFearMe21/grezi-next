@@ -43,3 +43,34 @@ grezi -eo new.png -i 6..8 -s 512 new.grz
 grezi -eo new.png -i 6..8 -s 1920x1080 new.grz 
 ```
 Warning: You can also export to SVG, however, this method is not very reliable.
+
+### Web Runtime
+Grezi can export to various static formats, but you can also share the animated version of you presentations
+via the WebAssembly runtime. Using the runtime is easy
+1. Install these
+  - [trunk](https://trunkrs.dev)
+  - brotli
+  - wasm-opt
+  - GNU parallel
+2. Build the WebAssembly runtime
+```
+trunk build --release
+```
+3. Export any slideshows you want to share to the `.slideshow` format (A custom format that packs your slideshow, all used fonts, and all used images together into one file)
+```
+grezi -eo new.slideshow new.grz
+grezi -eo another.slideshow another.grz
+```
+4. Move the slideshows you want to share into the `dist/` directory that `trunk` created in step 2
+```
+mv new.slideshow dist/
+mv another.slideshow dist/
+```
+5. Run the `opt.sh` script to compress everything and optimize the WASM binary
+```
+sh opt.sh
+```
+6. Serve the `dist/` directory with the server of your choice and go to this URL
+```
+https://{YOUR DOMAIN}/index.html#{A SLIDESHOW}.slideshow
+```
