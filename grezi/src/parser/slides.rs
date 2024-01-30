@@ -152,21 +152,22 @@ pub fn parse_slide_object(
         .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
     tree_cursor.goto_next_sibling()?;
     let mut viewbox = if tree_cursor.node().kind_id() == NodeKind::SlideVb as u16 {
+        let inline_vb_hash_range = tree_cursor.node().range();
         tree_cursor.goto_first_child_raw()?;
         let current_char = source.byte_slice(tree_cursor.node().byte_range());
         tree_cursor.goto_next_sibling()?;
         let vb = if current_char == ":" {
             super::viewboxes::parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?
         } else if current_char == "|" {
-            let name = {
-                let mut hasher = hasher.build_hasher();
-                std::hash::Hash::hash(&name, &mut hasher);
-                std::hash::Hash::hash("__viewbox__", &mut hasher);
-                hasher.finish()
-            };
             let vb_range = tree_cursor.node().range();
             let mut vb =
                 super::viewboxes::parse_viewbox_inner(tree_cursor, source, hasher, viewboxes)?;
+            let name = {
+                let mut hasher = hasher.build_hasher();
+                std::hash::Hash::hash(&name, &mut hasher);
+                std::hash::Hash::hash(&inline_vb_hash_range, &mut hasher);
+                hasher.finish()
+            };
             vb.margin = 0.0;
             if vb.constraints.is_empty() {
                 return Err(super::Error::KnownMissing(

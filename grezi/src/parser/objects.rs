@@ -144,7 +144,7 @@ pub fn parse_objects(
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
     fonts: &mut eframe::egui::FontDefinitions,
-    font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
+    font_db: &mut fontdb::Database,
     ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
     file_path: &std::path::Path,
@@ -403,7 +403,7 @@ pub fn parse_objects(
                     _ => {}
                 }
             }
-            add_font(fonts, font_strings, ctx, &font.0)
+            add_font(fonts, font_db, ctx, &font.0)
                 .map_err(|()| super::Error::KnownMissing(font.1.into(), "Font not found".into()))?;
             let text = if let Some(t) = text {
                 t
@@ -463,6 +463,7 @@ pub fn parse_objects(
 
                     let mut tags = Vec::new();
                     let mut item_number = None;
+                    let mut li_printed_num = false;
 
                     let mut font_ids = Vec::with_capacity(2);
                     font_ids.push(FontId::new(font_size, font.0.clone()));
@@ -470,7 +471,8 @@ pub fn parse_objects(
                     macro_rules! layout_append {
                         ($layout_job:expr,$text:expr,$font_id:expr) => {
                             if !$text.is_empty() {
-                                if tags.contains(&Tag::Item) {
+                                if tags.contains(&Tag::Item) && !li_printed_num {
+                                    li_printed_num = true;
                                     match item_number {
                                         Some(n) => $layout_job.append(
                                             &format!("{}. ", n),
@@ -549,7 +551,7 @@ pub fn parse_objects(
                                             }
                                             FontFamily::Monospace => FontFamily::Monospace,
                                         };
-                                        add_font(fonts, font_strings, ctx, &family).unwrap();
+                                        add_font(fonts, font_db, ctx, &family).unwrap();
                                         font_ids.push(FontId::new(font_size, family));
                                     }
                                     Tag::Strong => {
@@ -574,7 +576,7 @@ pub fn parse_objects(
                                                 FontFamily::Monospace => FontFamily::Monospace,
                                             }
                                         };
-                                        add_font(fonts, font_strings, ctx, &family).unwrap();
+                                        add_font(fonts, font_db, ctx, &family).unwrap();
                                         font_ids.push(FontId::new(font_size, family));
                                     }
                                     _ => {}
@@ -586,6 +588,7 @@ pub fn parse_objects(
                                     Tag::Emphasis | Tag::Strong => {
                                         font_ids.pop();
                                     }
+                                    Tag::Item => li_printed_num = false,
                                     _ => {}
                                 }
                                 tags.pop();
@@ -650,7 +653,7 @@ pub fn parse_objects(
             index
         });
         let family = FontFamily::Name("Ubuntu:light:italic".into());
-        add_font(fonts, font_strings, ctx, &family).unwrap();
+        add_font(fonts, font_db, ctx, &family).unwrap();
         layout_job.append(
             &format!("{}. ", source_index + 1),
             1.5,
@@ -714,59 +717,58 @@ pub fn parse_objects(
 #[cfg(not(target_arch = "wasm32"))]
 pub fn add_font(
     fonts: &mut eframe::egui::FontDefinitions,
-    font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
+    font_db: &mut fontdb::Database,
     ctx: &eframe::egui::Context,
     font: &FontFamily,
 ) -> Result<(), ()> {
     use eframe::egui::FontData;
-    use font_loader::system_fonts::FontPropertyBuilder;
+    use fontdb::{Family, Query, Style, Weight};
 
     if !fonts.families.contains_key(font) {
         match font {
             FontFamily::Name(n) => {
                 let mut split = n.split(':');
                 let base = split.next().unwrap();
-                if !font_strings.contains(base) {
-                    return Err(());
-                }
 
-                let mut font_prop = FontPropertyBuilder::new().family(base);
+                let mut font_prop = Query::default();
+                let families = [Family::Name(base)];
+                font_prop.families = &families;
                 for s in split {
                     match s {
-                        "italic" => font_prop = font_prop.italic(),
-                        "bold" => font_prop = font_prop.bold(),
-                        "monospace" => font_prop = font_prop.monospace(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "thin" => font_prop = font_prop.thin(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "extralight" => font_prop = font_prop.extralight(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "light" => font_prop = font_prop.light(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "demilight" => font_prop = font_prop.demilight(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "book" => font_prop = font_prop.book(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "regular" => font_prop = font_prop.regular(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "medium" => font_prop = font_prop.medium(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "demibold" => font_prop = font_prop.demibold(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "extrabold" => font_prop = font_prop.extrabold(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "black" => font_prop = font_prop.black(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        "extra_black" => font_prop = font_prop.extra_black(),
+                        "normal" => font_prop.style = Style::Normal,
+                        "italic" => font_prop.style = Style::Italic,
+                        "oblique" => font_prop.style = Style::Oblique,
+                        // Thin weight (100), the thinnest value.
+                        "thin" => font_prop.weight = Weight::THIN,
+                        // Extra light weight (200).
+                        "extra_light" => font_prop.weight = Weight::EXTRA_LIGHT,
+                        // Light weight (300).
+                        "light" => font_prop.weight = Weight::LIGHT,
+                        // Normal (400).
+                        "normal" => font_prop.weight = Weight::NORMAL,
+                        // Medium weight (500, higher than normal).
+                        "medium" => font_prop.weight = Weight::MEDIUM,
+                        // Semibold weight (600).
+                        "semibold" => font_prop.weight = Weight::SEMIBOLD,
+                        // Bold weight (700).
+                        "bold" => font_prop.weight = Weight::BOLD,
+                        // Extra-bold weight (800).
+                        "extra_bold" => font_prop.weight = Weight::EXTRA_BOLD,
+                        // Black weight (900), the thickest value.
+                        "black" => font_prop.weight = Weight::BLACK,
                         _ => {}
                     }
                 }
-                let font_prop = font_prop.build();
-                if let Some(fetched_font) = font_loader::system_fonts::get(&font_prop) {
+                if let Some(fetched_font) = font_db.query(&font_prop) {
                     // Leaking the font makes it cheaper to clone the font definitions elsewhere
-                    fonts
-                        .font_data
-                        .insert(n.to_string(), FontData::from_static(fetched_font.0.leak()));
+                    let (src, index) =
+                        unsafe { font_db.make_shared_face_data(fetched_font).unwrap() };
+                    let data: &'static [u8] = unsafe { &*Arc::into_raw(src) }.as_ref();
+                    fonts.font_data.insert(n.to_string(), {
+                        let mut font = FontData::from_static(data);
+                        font.index = index;
+                        font
+                    });
 
                     fonts.families.insert(font.clone(), vec![n.to_string()]);
                     ctx.set_fonts(fonts.clone());

@@ -19,7 +19,6 @@ use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Point, Query, QueryCursor, Tree};
 use hunspell_rs::CheckResult;
-use indexmap::IndexSet;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{
@@ -116,9 +115,8 @@ pub fn start_lsp(
         include_str!("queries/strings.scm"),
     )
     .unwrap();
-    let font_strings = font_loader::system_fonts::query_all()
-        .into_iter()
-        .collect::<IndexSet<_, ahash::RandomState>>();
+    let mut font_db = fontdb::Database::new();
+    font_db.load_system_fonts();
 
     let mut hunspell = None;
 
@@ -1647,10 +1645,12 @@ pub fn start_lsp(
                                                 })
                                                 .unwrap_or_default()
                                         {
-                                            let fonts = font_strings
-                                                .iter()
+                                            let fonts = font_db
+                                                .faces()
+                                                .map(|f| &f.families)
+                                                .flatten()
                                                 .map(|f| CompletionItem {
-                                                    label: f.clone(),
+                                                    label: f.0.clone(),
                                                     kind: Some(CompletionItemKind::VARIABLE),
                                                     deprecated: Some(false),
                                                     preselect: Some(true),
@@ -1661,7 +1661,7 @@ pub fn start_lsp(
                                                     text_edit: Some(
                                                         CompletionTextEdit::InsertAndReplace(
                                                             InsertReplaceEdit {
-                                                                new_text: f.clone(),
+                                                                new_text: f.0.clone(),
                                                                 insert: lsp_types::Range {
                                                                     start: completion
                                                                         .text_document_position
@@ -1795,7 +1795,7 @@ pub fn start_lsp(
                                         &current_rope,
                                         &mut app.helix_cell,
                                         &mut slide_show,
-                                        &font_strings,
+                                        &mut font_db,
                                         &mut app.sources,
                                         &mut app.fonts,
                                         &lsp_egui_ctx,
@@ -2038,7 +2038,7 @@ pub fn start_lsp(
                             &current_rope,
                             &mut app.helix_cell,
                             &mut slide_show,
-                            &font_strings,
+                            &mut font_db,
                             &mut app.sources,
                             &mut app.fonts,
                             &lsp_egui_ctx,
@@ -2148,7 +2148,7 @@ pub fn start_lsp(
                                             &current_rope,
                                             &mut app.helix_cell,
                                             &mut slide_show,
-                                            &font_strings,
+                                            &mut font_db,
                                             &mut app.sources,
                                             &mut app.fonts,
                                             &lsp_egui_ctx,
@@ -2232,7 +2232,7 @@ pub fn start_lsp(
                                 &current_rope,
                                 &mut app.helix_cell,
                                 &mut slide_show,
-                                &font_strings,
+                                &mut font_db,
                                 &mut app.sources,
                                 &mut app.fonts,
                                 &lsp_egui_ctx,
@@ -2479,15 +2479,13 @@ fn inlay_hints(
                     let slice = unsafe {
                         you_can::borrow_unchecked(current_rope.byte_slice(edge.byte_range()))
                     };
-                    let entry = inlay_edge_map
-                        .entry(query_slice)
-                        .or_insert_with(|| {
-                            if edge.byte_range().len() == 4 {
-                                slice.byte_slice(2..)
-                            } else {
-                                slice
-                            }
-                        });
+                    let entry = inlay_edge_map.entry(query_slice).or_insert_with(|| {
+                        if edge.byte_range().len() == 4 {
+                            slice.byte_slice(2..)
+                        } else {
+                            slice
+                        }
+                    });
 
                     let range = edge.range();
                     position = Position {
@@ -3165,8 +3163,7 @@ pub fn hover(
                 if let Some(name_node) = node.named_child(0) {
                     let vb_name = current_rope.byte_slice(name_node.byte_range());
                     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-                    
-                    
+
                     let hashed_vb = hasher.hash_one(vb_name);
                     if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
                         query_cursor.set_point_range(
@@ -3234,7 +3231,7 @@ pub fn hover(
                         let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
                         let mut hasher = hasher.build_hasher();
                         vb_name.hash(&mut hasher);
-                        "__viewbox__".hash(&mut hasher);
+                        node.range().hash(&mut hasher);
                         let hashed_vb = hasher.finish();
                         if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
                             while node.kind_id() != NodeKind::Slide as u16 {
@@ -3269,8 +3266,7 @@ pub fn hover(
                 if let Some(name_node) = node.named_child(0) {
                     let obj_name = current_rope.byte_slice(name_node.byte_range());
                     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-                    
-                    
+
                     let hashed_obj = hasher.hash_one(obj_name);
                     if app.obj_dbg.swap(hashed_obj, Ordering::Relaxed) != hashed_obj {
                         query_cursor.set_point_range(

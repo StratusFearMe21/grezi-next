@@ -2,10 +2,9 @@ use std::{
     fmt::Debug,
     io::Cursor,
     sync::{atomic::AtomicUsize, Arc},
-    time::Duration,
 };
 
-use atomic_float::AtomicF32;
+use atomic_float::AtomicF64;
 use egui::{
     ahash::HashMap,
     load::{BytesPoll, ImageLoader, ImagePoll},
@@ -22,7 +21,7 @@ static MOVE: Mutex<Option<Arc<[(Arc<ColorImage>, Delay)]>>> = Mutex::new(None);
 #[derive(Clone, Debug)]
 pub struct Anim {
     frames: Arc<[(String, Delay)]>,
-    delta: Arc<AtomicF32>,
+    delta: Arc<AtomicF64>,
     frame_on: Arc<AtomicUsize>,
 }
 
@@ -44,7 +43,7 @@ impl Anim {
                 .map(|(index, (_, delay))| (format!("{}\0{}", uri, index), *delay))
                 .collect::<Vec<_>>()
                 .into(),
-            delta: Arc::new(0.0.into()),
+            delta: Arc::new(ctx.input(|i| i.time).into()),
             frame_on: Arc::new(0.into()),
         }
     }
@@ -160,16 +159,20 @@ impl AnimEntry {
 
 impl Anim {
     pub fn find_img(&self, ctx: &egui::Context) -> &str {
-        let stable_dt = ctx.input(|i| i.stable_dt);
-        let elapsed = Duration::from_secs_f32(
-            self.delta
-                .fetch_add(stable_dt, std::sync::atomic::Ordering::Relaxed)
-                + stable_dt,
-        );
+        let delta = self.delta.load(std::sync::atomic::Ordering::Relaxed);
+        let raw_time = ctx.input(|i| i.time);
+        let time = if delta > 0.1 {
+            raw_time % delta
+        } else {
+            raw_time
+        } * 1000.0;
         let mut frame_on = self.frame_on.load(std::sync::atomic::Ordering::Relaxed);
+        let frame_time = self.frames[frame_on].1.numer_denom_ms();
+        let frame_time = frame_time.0 as f64 / frame_time.1 as f64;
 
-        if Delay::from_saturating_duration(elapsed) >= self.frames[frame_on].1 {
-            self.delta.store(0.0, std::sync::atomic::Ordering::Relaxed);
+        if time >= frame_time {
+            self.delta
+                .store(raw_time, std::sync::atomic::Ordering::Relaxed);
             frame_on += 1;
             if frame_on == self.frames.len() {
                 frame_on = 0;

@@ -9,7 +9,6 @@ use eframe::{
     },
 };
 use helix_core::tree_sitter::Parser;
-use indexmap::IndexSet;
 
 use crate::{
     layout::{Constraint, UnresolvedLayout},
@@ -33,7 +32,7 @@ pub fn parse_citations(
     hasher: &ahash::RandomState,
     slideshow: &mut SlideShow,
     fonts: &mut FontDefinitions,
-    font_strings: &IndexSet<String, ahash::RandomState>,
+    font_db: &mut fontdb::Database,
 ) -> Result<(), super::Error> {
     if let Ok(file) = path
         .parent()
@@ -60,7 +59,7 @@ pub fn parse_citations(
             let mut in_header = false;
             let mut height = 0.0;
             let italic_family = FontFamily::Name("Ubuntu:light:italic".into());
-            add_font(fonts, font_strings, ctx, &italic_family).unwrap();
+            add_font(fonts, font_db, ctx, &italic_family).unwrap();
             if let Some(tree) = parser.parse(file, None) {
                 let mut tree_cursor = GrzCursor::new(&tree);
 

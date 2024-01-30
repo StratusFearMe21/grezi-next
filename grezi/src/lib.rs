@@ -24,7 +24,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 #[cfg(not(target_arch = "wasm32"))]
-use font_loader::system_fonts::FontPropertyBuilder;
+use fontdb::{Family, Query};
 // use frame_history::FrameHistory;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
@@ -245,6 +245,7 @@ fn resolve_layout_raw(
         .margin(margin)
         .constraints(&constraints)
         .split(split)
+        .unwrap()
 }
 
 impl MyEguiApp {
@@ -303,6 +304,8 @@ impl MyEguiApp {
                     let mut fonts = self.fonts.clone();
                     let mut instant = Instant::now();
                     let mut sources = self.sources.clone();
+                    let mut font_db = fontdb::Database::new();
+                    font_db.load_system_fonts();
                     let mut w = ManuallyDrop::new(
                         notify::recommended_watcher(
                             move |res: Result<notify::Event, notify::Error>| {
@@ -355,26 +358,18 @@ impl MyEguiApp {
 
                                                 let mut slide_show = watcher_slide_show.write();
 
-                                                let ast =
-                                                    parser::parse_file(
-                                                        &tree,
-                                                        Some(info),
-                                                        &new_file,
-                                                        &mut self.helix_cell,
-                                                        &mut slide_show,
-                                                        &font_loader::system_fonts::query_all()
-                                                            .iter()
-                                                            .cloned()
-                                                            .collect::<indexmap::IndexSet<
-                                                                _,
-                                                                ahash::RandomState,
-                                                            >>(
-                                                            ),
-                                                        &mut sources,
-                                                        &mut fonts,
-                                                        &watcher_context,
-                                                        std::path::Path::new(&watcher_file_name),
-                                                    );
+                                                let ast = parser::parse_file(
+                                                    &tree,
+                                                    Some(info),
+                                                    &new_file,
+                                                    &mut self.helix_cell,
+                                                    &mut slide_show,
+                                                    &mut font_db,
+                                                    &mut sources,
+                                                    &mut fonts,
+                                                    &watcher_context,
+                                                    std::path::Path::new(&watcher_file_name),
+                                                );
                                                 *info = tree;
                                                 match ast {
                                                     Ok(_) => {
@@ -475,12 +470,19 @@ impl MyEguiApp {
                     (slideshow.1, SlideShowSource::Loaded)
                 }
             } else {
-                let fira_code_prop = FontPropertyBuilder::new().family("Fira Code").build();
-                if let Some(font) = font_loader::system_fonts::get(&fira_code_prop) {
+                let mut font_db = fontdb::Database::new();
+                font_db.load_system_fonts();
+                let mut fira_code_prop = Query::default();
+                fira_code_prop.families = &[Family::Name("Fira Code")];
+                if let Some(font) = font_db.query(&fira_code_prop) {
                     // Leaking the font makes it cheaper to clone the font definitions elsewhere
-                    fonts
-                        .font_data
-                        .insert("Fira Code".to_owned(), FontData::from_static(font.0.leak()));
+                    let (src, index) = unsafe { font_db.make_shared_face_data(font).unwrap() };
+                    let data: &'static [u8] = unsafe { &*Arc::into_raw(src) }.as_ref();
+                    fonts.font_data.insert("Fira Code".to_owned(), {
+                        let mut font = FontData::from_static(data);
+                        font.index = index;
+                        font
+                    });
 
                     fonts
                         .families
@@ -528,10 +530,7 @@ impl MyEguiApp {
                             &file,
                             &mut helix_cell,
                             &mut slide_show,
-                            &font_loader::system_fonts::query_all()
-                                .iter()
-                                .cloned()
-                                .collect::<indexmap::IndexSet<_, ahash::RandomState>>(),
+                            &mut font_db,
                             &mut sources,
                             &mut fonts,
                             &ctx,
@@ -654,8 +653,12 @@ impl MyEguiApp {
                         ),
                         ObjectState::OnScreen => 1.0,
                     };
-                    ui.painter()
-                        .galley_with_gamma(obj_pos.min, Arc::clone(galley), gamma_multiply);
+                    ui.painter().galley_with_opacity_factor(
+                        obj_pos.min,
+                        Arc::clone(galley),
+                        gamma_multiply,
+                        Color32::TRANSPARENT,
+                    );
                 }
                 ResolvedObject::Image {
                     image,
@@ -683,11 +686,13 @@ impl MyEguiApp {
                         }
                         ObjectState::OnScreen => {}
                     }
-                    image
-                        .clone()
-                        .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
-                        .tint(tint)
-                        .paint_at(ui, obj_pos)
+                    if tint.a() > 0 {
+                        image
+                            .clone()
+                            .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
+                            .tint(tint)
+                            .paint_at(ui, obj_pos);
+                    }
                 }
                 ResolvedObject::Anim {
                     anim,
@@ -715,18 +720,22 @@ impl MyEguiApp {
                         }
                         ObjectState::OnScreen => {}
                     }
-                    Image::from_uri(anim.find_img(ui.ctx()))
-                        .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
-                        .tint(tint)
-                        .paint_at(ui, obj_pos)
+                    if tint.a() > 0 {
+                        Image::from_uri(anim.find_img(ui.ctx()))
+                            .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
+                            .tint(tint)
+                            .paint_at(ui, obj_pos);
+                    }
                 }
-                ResolvedObject::Rect { color, rect } => ui.painter().rect_filled(
-                    rect.translate(obj_pos.min.to_vec2()),
-                    Rounding::ZERO,
-                    *color,
-                ),
+                ResolvedObject::Rect { color, rect } => {
+                    ui.painter().rect_filled(
+                        rect.translate(obj_pos.min.to_vec2()),
+                        Rounding::ZERO,
+                        *color,
+                    );
+                }
                 ResolvedObject::Spinner => egui::Spinner::new().paint_at(ui, obj_pos),
-            }
+            };
         }
     }
 
@@ -1156,7 +1165,7 @@ impl MyEguiApp {
         resolved_actions
     }
 
-    pub fn update(&mut self, ctx: &egui::Context, frame: Option<&mut eframe::Frame>) {
+    pub fn update(&mut self, ctx: &egui::Context) {
         // if let Soce(&mut ref mut frame) = frame {
         //     self.frame_history
         //         .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
@@ -1165,9 +1174,7 @@ impl MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))]
         ctx.input(|input| {
             if input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape) {
-                if let Some(&mut ref mut frame) = frame {
-                    frame.close();
-                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
         let slide_show_cloned = Arc::clone(&self.slide_show);
@@ -1380,9 +1387,7 @@ impl MyEguiApp {
                                 if index == slide_show.slide_show.len() - 1 {
                                     #[cfg(not(target_arch = "wasm32"))]
                                     if !self.dont_exit {
-                                        if let Some(&mut ref mut frame) = frame {
-                                            frame.close();
-                                        }
+                                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                     }
                                     None
                                 } else {
@@ -1462,7 +1467,7 @@ impl MyEguiApp {
 }
 
 impl eframe::App for MyEguiApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.update(ctx, Some(frame))
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.update(ctx);
     }
 }

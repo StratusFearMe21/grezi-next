@@ -1,2 +1,12 @@
 #!/bin/sh
-wasm-opt -O4 --enable-simd --enable-nontrapping-float-to-int --enable-relaxed-simd --enable-threads --enable-reference-types --enable-extended-const --enable-bulk-memory dist/grezi-*_bg.wasm -o dist/grezi-*_bg.wasm
+wasm=dist/grezi-*_bg.wasm
+js=dist/grezi-*.js
+wasm-opt -O2 --fast-math $wasm -o $wasm
+sed -i "s/grezi.js/$(basename $js)/g; s/grezi_bg.wasm/$(basename $wasm)/g" dist/sw.js
+find dist/ \
+  -name "*.js" -o \
+  -name "*.slideshow" -o \
+  -name "*.ico" -o \
+  -name "*.wasm" -o \
+  -name "*.html" -o \
+  -name "*.json" | parallel brotli -f

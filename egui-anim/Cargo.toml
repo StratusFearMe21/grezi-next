@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-atomic_float = { version = "0.1.0", default-features = false }
-egui = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_overried_gamma_stable_tag", default-features = false }
+atomic_float = "0.1.0"
+egui = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_opacity_factor", default-features = false }
 image = { version = "0.24.7", default-features = false, features = ["gif", "png", "webp"] }
 log = "0.4.20"
 parking_lot = "0.12.1"

@@ -421,7 +421,7 @@ pub fn parse_file(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
-    font_strings: &indexmap::IndexSet<String, ahash::RandomState>,
+    font_db: &mut fontdb::Database,
     sources: &mut indexmap::IndexSet<String, ahash::RandomState>,
     fonts: &mut eframe::egui::FontDefinitions,
     egui_ctx: &eframe::egui::Context,
@@ -568,7 +568,7 @@ pub fn parse_file(
                             helix_cell,
                             &hasher,
                             fonts,
-                            font_strings,
+                            font_db,
                             egui_ctx,
                             &mut errors_present,
                             file_path,
@@ -650,15 +650,8 @@ pub fn parse_file(
     if is_new {
         slide_show.viewboxes.shrink_to_fit();
         slide_show.objects.shrink_to_fit();
-        citations::parse_citations(
-            file_path,
-            egui_ctx,
-            &hasher,
-            slide_show,
-            fonts,
-            font_strings,
-        )
-        .unwrap();
+        citations::parse_citations(file_path, egui_ctx, &hasher, slide_show, fonts, font_db)
+            .unwrap();
     }
     drop(old_tree_cursor);
     drop(new_tree_cursor);

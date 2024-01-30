@@ -130,7 +130,7 @@ fn main() -> miette::Result<()> {
     use std::sync::Arc;
 
     use cairo::{ImageSurface, PdfSurface, PsSurface, SvgSurface};
-    use eframe::egui;
+    use eframe::egui::{self, ViewportBuilder};
     use eframe::epaint::{Pos2, Rect, TextureId};
     use eframe::{egui::ImageSize, epaint::Vec2};
     use miette::{Context, IntoDiagnostic};
@@ -139,12 +139,15 @@ fn main() -> miette::Result<()> {
 
     let args: Args = clap::Parser::parse();
     let native_options = eframe::NativeOptions {
-        fullscreen: !args.lsp,
-        resizable: args.window_size.is_none(),
+        viewport: ViewportBuilder {
+            fullscreen: Some(!args.lsp),
+            resizable: Some(args.window_size.is_none()),
+            inner_size: args.window_size.map(|f| f.0),
+            min_inner_size: args.window_size.map(|f| f.0),
+            max_inner_size: args.window_size.map(|f| f.0),
+            ..Default::default()
+        },
         vsync: true,
-        initial_window_size: args.window_size.map(|f| f.0),
-        min_window_size: args.window_size.map(|f| f.0),
-        max_window_size: args.window_size.map(|f| f.0),
         ..Default::default()
     };
     let mut app = MyEguiApp::new(args.lsp, args.presentation, args.dont_close);
@@ -179,20 +182,21 @@ fn main() -> miette::Result<()> {
         return Ok(());
     } else if args.export {
         let output = args.output.unwrap_or_else(|| "out.slideshow".to_owned());
-        let used_fonts = app.0.slide_show.read().used_fonts(&app.0.fonts);
-        app.0.fonts.font_data.retain(|font, _| {
-            let res = used_fonts.contains(font.as_str());
-            if !res {
-                app.0.fonts.families.values_mut().for_each(|v| {
-                    if let Some(i) = v.iter().position(|f| f.eq(font)) {
-                        v.remove(i);
-                    }
-                })
-            }
-            res
-        });
-        app.0.fonts.families.retain(|_, names| !names.is_empty());
         if output.ends_with("slideshow") {
+            let used_fonts = app.0.slide_show.read().used_fonts(&app.0.fonts);
+            app.0.fonts.font_data.retain(|font, _| {
+                let res = used_fonts.contains(font.as_str());
+                if !res {
+                    app.0.fonts.families.values_mut().for_each(|v| {
+                        if let Some(i) = v.iter().position(|f| f.eq(font)) {
+                            v.remove(i);
+                        }
+                    })
+                }
+                res
+            });
+            app.0.fonts.families.retain(|_, names| !names.is_empty());
+
             bincode::serialize_into(
                 BufWriter::new(
                     std::fs::File::create(&output)
@@ -273,11 +277,12 @@ fn main() -> miette::Result<()> {
 
         let egui_ctx = egui::Context::default();
 
+        app.0.lsp = true;
+        let font_defs = app.0.fonts.clone();
+        egui_ctx.set_fonts(font_defs.clone());
         let mut init_app = app.0.init_app(&egui_ctx, app.1);
-        egui_ctx.set_fonts(init_app.fonts.clone());
-        let ft = grezi::cairo::new_ft();
+        let ft = cairo::freetype::Library::init().unwrap();
 
-        let font_defs = init_app.fonts.clone();
         let font_defs_ft = grezi::cairo::font_defs_to_ft(font_defs, ft);
         init_app.time = f32::MAX;
         init_app.dont_animate = true;
@@ -291,7 +296,7 @@ fn main() -> miette::Result<()> {
             for i in range {
                 init_app.index.store(i, Ordering::SeqCst);
 
-                let output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx, None));
+                let output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx));
 
                 init_app.resolved_actions = None;
                 init_app.resolved_slide = None;
@@ -327,7 +332,7 @@ fn main() -> miette::Result<()> {
                     }
                 }
 
-                let e_output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx, None));
+                let e_output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx));
 
                 init_app.resolved_actions = None;
                 init_app.resolved_slide = None;

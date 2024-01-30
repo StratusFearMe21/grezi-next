@@ -1,12 +1,11 @@
+use std::collections::HashMap;
 use std::fmt::Display;
 
-use ahash::RandomState;
+use cassowary::strength::{MEDIUM, REQUIRED, STRONG, WEAK};
+use cassowary::{AddConstraintError, WeightedRelation::*};
+use cassowary::{Expression, Solver, Variable};
 use eframe::egui::Rect;
-pub type AHashMap<K, V> = std::collections::HashMap<K, V, RandomState>;
-use cassowary::strength::{REQUIRED, WEAK};
-use cassowary::WeightedRelation::*;
-use cassowary::{Constraint as CassowaryConstraint, Expression, Solver, Variable};
-use eframe::epaint::Pos2;
+use eframe::epaint::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::parser::viewboxes;
@@ -65,17 +64,117 @@ impl Display for Constraint {
 }
 
 impl Constraint {
-    // /// Apply a constraint directly on a given length
-    // #[inline]
-    // pub fn apply(&self, length: f32) -> f32 {
-    //     match *self {
-    //         Constraint::Percentage(p) => length * p / 100.0,
-    //         Constraint::Ratio(num, den) => num * length / den,
-    //         Constraint::Length(l) => length.min(l),
-    //         Constraint::Max(m) => length.min(m),
-    //         Constraint::Min(m) => length.max(m),
-    //     }
-    // }
+    pub fn apply(&self, length: f32) -> f32 {
+        match *self {
+            Constraint::Percentage(p) => {
+                let p = p / 100.0;
+                (p * length).min(length)
+            }
+            Constraint::Ratio(numerator, denominator) => {
+                // avoid division by zero by using 1 when denominator is 0
+                // this results in 0/0 -> 0 and x/0 -> x for x != 0
+                let percentage = numerator / denominator.max(1.0);
+                (percentage * length).min(length)
+            }
+            Constraint::Length(l) => length.min(l),
+            Constraint::Max(m) => length.min(m),
+            Constraint::Min(m) => length.max(m),
+        }
+    }
+
+    /// Convert an iterator of lengths into a vector of constraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use ratatui::prelude::*;
+    /// # let area = Rect::default();
+    /// let constraints = Constraint::from_lengths([1, 2, 3]);
+    /// let layout = Layout::default().constraints(constraints).split(area);
+    /// ```
+    pub fn from_lengths<T>(lengths: T) -> Vec<Constraint>
+    where
+        T: IntoIterator<Item = f32>,
+    {
+        lengths
+            .into_iter()
+            .map(Constraint::Length)
+            .collect::<Vec<_>>()
+    }
+
+    /// Convert an iterator of ratios into a vector of constraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use ratatui::prelude::*;
+    /// # let area = Rect::default();
+    /// let constraints = Constraint::from_ratios([(1, 4), (1, 2), (1, 4)]);
+    /// let layout = Layout::default().constraints(constraints).split(area);
+    /// ```
+    pub fn from_ratios<T>(ratios: T) -> Vec<Constraint>
+    where
+        T: IntoIterator<Item = (f32, f32)>,
+    {
+        ratios
+            .into_iter()
+            .map(|(n, d)| Constraint::Ratio(n, d))
+            .collect()
+    }
+
+    /// Convert an iterator of percentages into a vector of constraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use ratatui::prelude::*;
+    /// # let area = Rect::default();
+    /// let constraints = Constraint::from_percentages([25, 50, 25]);
+    /// let layout = Layout::default().constraints(constraints).split(area);
+    /// ```
+    pub fn from_percentages<T>(percentages: T) -> Vec<Constraint>
+    where
+        T: IntoIterator<Item = f32>,
+    {
+        percentages
+            .into_iter()
+            .map(Constraint::Percentage)
+            .collect()
+    }
+
+    /// Convert an iterator of maxes into a vector of constraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use ratatui::prelude::*;
+    /// # let area = Rect::default();
+    /// let constraints = Constraint::from_maxes([1, 2, 3]);
+    /// let layout = Layout::default().constraints(constraints).split(area);
+    /// ```
+    pub fn from_maxes<T>(maxes: T) -> Vec<Constraint>
+    where
+        T: IntoIterator<Item = f32>,
+    {
+        maxes.into_iter().map(Constraint::Max).collect()
+    }
+
+    /// Convert an iterator of mins into a vector of constraints
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use ratatui::prelude::*;
+    /// # let area = Rect::default();
+    /// let constraints = Constraint::from_mins([1, 2, 3]);
+    /// let layout = Layout::default().constraints(constraints).split(area);
+    /// ```
+    pub fn from_mins<T>(mins: T) -> Vec<Constraint>
+    where
+        T: IntoIterator<Item = f32>,
+    {
+        mins.into_iter().map(Constraint::Min).collect()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -92,6 +191,19 @@ pub struct UnresolvedLayout {
     pub split_on: viewboxes::ViewboxIn,
 }
 
+#[derive(Copy, Debug, Default, Clone, Eq, PartialEq, Hash)]
+pub enum SegmentSize {
+    /// prefer equal chunks if other constraints are all satisfied
+    EvenDistribution,
+
+    /// the last chunk is expanded to fill the remaining space
+    #[default]
+    LastTakesRemainder,
+
+    /// extra space is not distributed
+    None,
+}
+
 /// A raw, unsolved viewbox. You must use the [`Layout.split()`] method to solve the viewbox.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout<'a> {
@@ -101,9 +213,8 @@ pub struct Layout<'a> {
     margin: f32,
     /// Tells the solver how the boxes should be allocated inside of the viewbox
     constraints: &'a [Constraint],
-    /// Whether the last chunk of the computed layout should be expanded to fill the available
-    /// space.
-    expand_to_fill: bool,
+    /// option for segment size preferences
+    segment_size: SegmentSize,
 }
 
 impl<'a> Default for Layout<'a> {
@@ -113,7 +224,7 @@ impl<'a> Default for Layout<'a> {
             direction: Direction::Vertical,
             margin: 15.0,
             constraints: &[],
-            expand_to_fill: true,
+            segment_size: SegmentSize::LastTakesRemainder,
         }
     }
 }
@@ -206,163 +317,134 @@ impl<'a> Layout<'a> {
     ///     ]
     /// );
     /// ```
-    pub fn split(self, dest_area: Rect) -> Vec<Rect> {
-        let dest_area = dest_area.shrink(self.margin);
+    pub fn split(self, area: Rect) -> Result<Vec<Rect>, AddConstraintError> {
         let mut solver = Solver::new();
-        let mut vars: AHashMap<Variable, (usize, usize)> = AHashMap::default();
+        let inner = area.shrink(self.margin);
+
+        let (area_start, area_end) = match self.direction {
+            Direction::Horizontal => (inner.min.x, inner.right()),
+            Direction::Vertical => (inner.min.y, inner.bottom()),
+        };
+        let area_size = area_end - area_start;
+
+        // create an element for each constraint that needs to be applied. Each element defines the
+        // variables that will be used to compute the layout.
         let elements = self
             .constraints
             .iter()
             .map(|_| Element::new())
             .collect::<Vec<Element>>();
-        let mut results = self
-            .constraints
-            .iter()
-            .map(|_| Rect {
-                min: Pos2::ZERO,
-                max: Pos2::ZERO,
-            })
-            .collect::<Vec<Rect>>();
 
-        for (i, e) in elements.iter().enumerate() {
-            vars.insert(e.left, (i, 0));
-            vars.insert(e.top, (i, 1));
-            vars.insert(e.right, (i, 2));
-            vars.insert(e.bottom, (i, 3));
+        // ensure that all the elements are inside the area
+        for element in &elements {
+            solver.add_constraints(&[
+                element.start | GE(REQUIRED) | area_start,
+                element.end | LE(REQUIRED) | area_end,
+                element.start | LE(REQUIRED) | element.end,
+            ])?;
         }
-        let mut ccs: Vec<CassowaryConstraint> =
-            Vec::with_capacity(elements.len() * 4 + self.constraints.len() * 6);
-        for elt in &elements {
-            ccs.push(elt.left | GE(REQUIRED) | dest_area.min.x);
-            ccs.push(elt.top | GE(REQUIRED) | dest_area.min.y);
-            ccs.push(elt.right | LE(REQUIRED) | dest_area.max.x);
-            ccs.push(elt.bottom | LE(REQUIRED) | dest_area.max.y);
+        // ensure there are no gaps between the elements
+        for pair in elements.windows(2) {
+            solver.add_constraint(pair[0].end | EQ(REQUIRED) | pair[1].start)?;
         }
+        // ensure the first element touches the left/top edge of the area
         if let Some(first) = elements.first() {
-            ccs.push(match self.direction {
-                Direction::Horizontal => first.left | EQ(REQUIRED) | dest_area.min.x,
-                Direction::Vertical => first.top | EQ(REQUIRED) | dest_area.min.y,
-            });
+            solver.add_constraint(first.start | EQ(REQUIRED) | area_start)?;
         }
-        if self.expand_to_fill {
+        if self.segment_size != SegmentSize::None {
+            // ensure the last element touches the right/bottom edge of the area
             if let Some(last) = elements.last() {
-                ccs.push(match self.direction {
-                    Direction::Horizontal => last.right | EQ(REQUIRED) | dest_area.max.x,
-                    Direction::Vertical => last.bottom | EQ(REQUIRED) | dest_area.max.y,
-                });
+                solver.add_constraint(last.end | EQ(REQUIRED) | area_end)?;
             }
         }
-        match self.direction {
-            Direction::Horizontal => {
-                for pair in elements.windows(2) {
-                    ccs.push((pair[0].left + pair[0].width()) | EQ(REQUIRED) | pair[1].left);
+        // apply the constraints
+        for (&constraint, &element) in self.constraints.iter().zip(elements.iter()) {
+            match constraint {
+                Constraint::Percentage(p) => {
+                    let percent = p / 100.00;
+                    solver.add_constraint(element.size() | EQ(STRONG) | (area_size * percent))?;
                 }
-                for (i, size) in self.constraints.iter().enumerate() {
-                    ccs.push(elements[i].top | EQ(REQUIRED) | dest_area.min.y);
-                    ccs.push(elements[i].height() | EQ(REQUIRED) | dest_area.height());
-                    ccs.push(match *size {
-                        Constraint::Length(v) => elements[i].width() | EQ(WEAK) | v,
-                        Constraint::Percentage(v) => {
-                            elements[i].width() | EQ(WEAK) | (v * dest_area.width() / 100.0)
-                        }
-                        Constraint::Ratio(n, d) => {
-                            elements[i].width() | EQ(WEAK) | (dest_area.width() * n / d)
-                        }
-                        Constraint::Min(v) => elements[i].width() | GE(WEAK) | v,
-                        Constraint::Max(v) => elements[i].width() | LE(WEAK) | v,
-                    });
+                Constraint::Ratio(n, d) => {
+                    // avoid division by zero by using 1 when denominator is 0
+                    let ratio = n / d.max(1.0);
+                    solver.add_constraint(element.size() | EQ(STRONG) | (area_size * ratio))?;
                 }
-            }
-            Direction::Vertical => {
-                for pair in elements.windows(2) {
-                    ccs.push((pair[0].top + pair[0].height()) | EQ(REQUIRED) | pair[1].top);
+                Constraint::Length(l) => solver.add_constraint(element.size() | EQ(STRONG) | l)?,
+                Constraint::Max(m) => {
+                    solver.add_constraints(&[
+                        element.size() | LE(STRONG) | m,
+                        element.size() | EQ(MEDIUM) | m,
+                    ])?;
                 }
-                for (i, size) in self.constraints.iter().enumerate() {
-                    ccs.push(elements[i].left | EQ(REQUIRED) | dest_area.min.x);
-                    ccs.push(elements[i].width() | EQ(REQUIRED) | dest_area.width());
-                    ccs.push(match *size {
-                        Constraint::Length(v) => elements[i].height() | EQ(WEAK) | v,
-                        Constraint::Percentage(v) => {
-                            elements[i].height() | EQ(WEAK) | (v * dest_area.height() / 100.0)
-                        }
-                        Constraint::Ratio(n, d) => {
-                            elements[i].height() | EQ(WEAK) | (dest_area.height() * n / d)
-                        }
-                        Constraint::Min(v) => elements[i].height() | GE(WEAK) | v,
-                        Constraint::Max(v) => elements[i].height() | LE(WEAK) | v,
-                    });
+                Constraint::Min(m) => {
+                    solver.add_constraints(&[
+                        element.size() | GE(STRONG) | m,
+                        element.size() | EQ(MEDIUM) | m,
+                    ])?;
                 }
             }
         }
-        solver.add_constraints(&ccs).unwrap();
-        for &(var, value) in solver.fetch_changes() {
-            let (index, attr) = vars[&var];
-            let value = if value.is_sign_negative() {
-                0.0
-            } else {
-                value as f32
-            };
-            match attr {
-                0 => {
-                    results[index].min.x = value;
-                }
-                1 => {
-                    results[index].min.y = value;
-                }
-                2 => {
-                    results[index].max.x = value;
-                }
-                3 => {
-                    results[index].max.y = value;
-                }
-                _ => {}
+        // prefer equal chunks if other constraints are all satisfied
+        if self.segment_size == SegmentSize::EvenDistribution {
+            for el in elements.chunks(2) {
+                solver.add_constraint(el[0].size() | EQ(WEAK) | el[1].size())?;
             }
         }
 
-        if self.expand_to_fill {
-            // Fix imprecision by extending the last item a bit if necessary
-            if let Some(last) = results.last_mut() {
+        let changes: HashMap<Variable, f64, ahash::RandomState> =
+            solver.fetch_changes().iter().copied().collect();
+
+        // please leave this comment here as it's useful for debugging unit tests when we make any
+        // changes to layout code - we should replace this with tracing in the future.
+        // let ends = format!(
+        //     "{:?}",
+        //     elements
+        //         .iter()
+        //         .map(|e| changes.get(&e.end).unwrap_or(&0.0))
+        //         .collect::<Vec<&f64>>()
+        // );
+        // dbg!(ends);
+
+        // convert to Rects
+        let results = elements
+            .iter()
+            .map(|element| {
+                let start = changes.get(&element.start).unwrap_or(&0.0).round() as f32;
+                let end = changes.get(&element.end).unwrap_or(&0.0).round() as f32;
+                let size = end - start;
                 match self.direction {
-                    Direction::Vertical => {
-                        last.max.y = dest_area.max.y;
-                    }
-                    Direction::Horizontal => {
-                        last.max.x = dest_area.max.x;
-                    }
+                    Direction::Horizontal => Rect::from_min_size(
+                        Pos2::new(start, inner.min.y),
+                        Vec2::new(size, inner.height()),
+                    ),
+                    Direction::Vertical => Rect::from_min_size(
+                        Pos2::new(inner.min.x, start),
+                        Vec2::new(inner.width(), size),
+                    ),
                 }
-            }
-        }
-        results
+            })
+            .collect::<Vec<_>>();
+        Ok(results)
     }
 }
 
 /// A container used by the solver inside split
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 struct Element {
-    left: Variable,
-    top: Variable,
-    right: Variable,
-    bottom: Variable,
+    start: Variable,
+    end: Variable,
 }
 
 impl Element {
-    #[inline]
     fn new() -> Element {
         Element {
-            left: Variable::new(),
-            top: Variable::new(),
-            right: Variable::new(),
-            bottom: Variable::new(),
+            start: Variable::new(),
+            end: Variable::new(),
         }
     }
 
-    #[inline]
-    pub fn width(&self) -> Expression {
-        self.right - self.left
-    }
-
-    #[inline]
-    pub fn height(&self) -> Expression {
-        self.bottom - self.top
+    fn size(&self) -> Expression {
+        self.end - self.start
     }
 }
 
@@ -384,7 +466,8 @@ mod tests {
                 Constraint::Max(5.0),
                 Constraint::Min(1.0),
             ])
-            .split(target);
+            .split(target)
+            .unwrap();
 
         println!("{:?}", chunks);
 

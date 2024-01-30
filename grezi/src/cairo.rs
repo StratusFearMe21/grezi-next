@@ -1,81 +1,36 @@
-use cairo::freetype::freetype;
+use cairo::freetype;
+use cairo::freetype::face::LoadFlag;
 use cairo::FontFace;
 use cairo::ImageSurface;
 use eframe::egui;
 use eframe::epaint::FontFamily;
 use eframe::epaint::TextureId;
 use egui::FontDefinitions;
-use libc::{c_long, size_t};
 use std::collections::HashMap;
-use std::ffi::c_void;
 
 pub fn font_defs_to_ft(
     font_defs: FontDefinitions,
-    ft: cairo::freetype::freetype::FT_Library,
-) -> HashMap<FontFamily, (cairo::freetype::freetype::FT_Face, cairo::FontFace)> {
+    ft: freetype::Library,
+) -> HashMap<FontFamily, (freetype::Face, cairo::FontFace)> {
     font_defs
         .families
         .into_iter()
         .map(|f| {
             let data = font_defs.font_data.get(&f.1[0]).unwrap();
-            let mut face = std::ptr::null_mut();
-            unsafe {
-                freetype::FT_New_Memory_Face(
-                    ft,
-                    data.font.as_ptr(),
-                    data.font.len() as i64,
-                    data.index as i64,
-                    &mut face,
-                );
-            }
-            (
-                f.0,
-                (face, unsafe { FontFace::create_from_ft(face).unwrap() }),
-            )
+            let face = ft
+                .new_memory_face(data.font.clone().into_owned(), data.index as isize)
+                .unwrap();
+            let cairo_face = FontFace::create_from_ft(&face).unwrap();
+            (f.0, (face, cairo_face))
         })
         .collect()
-}
-
-pub fn new_ft() -> cairo::freetype::freetype::FT_Library {
-    extern "C" fn alloc_library(_memory: freetype::FT_Memory, size: c_long) -> *mut c_void {
-        unsafe { libc::malloc(size as size_t) }
-    }
-
-    extern "C" fn free_library(_memory: freetype::FT_Memory, block: *mut c_void) {
-        unsafe { libc::free(block) }
-    }
-
-    extern "C" fn realloc_library(
-        _memory: freetype::FT_Memory,
-        _cur_size: c_long,
-        new_size: c_long,
-        block: *mut c_void,
-    ) -> *mut c_void {
-        unsafe { libc::realloc(block, new_size as size_t) }
-    }
-
-    static mut MEMORY: freetype::FT_MemoryRec_ = freetype::FT_MemoryRec_ {
-        user: 0 as *mut c_void,
-        alloc: Some(alloc_library),
-        free: Some(free_library),
-        realloc: Some(realloc_library),
-    };
-
-    let mut ft = core::ptr::null_mut();
-
-    unsafe {
-        freetype::FT_New_Library(&mut MEMORY, &mut ft);
-        freetype::FT_Add_Default_Modules(ft);
-    }
-
-    ft
 }
 
 pub fn cairo_draw(
     output: egui::FullOutput,
     textures: &mut HashMap<TextureId, ImageSurface>,
     ctx: &cairo::Context,
-    fonts: &HashMap<FontFamily, (cairo::freetype::freetype::FT_Face, cairo::FontFace)>,
+    fonts: &HashMap<FontFamily, (freetype::Face, cairo::FontFace)>,
 ) {
     for (id, tex) in output.textures_delta.set {
         let surface = match tex.image {
@@ -140,9 +95,9 @@ pub fn cairo_draw_shape(
     ctx: &cairo::Context,
     shape: eframe::epaint::Shape,
     textures: &HashMap<TextureId, ImageSurface>,
-    fonts: &HashMap<FontFamily, (cairo::freetype::freetype::FT_Face, cairo::FontFace)>,
+    fonts: &HashMap<FontFamily, (freetype::Face, cairo::FontFace)>,
 ) {
-    use cairo::{freetype::freetype::FT_Get_Char_Index, SurfacePattern, TextCluster};
+    use cairo::{SurfacePattern, TextCluster};
 
     match shape {
         egui::Shape::Noop => {}
@@ -237,20 +192,22 @@ pub fn cairo_draw_shape(
                     );
                     let glyphs: Vec<_> = (&mut glyphs_iter)
                         .take(chars_in_section)
-                        .map(|glyph| cairo::Glyph {
-                            index: unsafe { FT_Get_Char_Index(font.0, glyph.chr as u64) as u64 },
-                            x: origin.x as f64 + glyph.pos.x as f64,
-                            y: origin.y as f64 + glyph.pos.y as f64,
+                        .map(|glyph| {
+                            cairo::Glyph::new(
+                                font.0.get_char_index(glyph.chr as usize) as u64,
+                                origin.x as f64 + glyph.pos.x as f64,
+                                origin.y as f64 + glyph.pos.y as f64,
+                            )
                         })
                         .collect();
 
                     ctx.show_text_glyphs(
                         &row_str,
                         &glyphs,
-                        &[TextCluster {
-                            num_bytes: row_str.as_bytes().len() as i32,
-                            num_glyphs: glyphs.len() as i32,
-                        }],
+                        &[TextCluster::new(
+                            row_str.as_bytes().len() as i32,
+                            glyphs.len() as i32,
+                        )],
                         cairo::TextClusterFlags::None,
                     )
                     .unwrap();
@@ -266,21 +223,17 @@ pub fn cairo_draw_shape(
                             layout_section.format.underline.color.a() as f64 / 255.0,
                         );
                         let first_glyph = glyphs.first().unwrap();
-                        ctx.move_to(first_glyph.x, first_glyph.y);
+                        ctx.move_to(first_glyph.x(), first_glyph.y());
                         let last_glyph = glyphs.last().unwrap();
-                        unsafe {
-                            freetype_sys::FT_Load_Glyph(
-                                font.0.cast(),
-                                last_glyph.index as u32,
-                                freetype_sys::FT_LOAD_NO_SCALE,
-                            );
-                        }
+                        font.0
+                            .load_glyph(last_glyph.index() as u32, LoadFlag::NO_SCALE)
+                            .unwrap();
                         ctx.line_to(
-                            last_glyph.x
-                                + (unsafe { &*(*font.0).glyph }.advance.x as f64
+                            last_glyph.x()
+                                + (font.0.glyph().advance().x as f64
                                     * (layout_section.format.font_id.size as f64 / 72.0))
                                     / 16.0,
-                            last_glyph.y,
+                            last_glyph.y(),
                         );
                         ctx.stroke().unwrap();
                     }
@@ -296,32 +249,24 @@ pub fn cairo_draw_shape(
                             layout_section.format.strikethrough.color.a() as f64 / 255.0,
                         );
                         let first_glyph = glyphs.first().unwrap();
-                        unsafe {
-                            freetype_sys::FT_Load_Glyph(
-                                font.0.cast(),
-                                first_glyph.index as u32,
-                                freetype_sys::FT_LOAD_NO_SCALE,
-                            );
-                        }
-                        let font_plus = ((unsafe { &*(*font.0).glyph }.metrics.height as f64
+                        font.0
+                            .load_glyph(first_glyph.index() as u32, LoadFlag::NO_SCALE)
+                            .unwrap();
+                        let font_plus = ((font.0.glyph().metrics().height as f64
                             * (layout_section.format.font_id.size as f64 / 72.0))
                             / 16.0)
                             / 2.0;
                         let last_glyph = glyphs.last().unwrap();
-                        unsafe {
-                            freetype_sys::FT_Load_Glyph(
-                                font.0.cast(),
-                                last_glyph.index as u32,
-                                freetype_sys::FT_LOAD_NO_SCALE,
-                            );
-                        }
-                        ctx.move_to(first_glyph.x, first_glyph.y - font_plus);
+                        font.0
+                            .load_glyph(last_glyph.index() as u32, LoadFlag::NO_SCALE)
+                            .unwrap();
+                        ctx.move_to(first_glyph.x(), first_glyph.y() - font_plus);
                         ctx.line_to(
-                            last_glyph.x
-                                + (unsafe { &*(*font.0).glyph }.advance.x as f64
+                            last_glyph.x()
+                                + (font.0.glyph().advance().x as f64
                                     * (layout_section.format.font_id.size as f64 / 72.0))
                                     / 16.0,
-                            last_glyph.y - font_plus,
+                            last_glyph.y() - font_plus,
                         );
                         ctx.stroke().unwrap();
                     }
