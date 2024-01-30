@@ -45,7 +45,7 @@ grezi -eo new.png -i 6..8 -s 1920x1080 new.grz
 Warning: You can also export to SVG, however, this method is not very reliable.
 
 ### Web Runtime
-Grezi can export to various static formats, but you can also share the animated version of you presentations
+Grezi can export to various static formats, but you can also share the animated version of your presentations
 via the WebAssembly runtime. Using the runtime is easy
 1. Install these
   - [trunk](https://trunkrs.dev)
