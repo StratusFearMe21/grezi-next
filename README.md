@@ -70,6 +70,10 @@ mv another.slideshow dist/
 ```
 sh opt.sh
 ```
+Optionally, pass a directory to `opt.sh` to move all the slideshow files in it to the dist directory
+```
+sh opt.sh ~/slideshows/
+```
 6. Serve the `dist/` directory with the server of your choice and go to this URL
 ```
 https://{YOUR DOMAIN}/index.html#{A SLIDESHOW}.slideshow

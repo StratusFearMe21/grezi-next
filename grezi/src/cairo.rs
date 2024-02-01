@@ -2,6 +2,7 @@ use cairo::freetype;
 use cairo::freetype::face::LoadFlag;
 use cairo::FontFace;
 use cairo::ImageSurface;
+use ecolor::Color32;
 use eframe::egui;
 use eframe::epaint::FontFamily;
 use eframe::epaint::TextureId;
@@ -184,11 +185,20 @@ pub fn cairo_draw_shape(
                     ctx.set_font_size(layout_section.format.font_id.size as f64);
                     let font = fonts.get(&layout_section.format.font_id.family).unwrap();
                     ctx.set_font_face(&font.1);
+                    let format_color: palette::Srgba<u8> = palette::cast::from_array(
+                        if layout_section.format.color == Color32::PLACEHOLDER {
+                            text.fallback_color
+                        } else {
+                            layout_section.format.color
+                        }
+                        .to_srgba_unmultiplied(),
+                    );
+                    let format_color: palette::Srgba<f64> = format_color.into_format();
                     ctx.set_source_rgba(
-                        layout_section.format.color.r() as f64 / 255.0,
-                        layout_section.format.color.g() as f64 / 255.0,
-                        layout_section.format.color.b() as f64 / 255.0,
-                        layout_section.format.color.a() as f64 / 255.0,
+                        format_color.red,
+                        format_color.green,
+                        format_color.blue,
+                        format_color.alpha,
                     );
                     let glyphs: Vec<_> = (&mut glyphs_iter)
                         .take(chars_in_section)
@@ -216,11 +226,20 @@ pub fn cairo_draw_shape(
                         && layout_section.format.underline.color.a() > 0
                     {
                         ctx.set_line_width(layout_section.format.underline.width as f64);
+                        let underline_color: palette::Srgba<u8> = palette::cast::from_array(
+                            if layout_section.format.underline.color == Color32::PLACEHOLDER {
+                                text.fallback_color
+                            } else {
+                                layout_section.format.underline.color
+                            }
+                            .to_srgba_unmultiplied(),
+                        );
+                        let underline_color: palette::Srgba<f64> = underline_color.into_format();
                         ctx.set_source_rgba(
-                            layout_section.format.underline.color.r() as f64 / 255.0,
-                            layout_section.format.underline.color.g() as f64 / 255.0,
-                            layout_section.format.underline.color.b() as f64 / 255.0,
-                            layout_section.format.underline.color.a() as f64 / 255.0,
+                            underline_color.red,
+                            underline_color.green,
+                            underline_color.blue,
+                            underline_color.alpha,
                         );
                         let first_glyph = glyphs.first().unwrap();
                         ctx.move_to(first_glyph.x(), first_glyph.y());
@@ -242,11 +261,21 @@ pub fn cairo_draw_shape(
                         && layout_section.format.strikethrough.color.a() > 0
                     {
                         ctx.set_line_width(layout_section.format.strikethrough.width as f64);
+                        let strikethrough_color: palette::Srgba<u8> = palette::cast::from_array(
+                            if layout_section.format.strikethrough.color == Color32::PLACEHOLDER {
+                                text.fallback_color
+                            } else {
+                                layout_section.format.strikethrough.color
+                            }
+                            .to_srgba_unmultiplied(),
+                        );
+                        let strikethrough_color: palette::Srgba<f64> =
+                            strikethrough_color.into_format();
                         ctx.set_source_rgba(
-                            layout_section.format.strikethrough.color.r() as f64 / 255.0,
-                            layout_section.format.strikethrough.color.g() as f64 / 255.0,
-                            layout_section.format.strikethrough.color.b() as f64 / 255.0,
-                            layout_section.format.strikethrough.color.a() as f64 / 255.0,
+                            strikethrough_color.red,
+                            strikethrough_color.green,
+                            strikethrough_color.blue,
+                            strikethrough_color.alpha,
                         );
                         let first_glyph = glyphs.first().unwrap();
                         font.0

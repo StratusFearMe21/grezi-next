@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 atomic_float = "0.1.0"
-egui = { git = "https://github.com/StratusFearMe21/egui", branch = "galley_opacity_factor", default-features = false }
+egui = { git = "https://github.com/emilk/egui", default-features = false }
 image = { version = "0.24.7", default-features = false, features = ["gif", "png", "webp"] }
 log = "0.4.20"
 parking_lot = "0.12.1"

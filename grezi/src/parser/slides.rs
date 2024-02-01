@@ -415,6 +415,15 @@ fn parse_slide_function(
             *next = true;
             Ok(None)
         }
+        "speaker_notes" => {
+            tree_cursor.goto_next_sibling()?;
+            Ok(Some(Actions::SpeakerNotes(
+                source
+                    .byte_slice(tree_cursor.node().byte_range())
+                    .to_string()
+                    .into(),
+            )))
+        }
         "highlight" => {
             tree_cursor.goto_next_sibling()?;
             let object = slide_on_screen

@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     hash::{BuildHasher, BuildHasherDefault, Hasher},
+    sync::Arc,
 };
 
 use ecolor::Color32;
@@ -19,6 +20,7 @@ pub enum Actions {
         persist: bool,
         color: Color32,
     },
+    SpeakerNotes(Arc<str>),
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +32,7 @@ pub enum ResolvedActions {
         scaled_time: [f32; 2],
         color: Color32,
     },
+    SpeakerNotes(Arc<str>),
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -163,6 +166,14 @@ fn parse_single_action(
             persist: false,
             color,
         })
+    } else if function_name == "speaker_notes" {
+        action_walker.goto_next_sibling()?;
+        Ok(Actions::SpeakerNotes(
+            source
+                .byte_slice(action_walker.node().byte_range())
+                .to_string()
+                .into(),
+        ))
     } else {
         return Err(super::Error::ActionNotFound(
             action_walker.node().range().into(),

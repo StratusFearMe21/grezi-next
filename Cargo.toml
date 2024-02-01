@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = [
+  "egui-anim",
+  "grezi",
+  "tree-sitter-grz",
+  "tree-sitter-ntbib",
+]
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[workspace.dependencies]
+egui_extras = { git = "https://github.com/emilk/egui", features = ["all_loaders"] }
+ecolor = { git = "https://github.com/emilk/egui" }
+eframe = { git = "https://github.com/emilk/egui", default-features = false }
+

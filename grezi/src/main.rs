@@ -104,8 +104,6 @@ pub struct Args {
     #[clap(long)]
     pub fmt: bool,
     #[clap(short, long)]
-    pub dont_close: bool,
-    #[clap(short, long)]
     pub output: Option<String>,
     #[clap(short, long, value_parser = RangeParser)]
     pub index: Option<Range>,
@@ -150,7 +148,7 @@ fn main() -> miette::Result<()> {
         vsync: true,
         ..Default::default()
     };
-    let mut app = MyEguiApp::new(args.lsp, args.presentation, args.dont_close);
+    let mut app = MyEguiApp::new(args.lsp, args.presentation);
     let init_app = app.0.clone();
 
     if args.fmt {
@@ -277,15 +275,14 @@ fn main() -> miette::Result<()> {
 
         let egui_ctx = egui::Context::default();
 
-        app.0.lsp = true;
         let font_defs = app.0.fonts.clone();
+        app.0.time = f32::MAX;
+        app.0.export = true;
         egui_ctx.set_fonts(font_defs.clone());
         let mut init_app = app.0.init_app(&egui_ctx, app.1);
         let ft = cairo::freetype::Library::init().unwrap();
 
         let font_defs_ft = grezi::cairo::font_defs_to_ft(font_defs, ft);
-        init_app.time = f32::MAX;
-        init_app.dont_animate = true;
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, fit)),
             //pixels_per_point: Some(2.0),
@@ -298,9 +295,7 @@ fn main() -> miette::Result<()> {
 
                 let output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx));
 
-                init_app.resolved_actions = None;
-                init_app.resolved_slide = None;
-                init_app.resolved_viewboxes.clear();
+                init_app.resolved.store(None);
 
                 grezi::cairo::cairo_draw(output, &mut textures, &ctx, &font_defs_ft);
 
@@ -333,10 +328,6 @@ fn main() -> miette::Result<()> {
                 }
 
                 let e_output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx));
-
-                init_app.resolved_actions = None;
-                init_app.resolved_slide = None;
-                init_app.resolved_viewboxes.clear();
 
                 grezi::cairo::cairo_draw(e_output, &mut textures, &ctx, &font_defs_ft);
 

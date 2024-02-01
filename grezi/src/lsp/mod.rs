@@ -19,6 +19,7 @@ use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Point, Query, QueryCursor, Tree};
 use hunspell_rs::CheckResult;
+use indexmap::IndexSet;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{
@@ -119,6 +120,13 @@ pub fn start_lsp(
     font_db.load_system_fonts();
 
     let mut hunspell = None;
+    let fonts: IndexSet<String, ahash::RandomState> = font_db
+        .faces()
+        .map(|f| &f.families)
+        .flatten()
+        .map(|(f, _)| f.clone())
+        .collect();
+    let mut sources: IndexSet<String, ahash::RandomState> = IndexSet::default();
 
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
     let server_capabilities = serde_json::to_value(ServerCapabilities {
@@ -1645,12 +1653,10 @@ pub fn start_lsp(
                                                 })
                                                 .unwrap_or_default()
                                         {
-                                            let fonts = font_db
-                                                .faces()
-                                                .map(|f| &f.families)
-                                                .flatten()
+                                            let fonts = fonts
+                                                .iter()
                                                 .map(|f| CompletionItem {
-                                                    label: f.0.clone(),
+                                                    label: f.clone(),
                                                     kind: Some(CompletionItemKind::VARIABLE),
                                                     deprecated: Some(false),
                                                     preselect: Some(true),
@@ -1661,7 +1667,7 @@ pub fn start_lsp(
                                                     text_edit: Some(
                                                         CompletionTextEdit::InsertAndReplace(
                                                             InsertReplaceEdit {
-                                                                new_text: f.0.clone(),
+                                                                new_text: f.clone(),
                                                                 insert: lsp_types::Range {
                                                                     start: completion
                                                                         .text_document_position
@@ -1796,7 +1802,7 @@ pub fn start_lsp(
                                         &mut app.helix_cell,
                                         &mut slide_show,
                                         &mut font_db,
-                                        &mut app.sources,
+                                        &mut sources,
                                         &mut app.fonts,
                                         &lsp_egui_ctx,
                                         Path::new(currently_open.path()),
@@ -1842,7 +1848,7 @@ pub fn start_lsp(
                                     }
 
                                     lsp_egui_ctx.set_fonts(app.fonts.clone());
-                                    app.clear_resolved.store(true, Ordering::Relaxed);
+                                    app.resolved.store(None);
                                     app.restart_timer.store(true, Ordering::Relaxed);
                                     lsp_egui_ctx.request_repaint();
                                 }
@@ -2039,7 +2045,7 @@ pub fn start_lsp(
                             &mut app.helix_cell,
                             &mut slide_show,
                             &mut font_db,
-                            &mut app.sources,
+                            &mut sources,
                             &mut app.fonts,
                             &lsp_egui_ctx,
                             Path::new(currently_open.path()),
@@ -2084,7 +2090,7 @@ pub fn start_lsp(
                         }
 
                         lsp_egui_ctx.set_fonts(app.fonts.clone());
-                        app.clear_resolved.store(true, Ordering::Relaxed);
+                        app.resolved.store(None);
                     }
                     DidChangeTextDocument::METHOD => {
                         let changes: lsp_types::DidChangeTextDocumentParams =
@@ -2149,7 +2155,7 @@ pub fn start_lsp(
                                             &mut app.helix_cell,
                                             &mut slide_show,
                                             &mut font_db,
-                                            &mut app.sources,
+                                            &mut sources,
                                             &mut app.fonts,
                                             &lsp_egui_ctx,
                                             Path::new(currently_open.path()),
@@ -2170,7 +2176,7 @@ pub fn start_lsp(
                                                         ),
                                                     ))
                                                     .unwrap();
-                                                app.clear_resolved.store(true, Ordering::Relaxed);
+                                                app.resolved.store(None);
                                                 lsp_egui_ctx.request_repaint();
                                             }
                                             Err(errors) => {
@@ -2233,7 +2239,7 @@ pub fn start_lsp(
                                 &mut app.helix_cell,
                                 &mut slide_show,
                                 &mut font_db,
-                                &mut app.sources,
+                                &mut sources,
                                 &mut app.fonts,
                                 &lsp_egui_ctx,
                                 Path::new(currently_open.path()),
@@ -2252,7 +2258,7 @@ pub fn start_lsp(
                                             },
                                         )))
                                         .unwrap();
-                                    app.clear_resolved.store(true, Ordering::Relaxed);
+                                    app.resolved.store(None);
                                     app.next.store(true, Ordering::Relaxed);
                                     app.restart_timer.store(true, Ordering::Relaxed);
                                     current_thread.unpark();
@@ -3151,7 +3157,7 @@ pub fn hover(
                     app.next.store(false, Ordering::Relaxed);
                     app.vb_dbg.store(0, Ordering::Relaxed);
                     app.obj_dbg.store(0, Ordering::Relaxed);
-                    app.clear_resolved.store(true, Ordering::Relaxed);
+                    app.resolved.store(None);
                     lsp_egui_ctx.request_repaint();
                 }
                 if matches!(nk, NodeKind::SlideFunctions) {
@@ -3212,7 +3218,7 @@ pub fn hover(
                             app.next.store(false, Ordering::Relaxed);
                             app.obj_dbg.store(0, Ordering::Relaxed);
 
-                            app.clear_resolved.store(true, Ordering::Relaxed);
+                            app.resolved.store(None);
                             lsp_egui_ctx.request_repaint();
                         }
                     }
@@ -3255,7 +3261,7 @@ pub fn hover(
 
                             if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
                                 app.next.store(false, Ordering::Relaxed);
-                                app.clear_resolved.store(true, Ordering::Relaxed);
+                                app.resolved.store(None);
                                 lsp_egui_ctx.request_repaint();
                             }
                         }
@@ -3315,7 +3321,7 @@ pub fn hover(
                             app.next.store(false, Ordering::Relaxed);
                             app.vb_dbg.store(0, Ordering::Relaxed);
 
-                            app.clear_resolved.store(true, Ordering::Relaxed);
+                            app.resolved.store(None);
                             lsp_egui_ctx.request_repaint();
                         }
                     }

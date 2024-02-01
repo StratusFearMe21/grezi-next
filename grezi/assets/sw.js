@@ -1,7 +1,5 @@
 var cacheName = 'grezi-pwa';
 var filesToCache = [
-  './',
-  './index.html',
   './grezi.js',
   './grezi_bg.wasm',
 ];

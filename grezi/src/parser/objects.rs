@@ -41,6 +41,7 @@ pub enum ObjectType {
         uri: String,
         bytes: Arc<[u8]>,
         scale: Option<Vec2>,
+        source: Option<LayoutJob>,
         tint: Color32,
     },
     Rect {
@@ -55,8 +56,8 @@ impl ObjectType {
         match self {
             ObjectType::Text { layout_job, .. } => {
                 layout_job.append(
-                    &format!("{}. ", index + 1),
-                    1.5,
+                    &format!("{}.", index + 1),
+                    0.0,
                     TextFormat {
                         font_id: FontId::proportional(24.0),
                         color: Color32::WHITE,
@@ -69,7 +70,30 @@ impl ObjectType {
                     },
                 );
             }
-            ObjectType::Image { .. } => {}
+            ObjectType::Image { source, .. } => {
+                let mut layout_job = LayoutJob {
+                    wrap: TextWrapping {
+                        max_rows: u32::MAX as usize,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                layout_job.append(
+                    &format!("{}.", index + 1),
+                    0.0,
+                    TextFormat {
+                        font_id: FontId::proportional(24.0),
+                        color: Color32::WHITE,
+                        background: Color32::TRANSPARENT,
+                        italics: false,
+                        underline: Stroke::NONE,
+                        strikethrough: Stroke::NONE,
+                        valign: Align::TOP,
+                        ..Default::default()
+                    },
+                );
+                *source = Some(layout_job);
+            }
             _ => unreachable!(),
         }
     }
@@ -81,6 +105,7 @@ pub enum ResolvedObject {
     Image {
         image: Image<'static>,
         scale: Option<Vec2>,
+        source: Option<Arc<Galley>>,
         tint: Color32,
     },
     Anim {
@@ -98,10 +123,7 @@ pub enum ResolvedObject {
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(galley) => galley
-                .rect
-                .translate(Vec2::new(-galley.rect.min.x, -galley.rect.min.y))
-                .expand(1.0),
+            ResolvedObject::Text(galley) => galley.rect.expand(1.0),
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
                     let mut size = None;
@@ -315,6 +337,7 @@ pub fn parse_objects(
                 bytes,
                 scale,
                 tint: tint.unwrap_or(Color32::WHITE),
+                source: None,
             }
         }
         "Paragraph" | "Header" => {
