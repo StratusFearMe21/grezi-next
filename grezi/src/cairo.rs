@@ -216,16 +216,19 @@ pub fn cairo_draw_shape(
                         glyphs.next();
                         continue;
                     }
-                    let color_rgba = color
-                        .unwrap_or(egui_glyphon::glyphon::Color::rgb(255, 255, 255))
-                        .as_rgba();
+                    let color_rgba: palette::Srgba<u8> = palette::cast::from_array(
+                        color
+                            .unwrap_or(egui_glyphon::glyphon::Color::rgb(255, 255, 255))
+                            .as_rgba(),
+                    );
+                    let color_rgba: palette::Srgba<f64> = color_rgba.into_format();
                     let font = fonts.get(&font_id).unwrap();
 
                     ctx.set_source_rgba(
-                        color_rgba[0] as f64 / 255.0,
-                        color_rgba[1] as f64 / 255.0,
-                        color_rgba[2] as f64 / 255.0,
-                        color_rgba[3] as f64 / 255.0,
+                        color_rgba.red,
+                        color_rgba.green,
+                        color_rgba.blue,
+                        color_rgba.alpha,
                     );
                     ctx.set_font_face(&font.1);
 
