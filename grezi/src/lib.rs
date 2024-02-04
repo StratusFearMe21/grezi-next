@@ -19,7 +19,7 @@ use atomic_float::AtomicF32;
 use crossbeam_queue::SegQueue;
 use eframe::{
     egui::{
-        self, FontData, FontDefinitions, FontTweak, Image, ImageSize, Modifiers, Rect, Sense,
+        self, FontData, FontDefinitions, FontTweak, Id, Image, ImageSize, Modifiers, Rect, Sense,
         SizeHint, Ui, ViewportBuilder, ViewportId,
     },
     egui_wgpu,
@@ -463,7 +463,7 @@ impl Resolved {
         font_system: &mut FontSystem,
     ) {
         ui.set_clip_rect(ui.max_rect());
-        for obj in &self.slide {
+        for (idx, obj) in self.slide.iter().enumerate() {
             let time = if obj.scaled_time[0] < time {
                 (time - obj.scaled_time[0]).clamp(0.0, obj.scaled_time[1])
             } else {
@@ -532,13 +532,10 @@ impl Resolved {
                                 );
                             }
                         }
-                        if response.clicked_elsewhere() {
-                            buffer.0.write().set_select_opt(None);
-                        }
 
+                        let boxes = buffer.highlight_boxes();
                         let obj_pos = obj_pos * ppi;
-
-                        for r#box in buffer.highlight_boxes() {
+                        for r#box in &boxes {
                             ui.painter().rect_filled(
                                 r#box.translate(obj_pos.min.to_vec2()) / ppi,
                                 Rounding::default(),
@@ -546,13 +543,42 @@ impl Resolved {
                             );
                         }
 
-                        let buffer_read = buffer.0.read();
-                        if buffer_read.select_opt().is_some() {
-                            if ui.input_mut(|i| i.events.contains(&egui::Event::Copy)) {
-                                ui.ctx().output_mut(|t| {
-                                    t.copied_text = buffer_read.copy_selection().unwrap_or_default()
-                                });
+                        let mut window_clicked = false;
+                        {
+                            let buffer_read = buffer.0.read();
+                            if let Some(r#box) = boxes.last() {
+                                if ui.input(|i| i.any_touches()) {
+                                    egui::Window::new("copy_cosmic_text")
+                                        .id(Id::new((idx, "copy_cosmic_text")))
+                                        .title_bar(false)
+                                        .fixed_pos(r#box.translate(obj_pos.min.to_vec2()).max / ppi)
+                                        .resizable(false)
+                                        .collapsible(false)
+                                        .show(ui.ctx(), |ui| {
+                                            if ui.button("Copy").clicked() {
+                                                window_clicked = true;
+                                                ui.ctx().output_mut(|t| {
+                                                    t.copied_text = buffer_read
+                                                        .copy_selection()
+                                                        .unwrap_or_default()
+                                                });
+                                            }
+                                        });
+                                }
                             }
+
+                            if buffer_read.select_opt().is_some() {
+                                if ui.input_mut(|i| i.events.contains(&egui::Event::Copy)) {
+                                    ui.ctx().output_mut(|t| {
+                                        t.copied_text =
+                                            buffer_read.copy_selection().unwrap_or_default()
+                                    });
+                                }
+                            }
+                        }
+
+                        if response.clicked_elsewhere() && !window_clicked {
+                            buffer.0.write().set_select_opt(None);
                         }
 
                         buffers.push(BufferWithTextArea::new(
@@ -1056,6 +1082,7 @@ impl Resolved {
                             Pos2::from(text_object.locations[1][1]),
                         ]);
                         Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size())
+                            * ui.ctx().pixels_per_point()
                     };
                     let scaled_time = if text_object.scaled_time[1] < 0.1 {
                         [0.0, 0.0]
