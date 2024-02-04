@@ -4,14 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use eframe::{
-    egui::TextFormat,
-    emath::Align,
-    epaint::{
-        text::{LayoutJob, TextWrapping},
-        Color32, FontId, Stroke,
-    },
-};
+use eframe::epaint::{Color32, FontId};
 use helix_core::tree_sitter::Node;
 use helix_core::{
     ropey::{Rope, RopeBuilder},
@@ -24,7 +17,7 @@ use helix_core::{
 use helix_view::theme::Color;
 use helix_view::theme::Modifier;
 
-use super::{GrzCursor, NodeKind, PassThroughHasher};
+use super::{objects::Job, GrzCursor, NodeKind, PassThroughHasher};
 
 #[derive(Clone)]
 pub struct HelixCell {
@@ -41,21 +34,12 @@ pub struct HelixCell {
 pub fn highlight_text(
     text: Node<'_>,
     lang: (Cow<'_, str>, Range),
-    align: Align,
     font_id: FontId,
     helix_cell: &mut Option<HelixCell>,
     source: &Rope,
     hasher: &ahash::RandomState,
-) -> Result<LayoutJob, super::Error> {
-    let mut layout_job = LayoutJob {
-        halign: align,
-        break_on_newline: true,
-        wrap: TextWrapping {
-            max_rows: u32::MAX as usize,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+) -> Result<Job, super::Error> {
+    let mut job = Job::new();
     let helix = helix_cell.get_or_insert_with(|| {
         let mut theme_parent_dirs = vec![helix_loader::config_dir()];
         theme_parent_dirs.extend(helix_loader::runtime_dirs().iter().cloned());
@@ -157,38 +141,24 @@ pub fn highlight_text(
                 let slice = rope.slice(start..end);
 
                 for line in slice.lines() {
-                    let line_str: std::borrow::Cow<'_, str> = line.into();
-                    if !line_str.is_empty() {
-                        layout_job.append(
-                            line_str.as_ref(),
-                            0.0,
-                            TextFormat {
-                                font_id: font_id.clone(),
-                                color: Color32::from_rgb(f_r, f_g, f_b),
-                                background: Color32::TRANSPARENT,
-                                italics: style.add_modifier.contains(Modifier::ITALIC),
-                                underline: if style.underline_style.is_some() {
-                                    let Color::Rgb(u_r, u_g, u_b) = style.underline_color.unwrap()
-                                    else {
-                                        unreachable!()
-                                    };
-                                    Stroke::new(5.0, Color32::from_rgb(u_r, u_g, u_b))
-                                } else {
-                                    Stroke::NONE
-                                },
-                                strikethrough: if style.add_modifier.contains(Modifier::CROSSED_OUT)
-                                {
-                                    Stroke::new(5.0, Color32::from_rgb(f_r, f_g, f_b))
-                                } else {
-                                    Stroke::NONE
-                                },
-                                ..Default::default()
-                            },
-                        );
+                    if line.len_bytes() != 0 {
+                        let mut font = String::new();
+                        match &font_id.family {
+                            eframe::epaint::FontFamily::Proportional => font.push_str("sans-serif"),
+                            eframe::epaint::FontFamily::Monospace => font.push_str("monospace"),
+                            eframe::epaint::FontFamily::Name(n) => font.push_str(n.as_ref()),
+                        }
+                        if style.add_modifier.contains(Modifier::ITALIC) {
+                            font.push_str(":italic");
+                        }
+                        if style.add_modifier.contains(Modifier::BOLD) {
+                            font.push_str(":bold")
+                        }
+                        job.push((line.to_string(), Color32::from_rgb(f_r, f_g, f_b), font));
                     }
                 }
             }
         }
     }
-    Ok(layout_job)
+    Ok(job)
 }

@@ -5,6 +5,11 @@ use std::str::FromStr;
 #[cfg(not(target_arch = "wasm32"))]
 use clap::builder::{StringValueParser, TypedValueParser};
 
+use eframe::epaint::mutex::Mutex;
+use egui_glyphon::glyphon::FontSystem;
+use egui_glyphon::GlyphonRenderer;
+use std::sync::Arc;
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Clone)]
 pub struct Range(std::ops::Range<usize>);
@@ -123,14 +128,16 @@ pub struct Args {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> miette::Result<()> {
     use std::collections::HashMap;
+    use std::hash::Hash;
     use std::io::BufWriter;
+    use std::ops::Deref;
     use std::sync::atomic::Ordering;
-    use std::sync::Arc;
 
     use cairo::{ImageSurface, PdfSurface, PsSurface, SvgSurface};
     use eframe::egui::{self, ViewportBuilder};
     use eframe::epaint::{Pos2, Rect, TextureId};
     use eframe::{egui::ImageSize, epaint::Vec2};
+    use indexmap::IndexSet;
     use miette::{Context, IntoDiagnostic};
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -148,7 +155,8 @@ fn main() -> miette::Result<()> {
         vsync: true,
         ..Default::default()
     };
-    let mut app = MyEguiApp::new(args.lsp, args.presentation);
+    let font_system = Arc::new(Mutex::new(FontSystem::new()));
+    let mut app = MyEguiApp::new(args.lsp, args.presentation, Arc::clone(&font_system));
     let init_app = app.0.clone();
 
     if args.fmt {
@@ -180,20 +188,35 @@ fn main() -> miette::Result<()> {
         return Ok(());
     } else if args.export {
         let output = args.output.unwrap_or_else(|| "out.slideshow".to_owned());
+        let used_fonts = app.0.slide_show.read().used_fonts(&mut font_system.lock());
         if output.ends_with("slideshow") {
-            let used_fonts = app.0.slide_show.read().used_fonts(&app.0.fonts);
-            app.0.fonts.font_data.retain(|font, _| {
-                let res = used_fonts.contains(font.as_str());
-                if !res {
-                    app.0.fonts.families.values_mut().for_each(|v| {
-                        if let Some(i) = v.iter().position(|f| f.eq(font)) {
-                            v.remove(i);
-                        }
-                    })
+            let mut font_system = font_system.lock();
+            let mut fonts = IndexSet::new();
+
+            struct FontRef(Arc<dyn AsRef<[u8]> + Send + Sync>);
+
+            impl Hash for FontRef {
+                fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                    self.0.deref().as_ref().hash(state);
                 }
-                res
-            });
-            app.0.fonts.families.retain(|_, names| !names.is_empty());
+            }
+
+            impl PartialEq for FontRef {
+                fn eq(&self, other: &Self) -> bool {
+                    self.0.deref().as_ref().eq(other.0.deref().as_ref())
+                }
+            }
+
+            impl Eq for FontRef {}
+
+            for font in used_fonts.into_iter() {
+                unsafe {
+                    let font = font_system.db_mut().make_shared_face_data(font).unwrap();
+                    fonts.insert(FontRef(font.0));
+                }
+            }
+
+            let fonts: Vec<&[u8]> = fonts.iter().map(|f| f.0.deref().as_ref()).collect();
 
             bincode::serialize_into(
                 BufWriter::new(
@@ -201,7 +224,7 @@ fn main() -> miette::Result<()> {
                         .into_diagnostic()
                         .with_context(|| format!("Error with creating {}", output))?,
                 ),
-                &(&app.0.fonts, &*app.0.slide_show.read()),
+                &(&fonts, &*app.0.slide_show.read()),
             )
             .into_diagnostic()
             .with_context(|| format!("Error seriaizing {}", &*init_app.slide_show_file.lock()))?;
@@ -217,7 +240,7 @@ fn main() -> miette::Result<()> {
             max_size: size.0,
             ..Default::default()
         }
-        .calc_size(size.0, Vec2::new(1920.0, 1080.0));
+        .calc_size(size.0, Vec2::new(16.0, 9.0));
 
         let len = init_app.slide_show.read().slide_show.len();
         let range = args.index.map(|r| r.0).unwrap_or(0..len);
@@ -275,14 +298,12 @@ fn main() -> miette::Result<()> {
 
         let egui_ctx = egui::Context::default();
 
-        let font_defs = app.0.fonts.clone();
         app.0.time = f32::MAX;
         app.0.export = true;
-        egui_ctx.set_fonts(font_defs.clone());
         let mut init_app = app.0.init_app(&egui_ctx, app.1);
         let ft = cairo::freetype::Library::init().unwrap();
 
-        let font_defs_ft = grezi::cairo::font_defs_to_ft(font_defs, ft);
+        let font_defs_ft = grezi::cairo::fonts_to_ft(Arc::clone(&font_system), &used_fonts, ft);
         let input = egui::RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, fit)),
             //pixels_per_point: Some(2.0),
@@ -379,6 +400,7 @@ fn main() -> miette::Result<()> {
         "Grezi",
         native_options,
         Box::new(move |cc| {
+            GlyphonRenderer::insert(cc, Arc::clone(&font_system));
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();
                 egui_extras::install_image_loaders(&lsp_egui_ctx);
@@ -403,6 +425,7 @@ fn main() -> miette::Result<()> {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     // Redirect `log` message to `console.log` and friends:
+
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions {
@@ -410,14 +433,17 @@ fn main() {
         ..Default::default()
     };
 
+    let font_system = Arc::new(Mutex::new(FontSystem::new()));
+
     wasm_bindgen_futures::spawn_local(async {
         eframe::WebRunner::new()
             .start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|cc| {
+                Box::new(move |cc| {
+                    GlyphonRenderer::insert(cc, Arc::clone(&font_system));
                     Box::new({
-                        let app = MyEguiApp::new();
+                        let app = MyEguiApp::new(font_system);
                         app.0.init_app(
                             &cc.egui_ctx,
                             app.1,

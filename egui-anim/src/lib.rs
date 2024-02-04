@@ -34,7 +34,7 @@ impl Anim {
             }
         }
 
-        let frames = MOVE.lock().take().unwrap();
+        let frames = Arc::clone(&MOVE.lock().as_ref().unwrap());
 
         Anim {
             frames: frames

@@ -5,7 +5,7 @@ use std::{
     hash::{BuildHasher, BuildHasherDefault, Hasher},
     path::Path,
     process::Stdio,
-    sync::atomic::Ordering,
+    sync::{atomic::Ordering, Arc},
 };
 
 pub mod formatter;
@@ -116,11 +116,12 @@ pub fn start_lsp(
         include_str!("queries/strings.scm"),
     )
     .unwrap();
-    let mut font_db = fontdb::Database::new();
-    font_db.load_system_fonts();
 
     let mut hunspell = None;
-    let fonts: IndexSet<String, ahash::RandomState> = font_db
+    let fonts: IndexSet<String, ahash::RandomState> = app
+        .font_system
+        .lock()
+        .db()
         .faces()
         .map(|f| &f.families)
         .flatten()
@@ -1801,9 +1802,7 @@ pub fn start_lsp(
                                         &current_rope,
                                         &mut app.helix_cell,
                                         &mut slide_show,
-                                        &mut font_db,
-                                        &mut sources,
-                                        &mut app.fonts,
+                                        Arc::clone(&app.font_system),
                                         &lsp_egui_ctx,
                                         Path::new(currently_open.path()),
                                     );
@@ -1847,7 +1846,6 @@ pub fn start_lsp(
                                         }
                                     }
 
-                                    lsp_egui_ctx.set_fonts(app.fonts.clone());
                                     app.resolved.store(None);
                                     app.restart_timer.store(true, Ordering::Relaxed);
                                     lsp_egui_ctx.request_repaint();
@@ -2044,9 +2042,7 @@ pub fn start_lsp(
                             &current_rope,
                             &mut app.helix_cell,
                             &mut slide_show,
-                            &mut font_db,
-                            &mut sources,
-                            &mut app.fonts,
+                            Arc::clone(&app.font_system),
                             &lsp_egui_ctx,
                             Path::new(currently_open.path()),
                         );
@@ -2089,7 +2085,6 @@ pub fn start_lsp(
                             }
                         }
 
-                        lsp_egui_ctx.set_fonts(app.fonts.clone());
                         app.resolved.store(None);
                     }
                     DidChangeTextDocument::METHOD => {
@@ -2154,9 +2149,7 @@ pub fn start_lsp(
                                             &current_rope,
                                             &mut app.helix_cell,
                                             &mut slide_show,
-                                            &mut font_db,
-                                            &mut sources,
-                                            &mut app.fonts,
+                                            Arc::clone(&app.font_system),
                                             &lsp_egui_ctx,
                                             Path::new(currently_open.path()),
                                         ) {
@@ -2238,9 +2231,7 @@ pub fn start_lsp(
                                 &current_rope,
                                 &mut app.helix_cell,
                                 &mut slide_show,
-                                &mut font_db,
-                                &mut sources,
-                                &mut app.fonts,
+                                Arc::clone(&app.font_system),
                                 &lsp_egui_ctx,
                                 Path::new(currently_open.path()),
                             );

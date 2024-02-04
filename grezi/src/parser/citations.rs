@@ -1,13 +1,8 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use ecolor::Color32;
-use eframe::{
-    egui::{Context, FontDefinitions, TextFormat},
-    epaint::{
-        text::{LayoutJob, TextWrapping},
-        FontFamily, FontId,
-    },
-};
+use eframe::{egui::Context, epaint::mutex::Mutex};
+use egui_glyphon::glyphon::FontSystem;
 use helix_core::tree_sitter::Parser;
 
 use crate::{
@@ -17,7 +12,7 @@ use crate::{
 
 use super::{
     color::Color,
-    objects::add_font,
+    objects::Job,
     slides::SlideObj,
     viewboxes::{LineUp, ViewboxIn},
     GrzCursor,
@@ -31,8 +26,7 @@ pub fn parse_citations(
     ctx: &Context,
     hasher: &ahash::RandomState,
     slideshow: &mut SlideShow,
-    fonts: &mut FontDefinitions,
-    font_db: &mut fontdb::Database,
+    font_system: Arc<Mutex<FontSystem>>,
 ) -> Result<(), super::Error> {
     if let Ok(file) = path
         .parent()
@@ -47,19 +41,10 @@ pub fn parse_citations(
             let file = &file[find..];
             let mut italics = false;
             let mut pre = false;
-            let font = FontId::proportional(24.0);
-            let mut layout = LayoutJob {
-                wrap: TextWrapping {
-                    max_rows: u32::MAX as usize,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
+            let mut job = Job::new();
             let mut header = "";
             let mut in_header = false;
             let mut height = 0.0;
-            let italic_family = FontFamily::Name("Ubuntu:light:italic".into());
-            add_font(fonts, font_db, ctx, &italic_family).unwrap();
             if let Some(tree) = parser.parse(file, None) {
                 let mut tree_cursor = GrzCursor::new(&tree);
 
@@ -88,21 +73,16 @@ pub fn parse_citations(
                             match &file[tree_cursor.node().byte_range()] {
                                 "pre" => {
                                     pre = false;
-                                    if !layout.is_empty() {
-                                        layout.append(
-                                            "\n",
-                                            0.0,
-                                            TextFormat {
-                                                font_id: if italics {
-                                                    FontId::new(24.0, italic_family.clone())
-                                                } else {
-                                                    font.clone()
-                                                },
-                                                line_height: Some(2.0),
-                                                italics: false,
-                                                ..Default::default()
+                                    if !job.is_empty() {
+                                        job.push((
+                                            "\n".to_owned(),
+                                            Color32::WHITE,
+                                            if italics {
+                                                "sans-serif:italic".to_owned()
+                                            } else {
+                                                "sans-serif".to_owned()
                                             },
-                                        );
+                                        ));
                                         height += 24.0 * 3.0;
                                     }
                                 }
@@ -121,7 +101,7 @@ pub fn parse_citations(
                         break;
                     }
 
-                    if !(layout.is_empty()
+                    if !(job.is_empty()
                         && file[tree_cursor.node().byte_range()]
                             .as_bytes()
                             .iter()
@@ -129,21 +109,15 @@ pub fn parse_citations(
                         && pre
                         && !in_header
                     {
-                        layout.append(
-                            &file[tree_cursor.node().byte_range()],
-                            0.0,
-                            TextFormat {
-                                font_id: if italics {
-                                    FontId::new(24.0, italic_family.clone())
-                                } else {
-                                    font.clone()
-                                },
-                                line_height: Some(2.0),
-                                color: Color32::WHITE,
-                                italics: false,
-                                ..Default::default()
+                        job.push((
+                            file[tree_cursor.node().byte_range()].to_owned(),
+                            Color32::WHITE,
+                            if italics {
+                                "sans-serif:italic".to_owned()
+                            } else {
+                                "sans-serif".to_owned()
                             },
-                        );
+                        ));
                     } else if in_header && header.is_empty() {
                         header = &file[tree_cursor.node().byte_range()];
                     }
@@ -161,10 +135,9 @@ pub fn parse_citations(
             }
 
             let mut pops = 0;
-            let mut iter = layout.sections.iter().rev();
+            let mut iter = job.iter().rev();
             loop {
-                if &layout.text[iter.next().map(|r| r.byte_range.clone()).unwrap_or(0..1)] == "\n" {
-                    layout.text.pop();
+                if iter.next().unwrap().0 == "\n" {
                     pops += 1;
                 } else {
                     break;
@@ -172,7 +145,7 @@ pub fn parse_citations(
             }
 
             for _ in 0..pops {
-                layout.sections.pop();
+                job.pop();
             }
 
             let text_object = hasher.hash_one("__citation__text__object__");
@@ -193,11 +166,7 @@ pub fn parse_citations(
                 super::objects::Object {
                     position: None,
                     viewbox: None,
-                    source_obj: None,
-                    object: super::objects::ObjectType::Text {
-                        layout_job: layout,
-                        source: false,
-                    },
+                    object: super::objects::ObjectType::Text(job, 24.0, Some(2.0)),
                 },
             );
             slideshow.objects.insert(
@@ -205,20 +174,11 @@ pub fn parse_citations(
                 super::objects::Object {
                     position: None,
                     viewbox: None,
-                    source_obj: None,
-                    object: super::objects::ObjectType::Text {
-                        layout_job: {
-                            let mut job = LayoutJob::simple(
-                                header.to_string(),
-                                FontId::proportional(48.0),
-                                Color32::WHITE,
-                                f32::MAX,
-                            );
-                            job.wrap.max_rows = u32::MAX as usize;
-                            job
-                        },
-                        source: false,
-                    },
+                    object: super::objects::ObjectType::Text(
+                        vec![(header.to_string(), Color32::WHITE, "sans-serif".to_owned())],
+                        48.0,
+                        None,
+                    ),
                 },
             );
             slideshow.slide_show.push(super::AstObject::Slide {

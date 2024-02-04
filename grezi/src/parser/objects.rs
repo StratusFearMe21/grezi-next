@@ -4,13 +4,11 @@ use std::{
 };
 
 use eframe::{
-    egui::{Image, ImageFit, TextFormat, Ui},
+    egui::{Image, ImageFit, Ui},
     emath::Align,
-    epaint::{
-        text::{LayoutJob, TextWrapping},
-        Color32, FontFamily, FontId, Galley, Rect, Stroke, Vec2,
-    },
+    epaint::{mutex::Mutex, Color32, FontFamily, FontId, Pos2, Rect, Vec2},
 };
+use egui_glyphon::glyphon::{Attrs, Buffer, Family, FontSystem, Shaping, Style, Weight};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -27,21 +25,33 @@ use super::{
 pub struct Object {
     pub position: Option<LineUp>,
     pub viewbox: Option<ViewboxIn>,
-    pub source_obj: Option<u64>,
     pub object: ObjectType,
+}
+
+pub type Job = Vec<(String, Color32, String)>;
+
+pub fn add_job_to_buffer(job: &Job, buffer: &mut Buffer, font_system: &mut FontSystem) {
+    buffer.set_rich_text(
+        font_system,
+        job.iter().map(|job| {
+            let c = job.1.to_srgba_unmultiplied();
+            (
+                job.0.as_str(),
+                fontstr_to_query(job.2.as_str())
+                    .color(egui_glyphon::glyphon::Color::rgba(c[0], c[1], c[2], c[3])),
+            )
+        }),
+        Shaping::Advanced,
+    );
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ObjectType {
-    Text {
-        layout_job: LayoutJob,
-        source: bool,
-    },
+    Text(Job, f32, Option<f32>),
     Image {
         uri: String,
         bytes: Arc<[u8]>,
         scale: Option<Vec2>,
-        source: Option<LayoutJob>,
         tint: Color32,
     },
     Rect {
@@ -51,61 +61,12 @@ pub enum ObjectType {
     Spinner,
 }
 
-impl ObjectType {
-    fn apply_source(&mut self, index: usize) {
-        match self {
-            ObjectType::Text { layout_job, .. } => {
-                layout_job.append(
-                    &format!("{}.", index + 1),
-                    0.0,
-                    TextFormat {
-                        font_id: FontId::proportional(24.0),
-                        color: Color32::WHITE,
-                        background: Color32::TRANSPARENT,
-                        italics: false,
-                        underline: Stroke::NONE,
-                        strikethrough: Stroke::NONE,
-                        valign: Align::TOP,
-                        ..Default::default()
-                    },
-                );
-            }
-            ObjectType::Image { source, .. } => {
-                let mut layout_job = LayoutJob {
-                    wrap: TextWrapping {
-                        max_rows: u32::MAX as usize,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
-                layout_job.append(
-                    &format!("{}.", index + 1),
-                    0.0,
-                    TextFormat {
-                        font_id: FontId::proportional(24.0),
-                        color: Color32::WHITE,
-                        background: Color32::TRANSPARENT,
-                        italics: false,
-                        underline: Stroke::NONE,
-                        strikethrough: Stroke::NONE,
-                        valign: Align::TOP,
-                        ..Default::default()
-                    },
-                );
-                *source = Some(layout_job);
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum ResolvedObject {
-    Text(Arc<Galley>),
+    Text(Arc<Buffer>, Vec2),
     Image {
         image: Image<'static>,
         scale: Option<Vec2>,
-        source: Option<Arc<Galley>>,
         tint: Color32,
     },
     Anim {
@@ -123,7 +84,28 @@ pub enum ResolvedObject {
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(galley) => galley.rect.expand(1.0),
+            ResolvedObject::Text(buffer, _) => {
+                let mut rtl = false;
+                let (width, total_lines) =
+                    buffer
+                        .layout_runs()
+                        .fold((0.0, 0usize), |(width, total_lines), run| {
+                            if run.rtl {
+                                rtl = true;
+                            }
+                            (run.line_w.max(width), total_lines + 1)
+                        });
+
+                let (max_width, max_height) = buffer.size();
+
+                Rect::from_min_size(
+                    Pos2::ZERO,
+                    Vec2::new(
+                        if rtl { vb.x } else { width.min(max_width) },
+                        (total_lines as f32 * buffer.metrics().line_height).min(max_height),
+                    ) / ui.ctx().pixels_per_point(),
+                )
+            }
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
                     let mut size = None;
@@ -165,12 +147,10 @@ pub fn parse_objects(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
-    fonts: &mut eframe::egui::FontDefinitions,
-    font_db: &mut fontdb::Database,
+    font_system: Arc<Mutex<FontSystem>>,
     ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
     file_path: &std::path::Path,
-    sources: &mut indexmap::IndexSet<String, ahash::RandomState>,
     mut insert_fn: impl FnMut(u64, Object),
 ) -> Result<(), super::Error> {
     use std::borrow::Cow;
@@ -210,7 +190,6 @@ pub fn parse_objects(
             }
         },
     );
-    let mut source_cited = None;
     let mut object = match obj_type.as_ref() {
         "Rect" => {
             let mut tint = None;
@@ -292,7 +271,6 @@ pub fn parse_objects(
 
                         tint = Some(t.1.into());
                     }
-                    "source" => source_cited = Some(value),
                     _ => {}
                 }
             }
@@ -337,13 +315,11 @@ pub fn parse_objects(
                 bytes,
                 scale,
                 tint: tint.unwrap_or(Color32::WHITE),
-                source: None,
             }
         }
         "Paragraph" | "Header" => {
             let mut text = None;
             let mut color = None;
-            let mut bg = None;
             let mut align = Align::LEFT;
             let mut font = (
                 FontFamily::Proportional,
@@ -394,17 +370,6 @@ pub fn parse_objects(
 
                         color = Some(c.1.into());
                     }
-                    "background" => {
-                        let c = super::color::parse_color_with(
-                            &mut DefaultColorParser::new(None),
-                            &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
-                        )
-                        .map_err(|e| {
-                            super::Error::ColorError(parameter.1.range().into(), format!("{:?}", e))
-                        })?;
-
-                        bg = Some(c.1.into());
-                    }
                     "font_family" => {
                         font = (
                             match value.as_ref() {
@@ -422,37 +387,25 @@ pub fn parse_objects(
                             parameter.1.child(1 /* second child */).unwrap().range(),
                         ))
                     }
-                    "source" => source_cited = Some(value),
                     _ => {}
                 }
             }
-            add_font(fonts, font_db, ctx, &font.0)
-                .map_err(|()| super::Error::KnownMissing(font.1.into(), "Font not found".into()))?;
             let text = if let Some(t) = text {
                 t
             } else {
                 return Err(super::Error::KnownMissing(obj_range.into(), "value".into()));
             };
-            let layout_job = match language {
+            let job = match language {
                 Some(lang) => highlighting::highlight_text(
                     text,
                     lang,
-                    align,
                     FontId::new(font_size, font.0.clone()),
                     helix_cell,
                     source,
                     hasher,
                 )?,
                 _ => {
-                    let mut layout_job = LayoutJob {
-                        halign: align,
-                        break_on_newline: true,
-                        wrap: TextWrapping {
-                            max_rows: u32::MAX as usize,
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    };
+                    let mut job = Job::new();
                     let mut walker = GrzCursor::from_node(text);
                     walker.goto_first_child()?;
                     let mut options = pulldown_cmark::Options::empty();
@@ -489,69 +442,31 @@ pub fn parse_objects(
                     let mut li_printed_num = false;
 
                     let mut font_ids = Vec::with_capacity(2);
-                    font_ids.push(FontId::new(font_size, font.0.clone()));
+                    font_ids.push(match font.0.clone() {
+                        FontFamily::Name(n) => format!("{}", n),
+                        FontFamily::Proportional => "sans-serif".to_owned(),
+                        FontFamily::Monospace => "monospace".to_owned(),
+                    });
 
                     macro_rules! layout_append {
-                        ($layout_job:expr,$text:expr,$font_id:expr) => {
+                        ($job:expr,$text:expr,$font_id:expr) => {
                             if !$text.is_empty() {
                                 if tags.contains(&Tag::Item) && !li_printed_num {
                                     li_printed_num = true;
                                     match item_number {
-                                        Some(n) => $layout_job.append(
-                                            &format!("{}. ", n),
-                                            1.5,
-                                            TextFormat {
-                                                font_id: $font_id,
-                                                color: color.unwrap_or(Color32::WHITE),
-                                                background: bg.unwrap_or(Color32::TRANSPARENT),
-                                                italics: false,
-                                                underline: Stroke::NONE,
-                                                strikethrough: if tags.contains(&Tag::Strikethrough)
-                                                {
-                                                    Stroke::new(5.0, Color32::WHITE)
-                                                } else {
-                                                    Stroke::NONE
-                                                },
-                                                ..Default::default()
-                                            },
-                                        ),
-                                        None => $layout_job.append(
-                                            "• ",
-                                            1.5,
-                                            TextFormat {
-                                                font_id: $font_id,
-                                                color: color.unwrap_or(Color32::WHITE),
-                                                background: bg.unwrap_or(Color32::TRANSPARENT),
-                                                italics: false,
-                                                underline: Stroke::NONE,
-                                                strikethrough: if tags.contains(&Tag::Strikethrough)
-                                                {
-                                                    Stroke::new(5.0, Color32::WHITE)
-                                                } else {
-                                                    Stroke::NONE
-                                                },
-                                                ..Default::default()
-                                            },
-                                        ),
+                                        Some(n) => $job.push((
+                                            format!("{}. ", n),
+                                            color.unwrap_or(Color32::WHITE),
+                                            $font_id,
+                                        )),
+                                        None => $job.push((
+                                            "• ".to_owned(),
+                                            color.unwrap_or(Color32::WHITE),
+                                            $font_id,
+                                        )),
                                     }
                                 }
-                                $layout_job.append(
-                                    $text,
-                                    0.0,
-                                    TextFormat {
-                                        font_id: $font_id,
-                                        color: color.unwrap_or(Color32::WHITE),
-                                        background: bg.unwrap_or(Color32::TRANSPARENT),
-                                        italics: false,
-                                        underline: Stroke::NONE,
-                                        strikethrough: if tags.contains(&Tag::Strikethrough) {
-                                            Stroke::new(5.0, Color32::WHITE)
-                                        } else {
-                                            Stroke::NONE
-                                        },
-                                        ..Default::default()
-                                    },
-                                );
+                                $job.push(($text, color.unwrap_or(Color32::WHITE), $font_id));
                             }
                         };
                     }
@@ -565,42 +480,16 @@ pub fn parse_objects(
                                         item_number.as_mut().map(|i| *i += 1);
                                     }
                                     Tag::Emphasis => {
-                                        let family = match font.0.clone() {
-                                            FontFamily::Name(n) => {
-                                                FontFamily::Name(format!("{}:italic", n).into())
-                                            }
-                                            FontFamily::Proportional => {
-                                                FontFamily::Name("Ubuntu:light:italic".into())
-                                            }
-                                            FontFamily::Monospace => FontFamily::Monospace,
-                                        };
-                                        add_font(fonts, font_db, ctx, &family).unwrap();
-                                        font_ids.push(FontId::new(font_size, family));
+                                        let family = format!("{}:italic", font_ids.last().unwrap());
+                                        font_ids.push(family);
                                     }
                                     Tag::Strong => {
                                         let family = if tags.contains(&Tag::Emphasis) {
-                                            match font.0.clone() {
-                                                FontFamily::Name(n) => FontFamily::Name(
-                                                    format!("{}:bold:italic", n).into(),
-                                                ),
-                                                FontFamily::Proportional => {
-                                                    FontFamily::Name("Ubuntu:bold:italic".into())
-                                                }
-                                                FontFamily::Monospace => FontFamily::Monospace,
-                                            }
+                                            format!("{}:bold:italic", font_ids.last().unwrap())
                                         } else {
-                                            match font.0.clone() {
-                                                FontFamily::Name(n) => {
-                                                    FontFamily::Name(format!("{}:bold", n).into())
-                                                }
-                                                FontFamily::Proportional => {
-                                                    FontFamily::Name("Ubuntu:bold".into())
-                                                }
-                                                FontFamily::Monospace => FontFamily::Monospace,
-                                            }
+                                            format!("{}:bold", font_ids.last().unwrap())
                                         };
-                                        add_font(fonts, font_db, ctx, &family).unwrap();
-                                        font_ids.push(FontId::new(font_size, family));
+                                        font_ids.push(family);
                                     }
                                     _ => {}
                                 }
@@ -617,108 +506,41 @@ pub fn parse_objects(
                                 tags.pop();
                             }
                             pulldown_cmark::Event::Code(text) => {
-                                layout_append!(
-                                    layout_job,
-                                    text.as_ref(),
-                                    FontId::monospace(font_size)
-                                );
+                                layout_append!(job, text.to_string(), "monospace".to_owned());
                             }
                             pulldown_cmark::Event::SoftBreak => {
-                                layout_append!(layout_job, "\n", font_ids.last().unwrap().clone());
+                                layout_append!(
+                                    job,
+                                    "\n".to_string(),
+                                    font_ids.last().unwrap().clone()
+                                );
                             }
                             pulldown_cmark::Event::HardBreak => {
                                 layout_append!(
-                                    layout_job,
-                                    "\n\n",
+                                    job,
+                                    "\n\n".to_owned(),
                                     font_ids.last().unwrap().clone()
                                 );
                             }
                             pulldown_cmark::Event::Text(text) => {
                                 layout_append!(
-                                    layout_job,
-                                    text.as_ref(),
+                                    job,
+                                    text.to_string(),
                                     font_ids.last().unwrap().clone()
                                 );
                             }
                             _ => {}
                         }
                     }
-                    layout_job
+                    job
                 }
             };
-            ObjectType::Text {
-                layout_job,
-                source: false,
-            }
+            ObjectType::Text(job, font_size, None)
         }
         _ => return Err(super::Error::NotFound(obj_range.into())),
     };
     tree_cursor.goto_parent();
     tree_cursor.goto_parent();
-    let mut source_obj = None;
-    if let Some(source) = source_cited {
-        let mut hasher = hasher.build_hasher();
-        std::hash::Hash::hash("__source__", &mut hasher);
-        std::hash::Hash::hash(&source, &mut hasher);
-        let s_obj = hasher.finish();
-        let mut layout_job = LayoutJob {
-            halign: Align::RIGHT,
-            break_on_newline: true,
-            wrap: TextWrapping {
-                max_rows: u32::MAX as usize,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let source_index = sources.get_index_of(source.as_ref()).unwrap_or_else(|| {
-            let index = sources.len();
-            sources.insert(source.clone().into_owned());
-            index
-        });
-        let family = FontFamily::Name("Ubuntu:light:italic".into());
-        add_font(fonts, font_db, ctx, &family).unwrap();
-        layout_job.append(
-            &format!("{}. ", source_index + 1),
-            1.5,
-            TextFormat {
-                font_id: FontId::proportional(18.0),
-                color: Color32::WHITE,
-                background: Color32::TRANSPARENT,
-                italics: false,
-                underline: Stroke::NONE,
-                strikethrough: Stroke::NONE,
-                valign: Align::TOP,
-                ..Default::default()
-            },
-        );
-        layout_job.append(
-            source.as_ref(),
-            0.0,
-            TextFormat {
-                font_id: FontId::new(24.0, family),
-                color: Color32::WHITE,
-                background: Color32::TRANSPARENT,
-                italics: false,
-                underline: Stroke::NONE,
-                strikethrough: Stroke::NONE,
-                ..Default::default()
-            },
-        );
-        object.apply_source(source_index);
-        insert_fn(
-            s_obj,
-            Object {
-                position: None,
-                viewbox: None,
-                object: ObjectType::Text {
-                    layout_job,
-                    source: true,
-                },
-                source_obj: None,
-            },
-        );
-        source_obj = Some(s_obj);
-    }
 
     insert_fn(
         {
@@ -729,7 +551,6 @@ pub fn parse_objects(
         Object {
             position: None,
             viewbox: None,
-            source_obj,
             object,
         },
     );
@@ -737,70 +558,47 @@ pub fn parse_objects(
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn add_font(
-    fonts: &mut eframe::egui::FontDefinitions,
-    font_db: &mut fontdb::Database,
-    ctx: &eframe::egui::Context,
-    font: &FontFamily,
-) -> Result<(), ()> {
-    use eframe::egui::FontData;
-    use fontdb::{Family, Query, Style, Weight};
+pub fn fontstr_to_query<'a>(family: &'a str) -> Attrs<'a> {
+    let mut query = Attrs::new();
 
-    if !fonts.families.contains_key(font) {
-        match font {
-            FontFamily::Name(n) => {
-                let mut split = n.split(':');
-                let base = split.next().unwrap();
+    let mut split = family.split(':');
+    let base = split.next().unwrap();
 
-                let mut font_prop = Query::default();
-                let families = [Family::Name(base)];
-                font_prop.families = &families;
-                for s in split {
-                    match s {
-                        "normal" => font_prop.style = Style::Normal,
-                        "italic" => font_prop.style = Style::Italic,
-                        "oblique" => font_prop.style = Style::Oblique,
-                        // Thin weight (100), the thinnest value.
-                        "thin" => font_prop.weight = Weight::THIN,
-                        // Extra light weight (200).
-                        "extra_light" => font_prop.weight = Weight::EXTRA_LIGHT,
-                        // Light weight (300).
-                        "light" => font_prop.weight = Weight::LIGHT,
-                        // Normal (400).
-                        "normal" => font_prop.weight = Weight::NORMAL,
-                        // Medium weight (500, higher than normal).
-                        "medium" => font_prop.weight = Weight::MEDIUM,
-                        // Semibold weight (600).
-                        "semibold" => font_prop.weight = Weight::SEMIBOLD,
-                        // Bold weight (700).
-                        "bold" => font_prop.weight = Weight::BOLD,
-                        // Extra-bold weight (800).
-                        "extra_bold" => font_prop.weight = Weight::EXTRA_BOLD,
-                        // Black weight (900), the thickest value.
-                        "black" => font_prop.weight = Weight::BLACK,
-                        _ => {}
-                    }
-                }
-                if let Some(fetched_font) = font_db.query(&font_prop) {
-                    // Leaking the font makes it cheaper to clone the font definitions elsewhere
-                    let (src, index) =
-                        unsafe { font_db.make_shared_face_data(fetched_font).unwrap() };
-                    let data: &'static [u8] = unsafe { &*Arc::into_raw(src) }.as_ref();
-                    fonts.font_data.insert(n.to_string(), {
-                        let mut font = FontData::from_static(data);
-                        font.index = index;
-                        font
-                    });
+    match base {
+        "serif" => query.family = Family::Serif,
+        "sans-serif" => query.family = Family::SansSerif,
+        "cursive" => query.family = Family::Cursive,
+        "fantasy" => query.family = Family::Fantasy,
+        "monospace" => query.family = Family::Monospace,
+        name => query.family = Family::Name(name),
+    }
 
-                    fonts.families.insert(font.clone(), vec![n.to_string()]);
-                    ctx.set_fonts(fonts.clone());
-                } else {
-                    return Err(());
-                }
-            }
+    for s in split {
+        match s {
+            "normal" => query.style = Style::Normal,
+            "italic" => query.style = Style::Italic,
+            "oblique" => query.style = Style::Oblique,
+            // Thin weight (100), the thinnest value.
+            "thin" => query.weight = Weight::THIN,
+            // Extra light weight (200).
+            "extra_light" => query.weight = Weight::EXTRA_LIGHT,
+            // Light weight (300).
+            "light" => query.weight = Weight::LIGHT,
+            // Normal (400).
+            "normal" => query.weight = Weight::NORMAL,
+            // Medium weight (500, higher than normal).
+            "medium" => query.weight = Weight::MEDIUM,
+            // Semibold weight (600).
+            "semibold" => query.weight = Weight::SEMIBOLD,
+            // Bold weight (700).
+            "bold" => query.weight = Weight::BOLD,
+            // Extra-bold weight (800).
+            "extra_bold" => query.weight = Weight::EXTRA_BOLD,
+            // Black weight (900), the thickest value.
+            "black" => query.weight = Weight::BLACK,
             _ => {}
         }
     }
-    Ok(())
+
+    query
 }

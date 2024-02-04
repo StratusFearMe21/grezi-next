@@ -1,28 +1,38 @@
 use cairo::freetype;
-use cairo::freetype::face::LoadFlag;
 use cairo::FontFace;
 use cairo::ImageSurface;
-use ecolor::Color32;
+use cairo::TextClusterFlags;
 use eframe::egui;
-use eframe::epaint::FontFamily;
+use eframe::epaint::mutex::Mutex;
 use eframe::epaint::TextureId;
-use egui::FontDefinitions;
+use egui_glyphon::glyphon::fontdb::ID;
+use egui_glyphon::glyphon::FontSystem;
+use egui_glyphon::glyphon::LayoutGlyph;
+use egui_glyphon::glyphon::LayoutRun;
+use egui_glyphon::glyphon::LayoutRunIter;
+use egui_glyphon::GlyphonRendererCallback;
+use indexmap::IndexSet;
 use std::collections::HashMap;
+use std::ops::Deref;
+use std::rc::Rc;
+use std::sync::Arc;
 
-pub fn font_defs_to_ft(
-    font_defs: FontDefinitions,
+pub fn fonts_to_ft(
+    font_system: Arc<Mutex<FontSystem>>,
+    used_fonts: &IndexSet<ID, ahash::RandomState>,
     ft: freetype::Library,
-) -> HashMap<FontFamily, (freetype::Face, cairo::FontFace)> {
-    font_defs
-        .families
-        .into_iter()
+) -> HashMap<ID, (freetype::Face, cairo::FontFace)> {
+    let mut font_system = font_system.lock();
+    used_fonts
+        .iter()
+        .copied()
         .map(|f| {
-            let data = font_defs.font_data.get(&f.1[0]).unwrap();
+            let data = unsafe { font_system.db_mut().make_shared_face_data(f) }.unwrap();
             let face = ft
-                .new_memory_face(data.font.clone().into_owned(), data.index as isize)
+                .new_memory_face(Rc::new(data.0.deref().as_ref().to_owned()), data.1 as isize)
                 .unwrap();
             let cairo_face = FontFace::create_from_ft(&face).unwrap();
-            (f.0, (face, cairo_face))
+            (f, (face, cairo_face))
         })
         .collect()
 }
@@ -31,7 +41,7 @@ pub fn cairo_draw(
     output: egui::FullOutput,
     textures: &mut HashMap<TextureId, ImageSurface>,
     ctx: &cairo::Context,
-    fonts: &HashMap<FontFamily, (freetype::Face, cairo::FontFace)>,
+    fonts: &HashMap<ID, (freetype::Face, cairo::FontFace)>,
 ) {
     for (id, tex) in output.textures_delta.set {
         let surface = match tex.image {
@@ -96,7 +106,7 @@ pub fn cairo_draw_shape(
     ctx: &cairo::Context,
     shape: eframe::epaint::Shape,
     textures: &HashMap<TextureId, ImageSurface>,
-    fonts: &HashMap<FontFamily, (freetype::Face, cairo::FontFace)>,
+    fonts: &HashMap<ID, (freetype::Face, cairo::FontFace)>,
 ) {
     use cairo::{SurfacePattern, TextCluster};
 
@@ -154,182 +164,105 @@ pub fn cairo_draw_shape(
                 ctx.stroke().unwrap();
             }
         }
-        egui::Shape::Text(text) => {
-            let origin = text.pos;
+        egui::Shape::Callback(glyphon_callback) => {
+            let callback = glyphon_callback
+                .callback
+                .downcast_ref::<GlyphonRendererCallback>()
+                .unwrap();
 
-            for row in &text.galley.rows {
-                let mut row_iter = row.glyphs.iter().map(|f| f.chr);
+            struct RunIter<'a> {
+                run: Rc<LayoutRun<'a>>,
+                glyphs: std::slice::Iter<'a, LayoutGlyph>,
+                iter: LayoutRunIter<'a>,
+            }
 
-                let mut section = row.section_index_at_start;
-                let mut next_section = section;
+            impl<'a> Iterator for RunIter<'a> {
+                type Item = (Rc<LayoutRun<'a>>, &'a LayoutGlyph);
 
-                let mut glyphs_iter = row.glyphs.iter();
-                let mut raw_glyphs_iter = row.glyphs.iter().map(|g| g.section_index).peekable();
+                fn next(&mut self) -> Option<Self::Item> {
+                    let next = self.glyphs.next().or_else(|| {
+                        self.run = Rc::new(self.iter.next()?);
+                        self.glyphs = self.run.glyphs.iter();
+                        self.glyphs.next()
+                    })?;
 
-                let mut chars_in_section = 0;
-                while let Some(g) = raw_glyphs_iter.peek().copied() {
-                    if g != section {
-                        next_section = g;
-                        break;
-                    } else {
-                        raw_glyphs_iter.next();
-                        chars_in_section += 1;
-                    }
+                    Some((Rc::clone(&self.run), next))
                 }
+            }
 
-                loop {
-                    let layout_section = &text.galley.job.sections[section as usize];
+            impl<'a> RunIter<'a> {
+                fn new(mut iter: LayoutRunIter<'a>) -> RunIter<'a> {
+                    let run = Rc::new(iter.next().unwrap());
+                    let glyphs = run.glyphs.iter();
+                    RunIter { run, glyphs, iter }
+                }
+            }
 
-                    let row_str: String = (&mut row_iter).take(chars_in_section).collect();
+            for buffer in callback.buffers.iter() {
+                let text_area = &buffer.0.get().0;
 
-                    ctx.set_font_size(layout_section.format.font_id.size as f64);
-                    let font = fonts.get(&layout_section.format.font_id.family).unwrap();
-                    ctx.set_font_face(&font.1);
-                    let format_color: palette::Srgba<u8> = palette::cast::from_array(
-                        if layout_section.format.color == Color32::PLACEHOLDER {
-                            text.fallback_color
-                        } else {
-                            layout_section.format.color
-                        }
-                        .to_srgba_unmultiplied(),
-                    );
-                    let format_color: palette::Srgba<f64> = format_color.into_format();
+                ctx.set_font_size(text_area.buffer.metrics().font_size as f64);
+                let mut glyphs = RunIter::new(text_area.buffer.layout_runs()).peekable();
+
+                while glyphs.peek().is_some() {
+                    let color;
+                    let font_id;
+                    let rtl;
+                    if let Some(glyph) = glyphs.peek() {
+                        color = glyph.1.color_opt;
+                        font_id = glyph.1.font_id;
+                        rtl = glyph.0.rtl;
+                    } else {
+                        glyphs.next();
+                        continue;
+                    }
+                    let color_rgba = color
+                        .unwrap_or(egui_glyphon::glyphon::Color::rgb(255, 255, 255))
+                        .as_rgba();
+                    let font = fonts.get(&font_id).unwrap();
+
                     ctx.set_source_rgba(
-                        format_color.red,
-                        format_color.green,
-                        format_color.blue,
-                        format_color.alpha,
+                        color_rgba[0] as f64 / 255.0,
+                        color_rgba[1] as f64 / 255.0,
+                        color_rgba[2] as f64 / 255.0,
+                        color_rgba[3] as f64 / 255.0,
                     );
-                    let glyphs: Vec<_> = (&mut glyphs_iter)
-                        .take(chars_in_section)
-                        .map(|glyph| {
-                            cairo::Glyph::new(
-                                font.0.get_char_index(glyph.chr as usize) as u64,
-                                origin.x as f64 + glyph.pos.x as f64,
-                                origin.y as f64 + glyph.pos.y as f64,
-                            )
-                        })
-                        .collect();
+                    ctx.set_font_face(&font.1);
+
+                    let mut new_glyphs = Vec::new();
+                    let mut text = String::new();
+                    let mut clusters = Vec::new();
+                    while let Some(g) = glyphs.peek() {
+                        if g.1.color_opt != color || g.1.font_id != font_id || g.0.rtl != rtl {
+                            break;
+                        }
+
+                        let t = &g.0.text[g.1.start..g.1.end];
+                        text.push_str(&t);
+                        clusters.push(TextCluster::new(t.len() as i32, 1));
+                        let glyph = cairo::Glyph::new(
+                            g.1.glyph_id as u64,
+                            text_area.left as f64 + g.1.x as f64,
+                            text_area.top as f64 + g.0.line_y as f64 + g.1.y as f64,
+                        );
+                        new_glyphs.push(glyph);
+                        glyphs.next();
+                    }
 
                     ctx.show_text_glyphs(
-                        &row_str,
-                        &glyphs,
-                        &[TextCluster::new(
-                            row_str.as_bytes().len() as i32,
-                            glyphs.len() as i32,
-                        )],
-                        cairo::TextClusterFlags::None,
+                        &text,
+                        &new_glyphs,
+                        &clusters,
+                        if rtl {
+                            TextClusterFlags::Backward
+                        } else {
+                            TextClusterFlags::None
+                        },
                     )
                     .unwrap();
-
-                    if layout_section.format.underline.width > 0.0
-                        && layout_section.format.underline.color.a() > 0
-                    {
-                        ctx.set_line_width(layout_section.format.underline.width as f64);
-                        let underline_color: palette::Srgba<u8> = palette::cast::from_array(
-                            if layout_section.format.underline.color == Color32::PLACEHOLDER {
-                                text.fallback_color
-                            } else {
-                                layout_section.format.underline.color
-                            }
-                            .to_srgba_unmultiplied(),
-                        );
-                        let underline_color: palette::Srgba<f64> = underline_color.into_format();
-                        ctx.set_source_rgba(
-                            underline_color.red,
-                            underline_color.green,
-                            underline_color.blue,
-                            underline_color.alpha,
-                        );
-                        let first_glyph = glyphs.first().unwrap();
-                        ctx.move_to(first_glyph.x(), first_glyph.y());
-                        let last_glyph = glyphs.last().unwrap();
-                        font.0
-                            .load_glyph(last_glyph.index() as u32, LoadFlag::NO_SCALE)
-                            .unwrap();
-                        ctx.line_to(
-                            last_glyph.x()
-                                + (font.0.glyph().advance().x as f64
-                                    * (layout_section.format.font_id.size as f64 / 72.0))
-                                    / 16.0,
-                            last_glyph.y(),
-                        );
-                        ctx.stroke().unwrap();
-                    }
-
-                    if layout_section.format.strikethrough.width > 0.0
-                        && layout_section.format.strikethrough.color.a() > 0
-                    {
-                        ctx.set_line_width(layout_section.format.strikethrough.width as f64);
-                        let strikethrough_color: palette::Srgba<u8> = palette::cast::from_array(
-                            if layout_section.format.strikethrough.color == Color32::PLACEHOLDER {
-                                text.fallback_color
-                            } else {
-                                layout_section.format.strikethrough.color
-                            }
-                            .to_srgba_unmultiplied(),
-                        );
-                        let strikethrough_color: palette::Srgba<f64> =
-                            strikethrough_color.into_format();
-                        ctx.set_source_rgba(
-                            strikethrough_color.red,
-                            strikethrough_color.green,
-                            strikethrough_color.blue,
-                            strikethrough_color.alpha,
-                        );
-                        let first_glyph = glyphs.first().unwrap();
-                        font.0
-                            .load_glyph(first_glyph.index() as u32, LoadFlag::NO_SCALE)
-                            .unwrap();
-                        let font_plus = ((font.0.glyph().metrics().height as f64
-                            * (layout_section.format.font_id.size as f64 / 72.0))
-                            / 16.0)
-                            / 2.0;
-                        let last_glyph = glyphs.last().unwrap();
-                        font.0
-                            .load_glyph(last_glyph.index() as u32, LoadFlag::NO_SCALE)
-                            .unwrap();
-                        ctx.move_to(first_glyph.x(), first_glyph.y() - font_plus);
-                        ctx.line_to(
-                            last_glyph.x()
-                                + (font.0.glyph().advance().x as f64
-                                    * (layout_section.format.font_id.size as f64 / 72.0))
-                                    / 16.0,
-                            last_glyph.y() - font_plus,
-                        );
-                        ctx.stroke().unwrap();
-                    }
-
-                    section = next_section;
-                    if raw_glyphs_iter.next().is_none() {
-                        break;
-                    }
-                    chars_in_section = 1;
-                    while let Some(g) = raw_glyphs_iter.peek().copied() {
-                        if g != section {
-                            next_section = g;
-                            break;
-                        } else {
-                            raw_glyphs_iter.next();
-                            chars_in_section += 1;
-                        }
-                    }
                 }
             }
         }
-        // egui::Shape::Circle(circle) => {
-        //     let matrix = ctx.matrix();
-        //     let color = circle.fill.to_srgba_unmultiplied();
-        //     ctx.set_source_rgba(
-        //         color[0] as f64 / 255.0,
-        //         color[1] as f64 / 255.0,
-        //         color[2] as f64 / 255.0,
-        //         color[3] as f64 / 255.0,
-        //     );
-
-        //     ctx.move_to(circle.center.x as f64, circle.center.y as f64);
-        //     ctx.scale(, )
-        // }
         _ => {}
     }
 }

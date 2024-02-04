@@ -5,7 +5,7 @@ use std::{
 };
 
 use ecolor::Color32;
-use eframe::epaint::{text::cursor::PCursor, Rect};
+use eframe::epaint::Rect;
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -15,7 +15,7 @@ use super::{AstObject, NodeKind, PassThroughHasher};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Actions {
     Highlight {
-        locations: Option<[PCursor; 2]>,
+        locations: Option<[[usize; 2]; 2]>,
         index: usize,
         persist: bool,
         color: Color32,
@@ -185,17 +185,16 @@ fn parse_single_action(
 pub fn parse_highlight_location(
     tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
-) -> Result<Option<PCursor>, ()> {
+) -> Result<Option<[usize; 2]>, ()> {
     use std::borrow::Cow;
 
     if tree_cursor.goto_first_child().or(Err(()))? {
         let value: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
         let (line, column) = value.split_once(':').ok_or(())?;
-        Ok(Some(PCursor {
-            paragraph: line.parse().or(Err(()))?,
-            offset: column.parse().or(Err(()))?,
-            prefer_next_row: true,
-        }))
+        Ok(Some([
+            line.parse().or(Err(()))?,
+            column.parse().or(Err(()))?,
+        ]))
     } else {
         Ok(None)
     }

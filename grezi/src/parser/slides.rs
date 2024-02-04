@@ -6,7 +6,6 @@ use std::{
 };
 
 use crate::layout::UnresolvedLayout;
-use eframe::epaint::text::cursor::PCursor;
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::GrzCursor;
@@ -45,15 +44,11 @@ pub fn parse_slides(
     bg: (super::Color, Option<(std::time::Duration, super::Color)>),
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
-    use std::collections::HashSet;
-
     tree_cursor.goto_first_child()?;
     tree_cursor.goto_first_child()?;
     let mut slide_objects = Vec::new();
     let mut slide_on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
-    let mut sources_on_screen: HashSet<u64, BuildHasherDefault<PassThroughHasher>> =
-        HashSet::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
         tree_cursor.fork(|cursor| {
             match parse_slide_object(
@@ -69,7 +64,6 @@ pub fn parse_slides(
                         .last()
                         .map(|o| crate::lsp::you_can::borrow_unchecked(o))
                 },
-                &mut sources_on_screen,
                 |object| {
                     slide_on_screen.insert(object.object, slide_objects.len());
                     slide_objects.push(object);
@@ -135,7 +129,6 @@ pub fn parse_slide_object(
     source: &helix_core::ropey::Rope,
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     last_obj: Option<&SlideObj>,
-    sources_on_screen: &mut std::collections::HashSet<u64, BuildHasherDefault<PassThroughHasher>>,
     mut insert_fn: impl FnMut(SlideObj),
 ) -> Result<(), super::Error> {
     use super::Error;
@@ -328,22 +321,6 @@ pub fn parse_slide_object(
         object.viewbox = Some(viewbox);
     }
 
-    if let Some(source) = object.source_obj {
-        if objects.contains_key(&source)
-            && (state == ObjectState::Exiting || sources_on_screen.insert(source))
-        {
-            insert_fn(SlideObj {
-                object: source,
-                locations: [
-                    (LineUp::BottomRight, ViewboxIn::Size),
-                    (LineUp::BottomRight, ViewboxIn::Size),
-                ],
-                scaled_time: [0.0, 0.5],
-                state,
-            });
-        }
-    }
-
     insert_fn(SlideObj {
         object: object_name,
         locations,
@@ -448,7 +425,7 @@ fn parse_slide_function(
                         Ok(from) => from,
                         Err(e) => {
                             errors_present.push(e);
-                            Some(PCursor::default())
+                            Some([0, 0])
                         }
                     };
                     tree_cursor.goto_next_sibling()?;
@@ -466,7 +443,7 @@ fn parse_slide_function(
                                 Ok(to) => to,
                                 Err(e) => {
                                     errors_present.push(e);
-                                    Some(PCursor::default())
+                                    Some([0, 0])
                                 }
                             };
                             match (from, to) {

@@ -3,16 +3,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     hash::BuildHasherDefault,
     io::Cursor,
-    mem::ManuallyDrop,
-    ops::Deref,
+    ops::{Deref, DerefMut},
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
-    time::Duration,
 };
 
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -21,29 +19,36 @@ use atomic_float::AtomicF32;
 use crossbeam_queue::SegQueue;
 use eframe::{
     egui::{
-        self, FontData, FontDefinitions, Image, Rect, SizeHint, Ui, ViewportBuilder, ViewportId,
+        self, FontData, FontDefinitions, FontTweak, Image, ImageSize, Rect, SizeHint, Ui,
+        ViewportBuilder, ViewportId,
     },
+    egui_wgpu,
+    emath::Align2,
     epaint::{
         mutex::{Mutex, RwLock},
-        text::LayoutJob,
-        Color32, FontFamily, FontId, Pos2, Rounding, Stroke, TextShape, Vec2,
+        Color32, PaintCallback, Pos2, Rounding, Stroke, Vec2,
     },
 };
 use egui_anim::Anim;
-#[cfg(not(target_arch = "wasm32"))]
-use fontdb::{Family, Query};
+use egui_glyphon::{
+    glyphon::{
+        fontdb::{Query, ID},
+        Buffer, Family, FontSystem, Metrics, TextBounds,
+    },
+    BufferWithTextArea, GlyphonRendererCallback,
+};
 // use frame_history::FrameHistory;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::tree_sitter::Tree;
 use image::codecs::{png::PngDecoder, webp::WebPDecoder};
+#[cfg(not(target_arch = "wasm32"))]
+use indexmap::IndexSet;
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
 use layout::{Constraint, Direction, UnresolvedLayout};
-#[cfg(not(target_arch = "wasm32"))]
-use notify::{event::ModifyKind, Watcher};
 use parser::{
-    actions::{Actions, ResolvedActions, HIGHLIGHT_COLOR_DEFAULT},
+    actions::{Actions, ResolvedActions},
     color::Color,
     objects::{Object, ObjectState, ObjectType},
     slides::{ResolvedSlideObj, SlideObj},
@@ -88,6 +93,8 @@ pub struct MyEguiApp {
     pub speaker_view: Arc<SpeakerView>,
     // Safe, I think, IDK
     pub resolved: Arc<ArcSwapOption<Resolved>>,
+    pub resolved_images:
+        Arc<Mutex<HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>>>,
     pub time: f32,
     #[cfg(not(target_arch = "wasm32"))]
     pub lsp: bool,
@@ -95,12 +102,13 @@ pub struct MyEguiApp {
     pub parser: Arc<Mutex<helix_core::tree_sitter::Parser>>,
     pub export: bool,
     pub clear_color: Color32,
-    pub fonts: FontDefinitions,
+    pub font_system: Arc<Mutex<FontSystem>>,
     // pub frame_history: FrameHistory,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub struct SpeakerView {
+    pub visible: AtomicBool,
     pub next_resolved: ArcSwapOption<Resolved>,
     pub current_resolved: ArcSwapOption<Resolved>,
     pub events: SegQueue<egui::Event>,
@@ -121,6 +129,10 @@ impl SpeakerView {
         c_index: usize,
         slide_show: &SlideShow,
         speaker_notes: Option<Arc<str>>,
+        font_system: Arc<Mutex<FontSystem>>,
+        resolved_images: Arc<
+            Mutex<HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>>,
+        >,
     ) {
         egui::TopBottomPanel::top("Speaker view")
             .frame(
@@ -132,7 +144,9 @@ impl SpeakerView {
                 ui.vertical_centered_justified(|ui| {
                     ui.heading("Speaker view");
                 });
-            });
+            })
+            .response
+            .rect;
         egui::TopBottomPanel::bottom("Speaker Notes")
             .resizable(true)
             .frame(
@@ -144,7 +158,9 @@ impl SpeakerView {
                 if let Some(notes) = speaker_notes {
                     ui.horizontal_centered(|ui| ui.label(notes.deref()));
                 }
-            });
+            })
+            .response
+            .rect;
 
         let index = c_index + 1;
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -188,12 +204,15 @@ impl SpeakerView {
                                 actions,
                                 ..
                             } => {
+                                let mut font_system = font_system.lock();
                                 let res = Arc::new(Resolved::resolve(
                                     slide,
                                     actions,
                                     ui,
                                     layout[2],
                                     &slide_show,
+                                    font_system.deref_mut(),
+                                    Arc::clone(&resolved_images),
                                     false,
                                 ));
                                 self.next_resolved.store(Some(Arc::clone(&res)));
@@ -206,12 +225,15 @@ impl SpeakerView {
                                 let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
                                 match slide {
                                     AstObject::Slide { objects: slide, .. } => {
+                                        let mut font_system = font_system.lock();
                                         let res = Arc::new(Resolved::resolve(
                                             slide,
                                             actions,
                                             ui,
                                             layout[2],
                                             &slide_show,
+                                            font_system.deref_mut(),
+                                            Arc::clone(&resolved_images),
                                             false,
                                         ));
                                         self.next_resolved.store(Some(Arc::clone(&res)));
@@ -234,12 +256,15 @@ impl SpeakerView {
                                 actions,
                                 ..
                             } => {
+                                let mut font_system = font_system.lock();
                                 let res = Arc::new(Resolved::resolve(
                                     slide,
                                     actions,
                                     ui,
                                     layout[0],
                                     &slide_show,
+                                    font_system.deref_mut(),
+                                    Arc::clone(&resolved_images),
                                     false,
                                 ));
                                 self.current_resolved.store(Some(Arc::clone(&res)));
@@ -252,12 +277,15 @@ impl SpeakerView {
                                 let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
                                 match slide {
                                     AstObject::Slide { objects: slide, .. } => {
+                                        let mut font_system = font_system.lock();
                                         let res = Arc::new(Resolved::resolve(
                                             slide,
                                             actions,
                                             ui,
                                             layout[0],
                                             &slide_show,
+                                            font_system.deref_mut(),
+                                            Arc::clone(&resolved_images),
                                             false,
                                         ));
                                         self.current_resolved.store(Some(Arc::clone(&res)));
@@ -317,8 +345,9 @@ impl SpeakerView {
                     Stroke::NONE,
                 );
             }
+            let mut buffers = Vec::new();
             next_resolved.draw_actions(ui, f32::MAX);
-            next_resolved.draw_slide(ui, f32::MAX);
+            next_resolved.draw_slide(ui, f32::MAX, &mut buffers);
             if let Some(slide) = slide_show.slide_show.get(c_index) {
                 match slide {
                     AstObject::Slide { bg: (bg, b), .. } => {
@@ -362,8 +391,12 @@ impl SpeakerView {
                     Stroke::NONE,
                 );
             }
-            current_resolved.draw_slide(ui, f32::MAX);
+            current_resolved.draw_slide(ui, f32::MAX, &mut buffers);
             current_resolved.draw_actions(ui, f32::MAX);
+            ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+                ws,
+                GlyphonRendererCallback { buffers },
+            ));
             ui.painter().vline(
                 self.line[0].load(Ordering::Relaxed),
                 self.line[1].load(Ordering::Relaxed)..=self.line[2].load(Ordering::Relaxed),
@@ -395,7 +428,6 @@ pub struct Resolved {
     pub viewboxes: HashMap<u64, Vec<Rect>, BuildHasherDefault<PassThroughHasher>>,
     pub actions: Vec<ResolvedActions>,
     pub slide: Vec<ResolvedSlideObj>,
-    pub images: HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>,
     pub speaker_notes: Option<Arc<str>>,
     pub window_size: Rect,
 }
@@ -406,7 +438,6 @@ impl Default for Resolved {
             viewboxes: Default::default(),
             actions: Default::default(),
             slide: Default::default(),
-            images: Default::default(),
             speaker_notes: None,
             window_size: Rect::ZERO,
         }
@@ -420,7 +451,8 @@ impl Resolved {
             ..Default::default()
         }
     }
-    fn draw_slide(&self, ui: &mut Ui, time: f32) {
+    fn draw_slide(&self, ui: &mut Ui, time: f32, buffers: &mut Vec<BufferWithTextArea>) {
+        ui.set_clip_rect(ui.max_rect());
         for obj in &self.slide {
             let time = if obj.scaled_time[0] < time {
                 (time - obj.scaled_time[0]).clamp(0.0, obj.scaled_time[1])
@@ -444,7 +476,7 @@ impl Resolved {
                 )),
             ]);
             match &obj.object {
-                ResolvedObject::Text(galley) => {
+                ResolvedObject::Text(buffer, size) => {
                     let gamma_multiply = match obj.state {
                         ObjectState::Entering => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
@@ -465,17 +497,28 @@ impl Resolved {
                     if gamma_multiply > 0.0 {
                         // ui.painter()
                         //     .rect(obj_pos, Rounding::default(), Color32::RED, Stroke::NONE);
-                        ui.add(label::Label::new(
-                            Arc::clone(galley),
-                            obj_pos,
+                        let ppi = ui.ctx().pixels_per_point();
+                        let left = obj_pos.left() * ppi;
+                        let top = obj_pos.top() * ppi;
+                        buffers.push(BufferWithTextArea::new(
+                            Arc::clone(buffer),
+                            left,
+                            top,
+                            1.0,
                             gamma_multiply,
+                            TextBounds {
+                                left: left as i32,
+                                top: top as i32,
+                                right: (left + size.x * ppi) as i32,
+                                bottom: (top + size.y * ppi) as i32,
+                            },
+                            egui_glyphon::glyphon::Color::rgb(255, 255, 255),
                         ));
                     }
                 }
                 ResolvedObject::Image {
                     image,
                     mut tint,
-                    source,
                     scale,
                 } => {
                     let gamma = match obj.state {
@@ -502,20 +545,6 @@ impl Resolved {
                             .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
                             .tint(tint)
                             .paint_at(ui, obj_pos);
-
-                        if let Some(galley) = source.clone() {
-                            ui.painter().add(
-                                TextShape::new(
-                                    Pos2::new(
-                                        obj_pos.max.x - galley.rect.max.x,
-                                        obj_pos.min.y - galley.rect.max.y,
-                                    ),
-                                    galley,
-                                    Color32::TRANSPARENT,
-                                )
-                                .with_opacity_factor(gamma),
-                            );
-                        }
                     }
                 }
                 ResolvedObject::Anim {
@@ -587,7 +616,7 @@ impl Resolved {
                         time,
                         scaled_time[1],
                     ));
-                    ui.painter().rect_filled(
+                    ui.ctx().debug_painter().rect_filled(
                         Rect {
                             min: Pos2::new(
                                 if *persist {
@@ -663,14 +692,26 @@ impl Resolved {
         slide: &[SlideObj],
         actions: &[Actions],
         ui: &mut Ui,
-        size: Rect,
+        size_raw: Rect,
         slide_show: &SlideShow,
+        font_system: &mut FontSystem,
+        resolved_images: Arc<
+            Mutex<HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>>,
+        >,
         export: bool,
     ) -> Self {
         let mut resolved = Resolved::default();
-        resolved.window_size = size;
+        resolved.window_size = size_raw;
+        let size = {
+            let size = size_raw.size();
+            let size = ImageSize {
+                max_size: size,
+                ..Default::default()
+            }
+            .calc_size(size, Vec2::new(16.0, 9.0));
+            Align2::CENTER_CENTER.align_size_within_rect(size, size_raw)
+        };
         let mut images = Vec::with_capacity(3);
-        let mut source_offset = 0.0;
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => size.shrink(15.0),
@@ -735,77 +776,33 @@ impl Resolved {
                         state: object.state,
                     });
                 }
-                parser::objects::ObjectType::Text { layout_job, source } => {
-                    let mut layout_job = layout_job.clone();
-                    layout_job.wrap.max_width = second_viewbox.width();
-                    for row in layout_job.sections.iter_mut() {
-                        row.format.font_id.size *=
-                            (size.width() + size.height()) / (1920.0 + 1080.0);
-                        row.format.strikethrough.width *=
-                            (size.width() + size.height()) / (1920.0 + 1080.0);
-                        row.format.underline.width *=
-                            (size.width() + size.height()) / (1920.0 + 1080.0);
-                        if let Some(lh) = row.format.line_height.as_mut() {
-                            *lh *= row.format.font_id.size
-                        }
-                    }
-                    let galley = ui.ctx().fonts(|f| f.layout_job(layout_job));
-                    let resolved_obj = ResolvedObject::Text(galley);
-                    let size = resolved_obj.bounds(second_viewbox.size(), ui);
-                    let mut first_pos = Rect::from_min_size(
+                parser::objects::ObjectType::Text(job, font_size, line_height) => {
+                    let ppi = ui.ctx().pixels_per_point();
+                    let factor = size.width() / (1920.0 / ppi);
+                    let font_size = *font_size * factor;
+                    let mut buffer = Buffer::new(
+                        font_system,
+                        Metrics::new(
+                            font_size,
+                            line_height.map_or(font_size * 1.1, |h| h * font_size),
+                        ),
+                    );
+                    buffer.set_size(font_system, second_viewbox.width() * ppi, f32::MAX);
+                    parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
+                    buffer.shape_until_scroll(font_system);
+
+                    let buffer = Arc::new(buffer);
+                    let size = ResolvedObject::Text(Arc::clone(&buffer), Vec2::ZERO)
+                        .bounds(second_viewbox.size(), ui);
+                    let resolved_obj = ResolvedObject::Text(Arc::clone(&buffer), size.size());
+                    let first_pos = Rect::from_min_size(
                         get_pos!(object.locations[0].0, first_viewbox, size).into(),
                         size.size(),
                     );
-                    let mut second_pos = Rect::from_min_size(
+                    let second_pos = Rect::from_min_size(
                         get_pos!(object.locations[1].0, second_viewbox, size).into(),
                         size.size(),
                     );
-                    if *source {
-                        second_pos = second_pos.translate(Vec2::new(
-                            if object.state == ObjectState::Exiting {
-                                size.width()
-                                    - match &resolved_obj {
-                                        ResolvedObject::Text(galley) => galley
-                                            .pos_from_pcursor(
-                                                eframe::epaint::text::cursor::PCursor {
-                                                    paragraph: 0,
-                                                    offset: 2,
-                                                    prefer_next_row: false,
-                                                },
-                                            )
-                                            .width(),
-                                        _ => unreachable!(),
-                                    }
-                            } else {
-                                0.0
-                            },
-                            -source_offset,
-                        ));
-
-                        first_pos = first_pos.translate(Vec2::new(
-                            if object.state == ObjectState::Entering {
-                                size.width()
-                                    - match &resolved_obj {
-                                        ResolvedObject::Text(galley) => galley
-                                            .pos_from_pcursor(
-                                                eframe::epaint::text::cursor::PCursor {
-                                                    paragraph: 0,
-                                                    offset: 2,
-                                                    prefer_next_row: false,
-                                                },
-                                            )
-                                            .width(),
-                                        _ => unreachable!(),
-                                    }
-                            } else {
-                                0.0
-                            },
-                            -source_offset,
-                        ));
-                        if object.state != ObjectState::Exiting {
-                            source_offset += size.max.y + 5.0;
-                        }
-                    }
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved.slide.push(ResolvedSlideObj {
@@ -819,14 +816,13 @@ impl Resolved {
                     uri,
                     bytes,
                     tint,
-                    source,
                     scale,
                 } => {
                     match images.binary_search(&object.object) {
                         Err(index) | Ok(index) => images.insert(index, object.object),
                     }
-                    let resolved_obj = resolved
-                        .images
+                    let mut resolved_images = resolved_images.lock();
+                    let resolved_obj = resolved_images
                         .entry(object.object)
                         .and_modify(|obj| match obj {
                             ResolvedObject::Image {
@@ -894,31 +890,8 @@ impl Resolved {
                                 image: Image::from_bytes(uri.clone(), Arc::clone(bytes)),
                                 tint: *tint,
                                 scale: *scale,
-                                source: None,
                             }
                         });
-
-                    match resolved_obj {
-                        ResolvedObject::Image { source: s, .. } => {
-                            *s = source.clone().map(|mut layout_job| {
-                                layout_job.wrap.max_width = second_viewbox.width();
-                                for row in layout_job.sections.iter_mut() {
-                                    row.format.font_id.size *=
-                                        (size.width() + size.height()) / (1920.0 + 1080.0);
-                                    row.format.strikethrough.width *=
-                                        (size.width() + size.height()) / (1920.0 + 1080.0);
-                                    row.format.underline.width *=
-                                        (size.width() + size.height()) / (1920.0 + 1080.0);
-                                    if let Some(lh) = row.format.line_height.as_mut() {
-                                        *lh *= row.format.font_id.size
-                                    }
-                                }
-                                ui.ctx().fonts(|f| f.layout_job(layout_job))
-                            });
-                        }
-                        ResolvedObject::Anim { .. } => {}
-                        _ => unreachable!(),
-                    }
 
                     let first_size =
                         resolved_obj.bounds(scale.unwrap_or_else(|| first_viewbox.size()), ui);
@@ -960,9 +933,6 @@ impl Resolved {
                 }
             }
         }
-        resolved
-            .images
-            .retain(|k, _| images.binary_search(k).is_ok());
         for action in actions {
             match action {
                 Actions::Highlight {
@@ -974,9 +944,50 @@ impl Resolved {
                     let text_object = resolved.slide.get(*index).unwrap();
                     let locations = if let Some(locations) = locations {
                         let (from_rect, to_rect) = match &text_object.object {
-                            ResolvedObject::Text(galley) => (
-                                galley.pos_from_pcursor(locations[0]),
-                                galley.pos_from_pcursor(locations[1]),
+                            ResolvedObject::Text(buffer, _) => (
+                                {
+                                    let glyph = buffer.lines.get(locations[0][0]).unwrap();
+                                    let glyph = glyph.layout_opt().as_ref().unwrap();
+                                    let glyph = glyph
+                                        .iter()
+                                        .flat_map(|g| &g.glyphs)
+                                        .take(locations[0][1] + 1)
+                                        .last()
+                                        .unwrap();
+
+                                    Rect::from_min_size(
+                                        Pos2::new(
+                                            glyph.x,
+                                            glyph.y
+                                                + buffer.metrics().line_height
+                                                    * locations[0][0] as f32,
+                                        ),
+                                        Vec2::new(0.0, glyph.y_offset),
+                                    )
+                                },
+                                {
+                                    let glyph = buffer.lines.get(locations[1][0]).unwrap();
+                                    let glyph = glyph.layout_opt().as_ref().unwrap();
+                                    let glyph = glyph
+                                        .iter()
+                                        .flat_map(|g| &g.glyphs)
+                                        .take(locations[1][1])
+                                        .last()
+                                        .unwrap();
+
+                                    Rect::from_min_size(
+                                        Pos2::new(
+                                            glyph.x,
+                                            glyph.y
+                                                + buffer.metrics().line_height
+                                                    * locations[1][0] as f32,
+                                        ),
+                                        Vec2::new(
+                                            glyph.w,
+                                            glyph.y_offset + buffer.metrics().line_height,
+                                        ),
+                                    )
+                                },
                             ),
                             _ => todo!(),
                         };
@@ -1022,17 +1033,24 @@ pub struct SlideShow {
 }
 
 impl SlideShow {
-    pub fn used_fonts(&self, defs: &FontDefinitions) -> HashSet<String, ahash::RandomState> {
-        let mut hashset = HashSet::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn used_fonts(&self, font_system: &mut FontSystem) -> IndexSet<ID, ahash::RandomState> {
+        let mut hashset = IndexSet::default();
         for obj in self.objects.values() {
-            if let ObjectType::Text { layout_job, .. } = &obj.object {
-                for section in &layout_job.sections {
-                    hashset.insert(
-                        defs.families.get(&section.format.font_id.family).unwrap()[0].clone(),
-                    );
-                }
+            if let ObjectType::Text(job, _, _) = &obj.object {
+                let mut buffer = Buffer::new(font_system, Metrics::new(12.0, 24.0));
+                buffer.set_size(font_system, f32::MAX, f32::MAX);
+                parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
+                buffer.shape_until_scroll(font_system);
+
+                buffer.layout_runs().for_each(|r| {
+                    r.glyphs.iter().for_each(|g| {
+                        hashset.insert(g.font_id);
+                    })
+                });
             }
         }
+
         hashset
     }
 }
@@ -1042,36 +1060,19 @@ impl SlideShow {
     fn exercise_jit() -> SlideShow {
         let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
         let spinner_hash = hasher.hash_one("spinner");
-        let loading_hash = hasher.hash_one("loading");
         let halves_hash = hasher.hash_one("halves");
         SlideShow {
             slide_show: vec![AstObject::Slide {
-                objects: vec![
-                    SlideObj {
-                        object: spinner_hash,
-                        locations: [
-                            (LineUp::CenterTop, ViewboxIn::Custom(halves_hash, 0)),
-                            (LineUp::CenterCenter, ViewboxIn::Custom(halves_hash, 0)),
-                        ],
-                        scaled_time: [0.0, 0.5],
-                        state: ObjectState::Entering,
-                    },
-                    SlideObj {
-                        object: loading_hash,
-                        locations: [
-                            (LineUp::CenterBottom, ViewboxIn::Custom(halves_hash, 1)),
-                            (LineUp::CenterCenter, ViewboxIn::Custom(halves_hash, 1)),
-                        ],
-                        scaled_time: [0.0, 0.5],
-                        state: ObjectState::Entering,
-                    },
-                ],
-                actions: vec![Actions::Highlight {
-                    locations: None,
-                    index: 1,
-                    persist: true,
-                    color: HIGHLIGHT_COLOR_DEFAULT,
+                objects: vec![SlideObj {
+                    object: spinner_hash,
+                    locations: [
+                        (LineUp::CenterTop, ViewboxIn::Custom(halves_hash, 0)),
+                        (LineUp::CenterCenter, ViewboxIn::Custom(halves_hash, 0)),
+                    ],
+                    scaled_time: [0.0, 0.5],
+                    state: ObjectState::Entering,
                 }],
+                actions: vec![],
                 bg: (Color::default(), None),
                 max_time: 0.5,
                 next: false,
@@ -1098,32 +1099,6 @@ impl SlideShow {
                         position: None,
                         viewbox: None,
                         object: parser::objects::ObjectType::Spinner,
-                        source_obj: None,
-                    },
-                );
-                map.insert(
-                    loading_hash,
-                    Object {
-                        position: None,
-                        viewbox: None,
-                        object: parser::objects::ObjectType::Text {
-                            layout_job: {
-                                let mut job = LayoutJob::default();
-                                job.append(
-                                    "Loading",
-                                    0.0,
-                                    egui::TextFormat {
-                                        font_id: FontId::proportional(48.0),
-                                        color: Color32::WHITE,
-                                        background: Color32::TRANSPARENT,
-                                        ..Default::default()
-                                    },
-                                );
-                                job
-                            },
-                            source: false,
-                        },
-                        source_obj: None,
                     },
                 );
                 map
@@ -1166,7 +1141,7 @@ fn resolve_layout_raw(
 
 impl MyEguiApp {
     pub fn init_app(
-        mut self,
+        self,
         egui_ctx: &egui::Context,
         slide_show_source: SlideShowSource,
         #[cfg(target_arch = "wasm32")] hash: &str,
@@ -1181,154 +1156,102 @@ impl MyEguiApp {
                 let fetch_ss = Arc::clone(&self.slide_show);
                 let fetch_resolved = Arc::clone(&self.resolved);
                 let fetch_restart_timer = Arc::clone(&self.restart_timer);
-                let fetch_ctx = egui_ctx.clone();
+                let fetch_font_system = Arc::clone(&self.font_system);
                 #[cfg(not(target_arch = "wasm32"))]
                 ehttp::fetch(ehttp::Request::get(&self.file_name), move |response| {
                     let res = response.unwrap();
-                    let slide_show: (FontDefinitions, SlideShow) =
+                    let slide_show: (Vec<Vec<u8>>, SlideShow) =
                         bincode::deserialize(&res.bytes).unwrap();
-                    fetch_ctx.set_fonts(slide_show.0);
+                    let mut fonts = fetch_font_system.lock();
+                    let fonts = fonts.db_mut();
+
+                    slide_show
+                        .0
+                        .into_iter()
+                        .for_each(|d| fonts.load_font_data(d));
+
                     *fetch_ss.write() = slide_show.1;
                     fetch_restart_timer.store(true, Ordering::Relaxed);
                     fetch_resolved.store(None);
                 });
 
                 #[cfg(target_arch = "wasm32")]
-                ehttp::fetch(ehttp::Request::get(hash), move |response| {
-                    let res = response.unwrap();
-                    let slide_show: (FontDefinitions, SlideShow) =
-                        bincode::deserialize(&res.bytes).unwrap();
-                    fetch_ctx.set_fonts(slide_show.0);
-                    *fetch_ss.write() = slide_show.1;
-                    fetch_restart_timer.store(true, Ordering::Relaxed);
-                    fetch_resolved.store(None);
-                });
-            }
-            SlideShowSource::Loaded => {
-                #[cfg(not(target_arch = "wasm32"))]
-                if !self.lsp && !self.export {
-                    use std::time::Instant;
+                {
+                    let fetch_ctx = egui_ctx.clone();
+                    ehttp::fetch(ehttp::Request::get(hash), move |response| {
+                        let res = response.unwrap();
+                        let slide_show: (Vec<Vec<u8>>, SlideShow) =
+                            bincode::deserialize(&res.bytes).unwrap();
+                        let mut fonts = fetch_font_system.lock();
+                        {
+                            let fonts = fonts.db_mut();
 
-                    let watcher_tree_info = Arc::clone(&self.tree_info);
-                    let watcher_context = egui_ctx.clone();
-                    let watcher_file_name = Arc::clone(&self.file_name);
-                    let watcher_slide_show_file = Arc::clone(&self.slide_show_file);
-                    let watcher_resolved = Arc::clone(&self.resolved);
-                    let watcher_restart_timer = Arc::clone(&self.restart_timer);
-                    let watcher_parser = Arc::clone(&self.parser);
-                    let watcher_slide_show = Arc::clone(&self.slide_show);
-                    let mut fonts = self.fonts.clone();
-                    let mut instant = Instant::now();
-                    let mut font_db = fontdb::Database::new();
-                    font_db.load_system_fonts();
-                    let mut w = ManuallyDrop::new(
-                        notify::recommended_watcher(
-                            move |res: Result<notify::Event, notify::Error>| {
-                                if let Ok(event) = res {
-                                    if let notify::EventKind::Modify(ModifyKind::Data(_)) =
-                                        event.kind
-                                    {
-                                        if Instant::now().duration_since(instant)
-                                            > Duration::from_millis(250)
-                                        {
-                                            std::thread::sleep(Duration::from_millis(250));
-                                            instant = Instant::now();
-                                            let new_file = Rope::from_reader(
-                                                std::fs::File::open(watcher_file_name.as_ref())
-                                                    .unwrap(),
-                                            )
-                                            .unwrap();
-                                            let mut slide_show_file =
-                                                watcher_slide_show_file.lock();
-                                            let mut tree_info = watcher_tree_info.lock();
-                                            if let Some(info) = tree_info.as_mut() {
-                                                let transaction = helix_core::diff::compare_ropes(
-                                                    &slide_show_file,
-                                                    &new_file,
-                                                );
-                                                let edits = lsp::generate_edits(
-                                                    slide_show_file.slice(..),
-                                                    transaction.changes(),
-                                                );
-                                                for change in edits.iter().rev() {
-                                                    info.edit(change);
-                                                }
+                            slide_show
+                                .0
+                                .into_iter()
+                                .for_each(|d| fonts.load_font_data(d));
+                        }
 
-                                                let tree = watcher_parser
-                                                    .lock()
-                                                    .parse_with(
-                                                        &mut |byte, _| {
-                                                            if byte <= new_file.len_bytes() {
-                                                                let (chunk, start_byte, _, _) =
-                                                                    new_file.chunk_at_byte(byte);
-                                                                &chunk.as_bytes()
-                                                                    [byte - start_byte..]
-                                                            } else {
-                                                                // out of range
-                                                                &[]
-                                                            }
-                                                        },
-                                                        Some(info),
-                                                    )
-                                                    .unwrap();
+                        let mut font_defs = FontDefinitions::default();
 
-                                                let mut slide_show = watcher_slide_show.write();
+                        if let Some(sans_serif) = fonts.db().query(&Query {
+                            families: &[Family::SansSerif],
+                            ..Default::default()
+                        }) {
+                            let face = unsafe {
+                                fonts.db_mut().make_shared_face_data(sans_serif).unwrap()
+                            };
 
-                                                let ast = parser::parse_file(
-                                                    &tree,
-                                                    Some(info),
-                                                    &new_file,
-                                                    &mut self.helix_cell,
-                                                    &mut slide_show,
-                                                    &mut font_db,
-                                                    &mut Default::default(),
-                                                    &mut fonts,
-                                                    &watcher_context,
-                                                    std::path::Path::new(
-                                                        watcher_file_name.as_ref(),
-                                                    ),
-                                                );
-                                                *info = tree;
-                                                match ast {
-                                                    Ok(_) => {
-                                                        *slide_show_file = new_file.clone();
-                                                        watcher_resolved.store(None);
-                                                        watcher_restart_timer
-                                                            .store(true, Ordering::Relaxed);
-                                                    }
-                                                    Err(errors) => {
-                                                        for error in errors {
-                                                            eprintln!(
-                                                                "{:?}",
-                                                                parser::ErrWithSource {
-                                                                    error,
-                                                                    source_code: new_file
-                                                                        .to_string()
-                                                                }
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
+                            let index = face.1;
+                            let face = Arc::into_raw(face.0);
 
-                                            watcher_context.request_repaint();
-                                        }
-                                    }
-                                }
-                            },
-                        )
-                        .unwrap(),
-                    );
+                            font_defs.families.insert(
+                                egui::FontFamily::Proportional,
+                                vec!["sans-serif".to_string()],
+                            );
 
-                    w.watch(
-                        std::path::Path::new(self.file_name.as_ref()),
-                        notify::RecursiveMode::NonRecursive,
-                    )
-                    .unwrap();
+                            font_defs.font_data.insert(
+                                "sans-serif".to_string(),
+                                FontData {
+                                    font: std::borrow::Cow::Borrowed(unsafe { (&*face).as_ref() }),
+                                    index,
+                                    tweak: FontTweak::default(),
+                                },
+                            );
+                        }
 
-                    egui_ctx.set_fonts(self.fonts.clone());
+                        if let Some(monospace) = fonts.db().query(&Query {
+                            families: &[Family::Monospace],
+                            ..Default::default()
+                        }) {
+                            let face =
+                                unsafe { fonts.db_mut().make_shared_face_data(monospace).unwrap() };
+
+                            let index = face.1;
+                            let face = Arc::into_raw(face.0);
+
+                            font_defs
+                                .families
+                                .insert(egui::FontFamily::Monospace, vec!["monospace".to_string()]);
+
+                            font_defs.font_data.insert(
+                                "monospace".to_string(),
+                                FontData {
+                                    font: std::borrow::Cow::Borrowed(unsafe { (&*face).as_ref() }),
+                                    index,
+                                    tweak: FontTweak::default(),
+                                },
+                            );
+                        }
+
+                        fetch_ctx.set_fonts(font_defs);
+                        *fetch_ss.write() = slide_show.1;
+                        fetch_restart_timer.store(true, Ordering::Relaxed);
+                        fetch_resolved.store(None);
+                    });
                 }
             }
+            SlideShowSource::Loaded => {}
         }
 
         MyEguiApp {
@@ -1340,13 +1263,13 @@ impl MyEguiApp {
     pub fn new(
         #[cfg(not(target_arch = "wasm32"))] lsp: bool,
         #[cfg(not(target_arch = "wasm32"))] presentation: Option<String>,
+        font_system: Arc<Mutex<FontSystem>>,
     ) -> (Self, SlideShowSource) {
-        // Customize egui here with cc.egui_ctx.set_fonts and cc.egui_ctx.set_visuals.
-        // Restore app state using cc.storage (requires the "persistence" feature).
-        // Use the cc.gl (a glo::Context) to create graphics shaders and buffers that you can use
-        // for e.g. egui::PaintCallback.
-        let mut fonts = FontDefinitions::default();
-
+        {
+            let mut font_system = font_system.lock();
+            font_system.db_mut().set_sans_serif_family("Ubuntu");
+            font_system.db_mut().set_monospace_family("Fira Code");
+        }
         #[cfg(not(target_arch = "wasm32"))]
         let slide_show_file = Arc::new(Mutex::new(Rope::new()));
         let new_file = Arc::new(AtomicBool::new(true));
@@ -1355,8 +1278,6 @@ impl MyEguiApp {
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut helix_cell = None;
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut sources = indexmap::IndexSet::default();
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut parser = {
@@ -1381,34 +1302,19 @@ impl MyEguiApp {
                     (SlideShow::exercise_jit(), SlideShowSource::Http)
                 } else {
                     let file = std::fs::read(presentation.as_ref().unwrap()).unwrap();
-                    let slideshow: (FontDefinitions, SlideShow) =
-                        bincode::deserialize(&file).unwrap();
+                    let slideshow: (Vec<Vec<u8>>, SlideShow) = bincode::deserialize(&file).unwrap();
 
-                    fonts = slideshow.0;
+                    let mut fonts = font_system.lock();
+                    let fonts = fonts.db_mut();
+
+                    slideshow
+                        .0
+                        .into_iter()
+                        .for_each(|d| fonts.load_font_data(d));
 
                     (slideshow.1, SlideShowSource::Loaded)
                 }
             } else {
-                let mut font_db = fontdb::Database::new();
-                font_db.load_system_fonts();
-                let mut fira_code_prop = Query::default();
-                fira_code_prop.families = &[Family::Name("Fira Code")];
-                if let Some(font) = font_db.query(&fira_code_prop) {
-                    // Leaking the font makes it cheaper to clone the font definitions elsewhere
-                    let (src, index) = unsafe { font_db.make_shared_face_data(font).unwrap() };
-                    let data: &'static [u8] = unsafe { &*Arc::into_raw(src) }.as_ref();
-                    fonts.font_data.insert("Fira Code".to_owned(), {
-                        let mut font = FontData::from_static(data);
-                        font.index = index;
-                        font
-                    });
-
-                    fonts
-                        .families
-                        .get_mut(&FontFamily::Monospace)
-                        .unwrap()
-                        .insert(0, "Fira Code".to_owned());
-                }
                 if lsp {
                     (SlideShow::default(), SlideShowSource::Loaded)
                 } else {
@@ -1449,9 +1355,7 @@ impl MyEguiApp {
                             &file,
                             &mut helix_cell,
                             &mut slide_show,
-                            &mut font_db,
-                            &mut sources,
-                            &mut fonts,
+                            Arc::clone(&font_system),
                             &ctx,
                             &std::fs::canonicalize(presentation.as_ref().unwrap()).unwrap(),
                         )
@@ -1516,13 +1420,15 @@ impl MyEguiApp {
                         AtomicF32::new(0.0),
                         AtomicF32::new(0.0),
                     ],
+                    visible: false.into(),
                 }),
                 #[cfg(not(target_arch = "wasm32"))]
                 lsp,
                 #[cfg(not(target_arch = "wasm32"))]
                 parser: Arc::new(Mutex::new(parser)),
                 clear_color: Color::default().into(),
-                fonts,
+                font_system,
+                resolved_images: Arc::new(Mutex::new(HashMap::default())),
                 // frame_history: FrameHistory::default(),
             },
             slide_show.1,
@@ -1537,13 +1443,8 @@ impl MyEguiApp {
         self.time += ctx.input(|i| i.stable_dt);
         let speaker_viewport = ViewportId::from_hash_of("speaker_view");
         #[cfg(not(target_arch = "wasm32"))]
-        if ctx.input(|input| {
-            let r = input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape);
-            if r {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            r || input.viewport().close_requested()
-        }) {
+        if ctx.input(|input| input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
         let slide_show_cloned = Arc::clone(&self.slide_show);
@@ -1557,17 +1458,20 @@ impl MyEguiApp {
         }
 
         #[cfg(target_arch = "wasm32")]
-        egui::TopBottomPanel::bottom("controls")
+        {
+            egui::TopBottomPanel::bottom("controls")
             .exact_height(32.0)
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("<")).clicked() {
                         self.index.fetch_sub(1, Ordering::Relaxed);
+                        index -= 1;
                         self.next.store(false, Ordering::Relaxed);
                         self.resolved.store(None);
                         self.time = 1000.0;
                     } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new(">")).clicked() {
                         self.index.fetch_add(1, Ordering::Relaxed);
+                        index += 1;
                         self.resolved.store(None);
                         self.next.store(true, Ordering::Relaxed);
                         self.time = 0.0;
@@ -1580,6 +1484,7 @@ impl MyEguiApp {
                     ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
                 })
             });
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if self.lsp {
             egui::TopBottomPanel::bottom("controls")
@@ -1618,12 +1523,15 @@ impl MyEguiApp {
                                 ..
                             } => {
                                 self.clear_color = bg.0.into();
+                                let mut font_system = self.font_system.lock();
                                 let resolved = Arc::new(Resolved::resolve(
                                     slide,
                                     actions,
                                     ui,
                                     window_size,
                                     &slide_show,
+                                    font_system.deref_mut(),
+                                    Arc::clone(&self.resolved_images),
                                     self.export,
                                 ));
                                 self.resolved.store(Some(Arc::clone(&resolved)));
@@ -1639,12 +1547,15 @@ impl MyEguiApp {
                                         objects: slide, bg, ..
                                     } => {
                                         self.clear_color = bg.0.into();
+                                        let mut font_system = self.font_system.lock();
                                         let resolved = Arc::new(Resolved::resolve(
                                             slide,
                                             actions,
                                             ui,
                                             window_size,
                                             &slide_show,
+                                            font_system.deref_mut(),
+                                            Arc::clone(&self.resolved_images),
                                             self.export,
                                         ));
                                         self.resolved.store(Some(Arc::clone(&resolved)));
@@ -1658,6 +1569,7 @@ impl MyEguiApp {
                         Arc::new(Resolved::slideshow_end(window_size))
                     }
                 };
+                let mut buffers = Vec::new();
                 if let Some(slide) = slide_show.slide_show.get(index) {
                     match slide {
                         AstObject::Slide {
@@ -1674,7 +1586,7 @@ impl MyEguiApp {
                                 }
                                 self.clear_color = color;
                             }
-                            resolved.draw_slide(ui, self.time);
+                            resolved.draw_slide(ui, self.time, &mut buffers);
                             resolved.draw_actions(ui, self.time);
 
                             if self.time < *max_time {
@@ -1696,7 +1608,7 @@ impl MyEguiApp {
                             let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
                             match slide {
                                 AstObject::Slide { max_time, .. } => {
-                                    resolved.draw_slide(ui, *max_time);
+                                    resolved.draw_slide(ui, *max_time, &mut buffers);
                                 }
                                 _ => todo!(),
                             }
@@ -1706,6 +1618,17 @@ impl MyEguiApp {
                                 ctx.request_repaint();
                             }
                         }
+                    }
+                    if !self.export {
+                        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+                            window_size,
+                            GlyphonRendererCallback { buffers },
+                        ));
+                    } else {
+                        ui.painter().add(PaintCallback {
+                            rect: window_size,
+                            callback: Arc::new(GlyphonRendererCallback { buffers }),
+                        });
                     }
 
                     #[cfg(not(target_arch = "wasm32"))]
@@ -1806,6 +1729,14 @@ impl MyEguiApp {
                         self.obj_dbg.store(0, Ordering::Relaxed);
                         self.next.store(true, Ordering::Relaxed);
                     }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    egui::Event::Key {
+                        key: egui::Key::S,
+                        pressed: true,
+                        ..
+                    } => {
+                        self.speaker_view.visible.store(true, Ordering::Relaxed);
+                    }
                     egui::Event::Key {
                         key: egui::Key::B,
                         pressed: true,
@@ -1827,7 +1758,7 @@ impl MyEguiApp {
         });
 
         #[cfg(not(target_arch = "wasm32"))]
-        if !self.lsp && !self.export {
+        if self.speaker_view.visible.load(Ordering::Relaxed) {
             let index = Arc::clone(&self.index);
             let slide_show = Arc::clone(&self.slide_show);
             let speaker_notes = self
@@ -1836,6 +1767,8 @@ impl MyEguiApp {
                 .as_ref()
                 .and_then(|r| r.speaker_notes.clone());
             let speaker_view = Arc::clone(&self.speaker_view);
+            let font_system = Arc::clone(&self.font_system);
+            let resolved_images = Arc::clone(&self.resolved_images);
             ctx.show_viewport_deferred(
                 speaker_viewport,
                 ViewportBuilder::default(),
@@ -1845,7 +1778,13 @@ impl MyEguiApp {
                         index.load(Ordering::Relaxed),
                         &*slide_show.read(),
                         speaker_notes.clone(),
-                    )
+                        Arc::clone(&font_system),
+                        Arc::clone(&resolved_images),
+                    );
+
+                    if ctx.input(|i| i.viewport().close_requested()) {
+                        speaker_view.visible.store(false, Ordering::Relaxed);
+                    }
                 },
             );
         }
