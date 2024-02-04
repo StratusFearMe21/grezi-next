@@ -429,7 +429,7 @@ impl SpeakerView {
 }
 
 pub struct Resolved {
-    pub viewboxes: HashMap<u64, Vec<Rect>, BuildHasherDefault<PassThroughHasher>>,
+    pub viewboxes: HashMap<u64, Layouts, BuildHasherDefault<PassThroughHasher>>,
     pub actions: Vec<ResolvedActions>,
     pub slide: Vec<ResolvedSlideObj>,
     pub speaker_notes: Option<Arc<str>>,
@@ -742,13 +742,20 @@ impl Resolved {
         index: usize,
         size: Rect,
         slide_show: &SlideShow,
-    ) -> Rect {
+        ppi: f32,
+    ) -> Splits {
         match self.viewboxes.get(&hash) {
             None => {
                 let split = match slide_show.viewboxes.get(&hash).unwrap().split_on {
-                    ViewboxIn::Size => size,
+                    ViewboxIn::Size => Splits {
+                        unadjusted: Rect::from_min_size(
+                            Pos2::ZERO,
+                            Vec2::new(1920.0 * ppi, 1080.0 * ppi),
+                        ),
+                        adjusted: size,
+                    },
                     ViewboxIn::Custom(hash, index) => {
-                        self.resolve_layout(hash, index, size, slide_show)
+                        self.resolve_layout(hash, index, size, slide_show, ppi)
                     }
                     ViewboxIn::Inherit(_) => unreachable!(),
                 };
@@ -761,12 +768,19 @@ impl Resolved {
                     constraints,
                     split,
                     unresolved_layout.margin,
+                    ppi,
                 );
-                let rect = layout[index];
+                let splits = Splits {
+                    unadjusted: layout.unadjusted[index],
+                    adjusted: layout.adjusted[index],
+                };
                 self.viewboxes.insert(hash, layout);
-                rect
+                splits
             }
-            Some(viewboxes) => viewboxes.get(index).copied().unwrap(),
+            Some(layout) => Splits {
+                unadjusted: layout.unadjusted[index],
+                adjusted: layout.adjusted[index],
+            },
         }
     }
 
@@ -794,18 +808,31 @@ impl Resolved {
             Align2::CENTER_CENTER.align_size_within_rect(size, size_raw)
         };
         let mut images = Vec::with_capacity(3);
+        let ppi = ui.ctx().pixels_per_point();
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
-                ViewboxIn::Size => size.shrink(15.0),
+                ViewboxIn::Size => Splits {
+                    unadjusted: Rect::from_min_size(
+                        Pos2::ZERO,
+                        Vec2::new(1920.0 * ppi, 1080.0 * ppi),
+                    ),
+                    adjusted: size,
+                },
                 ViewboxIn::Custom(hash, index) => {
-                    resolved.resolve_layout(hash, index, size, slide_show)
+                    resolved.resolve_layout(hash, index, size, slide_show, ppi)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
             let second_viewbox = match object.locations[1].1 {
-                ViewboxIn::Size => size.shrink(15.0),
+                ViewboxIn::Size => Splits {
+                    unadjusted: Rect::from_min_size(
+                        Pos2::ZERO,
+                        Vec2::new(1920.0 * ppi, 1080.0 * ppi),
+                    ),
+                    adjusted: size,
+                },
                 ViewboxIn::Custom(hash, index) => {
-                    resolved.resolve_layout(hash, index, size, slide_show)
+                    resolved.resolve_layout(hash, index, size, slide_show, ppi)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
@@ -813,14 +840,14 @@ impl Resolved {
             let obj = slide_show.objects.get(&object.object).unwrap();
             match &obj.object {
                 parser::objects::ObjectType::Spinner => {
-                    let size = ResolvedObject::Spinner.bounds(second_viewbox.size(), ui);
+                    let size = ResolvedObject::Spinner.bounds(second_viewbox.adjusted.size(), ui);
                     let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox, size).into(),
+                        get_pos!(object.locations[0].0, first_viewbox.adjusted, size).into(),
                         size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox, size).into(),
+                        get_pos!(object.locations[1].0, second_viewbox.adjusted, size).into(),
                         size.size(),
                     );
                     let second_pos = [second_pos.min, second_pos.max];
@@ -832,22 +859,24 @@ impl Resolved {
                     });
                 }
                 parser::objects::ObjectType::Rect { color, height } => {
-                    let mut rect = second_viewbox
-                        .translate(Vec2::new(-second_viewbox.min.x, -second_viewbox.min.y));
+                    let mut rect = second_viewbox.adjusted.translate(Vec2::new(
+                        -second_viewbox.adjusted.min.x,
+                        -second_viewbox.adjusted.min.y,
+                    ));
                     rect.max.y = *height * (size.height() / 1080.0);
                     let resolved_obj = ResolvedObject::Rect {
                         color: *color,
                         rect,
                     };
 
-                    let size = resolved_obj.bounds(second_viewbox.size(), ui);
+                    let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
                     let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox, size).into(),
+                        get_pos!(object.locations[0].0, first_viewbox.adjusted, size).into(),
                         size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox, size).into(),
+                        get_pos!(object.locations[1].0, second_viewbox.adjusted, size).into(),
                         size.size(),
                     );
                     let second_pos = [second_pos.min, second_pos.max];
@@ -859,9 +888,9 @@ impl Resolved {
                     });
                 }
                 parser::objects::ObjectType::Text(job, font_size, line_height) => {
-                    let ppi = ui.ctx().pixels_per_point();
-                    let factor = size.width() / (1920.0 / ppi);
-                    let font_size = *font_size * factor;
+                    let factor =
+                        (second_viewbox.adjusted.size() / second_viewbox.unadjusted.size()) * ppi;
+                    let font_size = *font_size * factor.x * ppi;
                     let mut buffer = Buffer::new(
                         font_system,
                         Metrics::new(
@@ -869,20 +898,20 @@ impl Resolved {
                             line_height.map_or(font_size * 1.1, |h| h * font_size),
                         ),
                     );
-                    buffer.set_size(font_system, second_viewbox.width() * ppi, f32::MAX);
+                    buffer.set_size(font_system, second_viewbox.adjusted.width() * ppi, f32::MAX);
                     parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
                     buffer.shape_until_scroll(font_system);
 
                     let resolved_obj = ResolvedObject::Text(Arc::new(Editor(RwLock::new(
                         egui_glyphon::glyphon::Editor::new(buffer),
                     ))));
-                    let size = resolved_obj.bounds(second_viewbox.size(), ui);
+                    let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
                     let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox, size).into(),
+                        get_pos!(object.locations[0].0, first_viewbox.adjusted, size).into(),
                         size.size(),
                     );
                     let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox, size).into(),
+                        get_pos!(object.locations[1].0, second_viewbox.adjusted, size).into(),
                         size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
@@ -975,10 +1004,10 @@ impl Resolved {
                             }
                         });
 
-                    let first_size =
-                        resolved_obj.bounds(scale.unwrap_or_else(|| first_viewbox.size()), ui);
-                    let second_size =
-                        resolved_obj.bounds(scale.unwrap_or_else(|| second_viewbox.size()), ui);
+                    let first_size = resolved_obj
+                        .bounds(scale.unwrap_or_else(|| first_viewbox.adjusted.size()), ui);
+                    let second_size = resolved_obj
+                        .bounds(scale.unwrap_or_else(|| second_viewbox.adjusted.size()), ui);
                     // let size = Rect {
                     //     min: size.min,
                     //     max: {
@@ -997,12 +1026,13 @@ impl Resolved {
                     //     },
                     // };
                     let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox, first_size).into(),
+                        get_pos!(object.locations[0].0, first_viewbox.adjusted, first_size).into(),
                         first_size.size(),
                     );
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox, second_size).into(),
+                        get_pos!(object.locations[1].0, second_viewbox.adjusted, second_size)
+                            .into(),
                         second_size.size(),
                     );
                     let second_pos = [second_pos.min, second_pos.max];
@@ -1081,8 +1111,7 @@ impl Resolved {
                             Pos2::from(text_object.locations[1][0]),
                             Pos2::from(text_object.locations[1][1]),
                         ]);
-                        Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size())
-                            * ui.ctx().pixels_per_point()
+                        Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size()) * ppi
                     };
                     let scaled_time = if text_object.scaled_time[1] < 0.1 {
                         [0.0, 0.0]
@@ -1197,31 +1226,43 @@ pub enum SlideShowSource {
     Http,
 }
 
+struct Layouts {
+    unadjusted: Vec<Rect>,
+    adjusted: Vec<Rect>,
+}
+
+struct Splits {
+    unadjusted: Rect,
+    adjusted: Rect,
+}
+
 fn resolve_layout_raw(
     size: Rect,
     direction: Direction,
-    mut constraints: Vec<Constraint>,
-    split: Rect,
+    constraints: Vec<Constraint>,
+    splits: Splits,
     margin: f32,
-) -> Vec<Rect> {
-    constraints.iter_mut().for_each(|c| match c {
-        layout::Constraint::Length(length) => {
-            *length *= (size.width() + size.height()) / (1920.0 + 1080.0)
-        }
-        layout::Constraint::Min(min) => {
-            *min *= (size.width() + size.height()) / (1920.0 + 1080.0);
-        }
-        layout::Constraint::Max(max) => {
-            *max *= (size.width() + size.height()) / (1920.0 + 1080.0);
-        }
-        _ => {}
-    });
-    layout::Layout::default()
+    ppi: f32,
+) -> Layouts {
+    let unadjusted = layout::Layout::default()
         .direction(direction)
         .margin(margin)
         .constraints(&constraints)
-        .split(split)
-        .unwrap()
+        .split(splits.unadjusted)
+        .unwrap();
+    let factor = match direction {
+        Direction::Horizontal => size.width() / (1920.0 * ppi),
+        Direction::Vertical => size.height() / (1080.0 * ppi),
+    };
+    let adjusted = unadjusted
+        .iter()
+        .map(|r| (*r * factor).translate(size.min.to_vec2()))
+        .collect();
+
+    Layouts {
+        unadjusted,
+        adjusted,
+    }
 }
 
 impl MyEguiApp {
@@ -1733,7 +1774,7 @@ impl MyEguiApp {
                         let vb_dbg = self.vb_dbg.load(Ordering::Relaxed);
                         if vb_dbg > 0 {
                             if let Some(vb) = resolved.viewboxes.get(&vb_dbg) {
-                                for rect in vb {
+                                for rect in vb.adjusted.iter() {
                                     ctx.debug_painter().rect_stroke(
                                         *rect,
                                         Rounding::ZERO,
