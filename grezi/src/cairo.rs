@@ -17,6 +17,8 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::parser::objects::Editor;
+
 pub fn fonts_to_ft(
     font_system: Arc<Mutex<FontSystem>>,
     used_fonts: &IndexSet<ID, ahash::RandomState>,
@@ -167,7 +169,7 @@ pub fn cairo_draw_shape(
         egui::Shape::Callback(glyphon_callback) => {
             let callback = glyphon_callback
                 .callback
-                .downcast_ref::<GlyphonRendererCallback>()
+                .downcast_ref::<GlyphonRendererCallback<Editor, Arc<Editor>>>()
                 .unwrap();
 
             struct RunIter<'a> {

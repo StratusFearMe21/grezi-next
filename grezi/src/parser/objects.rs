@@ -1,15 +1,21 @@
 use std::{
+    fmt::Debug,
     hash::{BuildHasher, Hasher},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
 use eframe::{
     egui::{Image, ImageFit, Ui},
     emath::Align,
-    epaint::{mutex::Mutex, Color32, FontFamily, FontId, Pos2, Rect, Vec2},
+    epaint::{
+        mutex::{Mutex, RwLock},
+        Color32, FontFamily, FontId, Pos2, Rect, Vec2,
+    },
 };
-use egui_glyphon::glyphon::{Attrs, Buffer, Family, FontSystem, Shaping, Style, Weight};
+use egui_glyphon::glyphon::{Attrs, Buffer, Edit, Family, FontSystem, Shaping, Style, Weight};
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
@@ -61,9 +67,105 @@ pub enum ObjectType {
     Spinner,
 }
 
+pub struct Editor(pub RwLock<egui_glyphon::glyphon::Editor>);
+
+impl AsRef<Buffer> for Editor {
+    fn as_ref(&self) -> &Buffer {
+        unsafe { std::mem::transmute(self.0.read().buffer()) }
+    }
+}
+
+impl Debug for Editor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Editor").finish_non_exhaustive()
+    }
+}
+
+impl Editor {
+    pub fn highlight_boxes(&self) -> Vec<Rect> {
+        use std::cmp;
+
+        let editor = self.0.read();
+        let mut rects = Vec::new();
+
+        let line_height = editor.buffer().metrics().line_height;
+
+        for run in editor.buffer().layout_runs() {
+            let line_i = run.line_i;
+            let line_top = run.line_top;
+
+            if let Some(select) = editor.select_opt() {
+                let (start, end) = match select.line.cmp(&editor.cursor().line) {
+                    cmp::Ordering::Greater => (editor.cursor(), select),
+                    cmp::Ordering::Less => (select, editor.cursor()),
+                    cmp::Ordering::Equal => {
+                        /* select.line == editor.cursor.line */
+                        if select.index < editor.cursor().index {
+                            (select, editor.cursor())
+                        } else {
+                            /* select.index >= editor.cursor.index */
+                            (editor.cursor(), select)
+                        }
+                    }
+                };
+
+                if line_i >= start.line && line_i <= end.line {
+                    let mut range_opt: Option<(f32, f32)> = None;
+                    for glyph in run.glyphs.iter() {
+                        // Guess x offset based on characters
+                        let cluster = &run.text[glyph.start..glyph.end];
+                        let total = cluster.grapheme_indices(true).count();
+                        let mut c_x = glyph.x;
+                        let c_w = glyph.w / total as f32;
+                        for (i, c) in cluster.grapheme_indices(true) {
+                            let c_start = glyph.start + i;
+                            let c_end = glyph.start + i + c.len();
+                            if (start.line != line_i || c_end > start.index)
+                                && (end.line != line_i || c_start < end.index)
+                            {
+                                range_opt = match range_opt.take() {
+                                    Some((min, max)) => Some((min.min(c_x), max.max(c_x + c_w))),
+                                    None => Some((c_x, (c_x + c_w))),
+                                };
+                            } else if let Some((min, max)) = range_opt.take() {
+                                rects.push(Rect::from_min_size(
+                                    Pos2::new(min, line_top),
+                                    Vec2::new(0.0f32.max(max - min), line_height),
+                                ));
+                            }
+                            c_x += c_w;
+                        }
+                    }
+
+                    if run.glyphs.is_empty() && end.line > line_i {
+                        // Highlight all of internal empty lines
+                        range_opt = Some((0.0, editor.buffer().size().0));
+                    }
+
+                    if let Some((mut min, mut max)) = range_opt.take() {
+                        if end.line > line_i {
+                            // Draw to end of line
+                            if run.rtl {
+                                min = 0.0;
+                            } else {
+                                max = editor.buffer().size().0;
+                            }
+                        }
+                        rects.push(Rect::from_min_size(
+                            Pos2::new(min, line_top),
+                            Vec2::new(0.0f32.max(max - min), line_height),
+                        ));
+                    }
+                }
+            }
+        }
+        rects
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ResolvedObject {
-    Text(Arc<Buffer>, Vec2),
+    Text(Arc<Editor>),
     Image {
         image: Image<'static>,
         scale: Option<Vec2>,
@@ -81,30 +183,34 @@ pub enum ResolvedObject {
     Spinner,
 }
 
+pub fn measure_buffer(buffer: &Buffer, vb: Vec2, ppi: f32) -> Rect {
+    let mut rtl = false;
+    let (width, total_lines) =
+        buffer
+            .layout_runs()
+            .fold((0.0, 0usize), |(width, total_lines), run| {
+                if run.rtl {
+                    rtl = true;
+                }
+                (run.line_w.max(width), total_lines + 1)
+            });
+
+    let (max_width, max_height) = buffer.size();
+
+    Rect::from_min_size(
+        Pos2::ZERO,
+        Vec2::new(
+            if rtl { vb.x } else { width.min(max_width) },
+            (total_lines as f32 * buffer.metrics().line_height).min(max_height),
+        ),
+    ) / ppi
+}
+
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(buffer, _) => {
-                let mut rtl = false;
-                let (width, total_lines) =
-                    buffer
-                        .layout_runs()
-                        .fold((0.0, 0usize), |(width, total_lines), run| {
-                            if run.rtl {
-                                rtl = true;
-                            }
-                            (run.line_w.max(width), total_lines + 1)
-                        });
-
-                let (max_width, max_height) = buffer.size();
-
-                Rect::from_min_size(
-                    Pos2::ZERO,
-                    Vec2::new(
-                        if rtl { vb.x } else { width.min(max_width) },
-                        (total_lines as f32 * buffer.metrics().line_height).min(max_height),
-                    ) / ui.ctx().pixels_per_point(),
-                )
+            ResolvedObject::Text(buffer) => {
+                measure_buffer(buffer.0.read().buffer(), vb, ui.ctx().pixels_per_point())
             }
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
