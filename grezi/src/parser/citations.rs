@@ -1,8 +1,6 @@
-use std::{path::Path, sync::Arc};
+use std::path::Path;
 
 use ecolor::Color32;
-use eframe::{egui::Context, epaint::mutex::Mutex};
-use egui_glyphon::glyphon::FontSystem;
 use helix_core::tree_sitter::Parser;
 
 use crate::{
@@ -23,10 +21,8 @@ include!(concat!(env!("OUT_DIR"), "/kinds_ntbib.rs"));
 
 pub fn parse_citations(
     path: &Path,
-    ctx: &Context,
     hasher: &ahash::RandomState,
     slideshow: &mut SlideShow,
-    font_system: Arc<Mutex<FontSystem>>,
 ) -> Result<(), super::Error> {
     if let Ok(file) = path
         .parent()

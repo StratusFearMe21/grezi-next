@@ -2322,7 +2322,6 @@ dependencies = [
  "image",
  "indexmap",
  "keyframe",
- "libc",
  "log",
  "lsp-server",
  "lsp-types",

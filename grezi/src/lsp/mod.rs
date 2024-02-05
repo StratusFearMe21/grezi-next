@@ -5,7 +5,7 @@ use std::{
     hash::{BuildHasher, BuildHasherDefault, Hasher},
     path::Path,
     process::Stdio,
-    sync::{atomic::Ordering, Arc},
+    sync::atomic::Ordering,
 };
 
 pub mod formatter;
@@ -1801,7 +1801,6 @@ pub fn start_lsp(
                                         &current_rope,
                                         &mut app.helix_cell,
                                         &mut slide_show,
-                                        Arc::clone(&app.font_system),
                                         &lsp_egui_ctx,
                                         Path::new(currently_open.path()),
                                     );
@@ -2041,7 +2040,6 @@ pub fn start_lsp(
                             &current_rope,
                             &mut app.helix_cell,
                             &mut slide_show,
-                            Arc::clone(&app.font_system),
                             &lsp_egui_ctx,
                             Path::new(currently_open.path()),
                         );
@@ -2148,7 +2146,6 @@ pub fn start_lsp(
                                             &current_rope,
                                             &mut app.helix_cell,
                                             &mut slide_show,
-                                            Arc::clone(&app.font_system),
                                             &lsp_egui_ctx,
                                             Path::new(currently_open.path()),
                                         ) {
@@ -2230,7 +2227,6 @@ pub fn start_lsp(
                                 &current_rope,
                                 &mut app.helix_cell,
                                 &mut slide_show,
-                                Arc::clone(&app.font_system),
                                 &lsp_egui_ctx,
                                 Path::new(currently_open.path()),
                             );

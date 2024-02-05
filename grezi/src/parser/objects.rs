@@ -1,17 +1,13 @@
 use std::{
     fmt::Debug,
     hash::{BuildHasher, Hasher},
-    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
 use eframe::{
     egui::{Image, ImageFit, Ui},
     emath::Align,
-    epaint::{
-        mutex::{Mutex, RwLock},
-        Color32, FontFamily, FontId, Pos2, Rect, Vec2,
-    },
+    epaint::{mutex::RwLock, Color32, FontFamily, FontId, Pos2, Rect, Vec2},
 };
 use egui_glyphon::glyphon::{Attrs, Buffer, Edit, Family, FontSystem, Shaping, Style, Weight};
 use serde::{Deserialize, Serialize};
@@ -183,7 +179,7 @@ pub enum ResolvedObject {
     Spinner,
 }
 
-pub fn measure_buffer(buffer: &Buffer, vb: Vec2, ppi: f32) -> Rect {
+pub fn measure_buffer(buffer: &Buffer, vb: Vec2) -> Rect {
     let mut rtl = false;
     let (width, total_lines) =
         buffer
@@ -203,15 +199,13 @@ pub fn measure_buffer(buffer: &Buffer, vb: Vec2, ppi: f32) -> Rect {
             if rtl { vb.x } else { width.min(max_width) },
             (total_lines as f32 * buffer.metrics().line_height).min(max_height),
         ),
-    ) / ppi
+    )
 }
 
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(buffer) => {
-                measure_buffer(buffer.0.read().buffer(), vb, ui.ctx().pixels_per_point())
-            }
+            ResolvedObject::Text(buffer) => measure_buffer(buffer.0.read().buffer(), vb),
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
                     let mut size = None;
@@ -253,7 +247,6 @@ pub fn parse_objects(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<HelixCell>,
     hasher: &ahash::RandomState,
-    font_system: Arc<Mutex<FontSystem>>,
     ctx: &eframe::egui::Context,
     errors_present: &mut Vec<super::Error>,
     file_path: &std::path::Path,
@@ -296,7 +289,7 @@ pub fn parse_objects(
             }
         },
     );
-    let mut object = match obj_type.as_ref() {
+    let object = match obj_type.as_ref() {
         "Rect" => {
             let mut tint = None;
             let mut height = None;

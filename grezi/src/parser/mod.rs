@@ -414,10 +414,6 @@ impl<'a> GrzCursor<'a> {
     */
 }
 
-use eframe::epaint::mutex::Mutex;
-use egui_glyphon::glyphon::FontSystem;
-use std::sync::Arc;
-
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file(
     tree: &Tree,
@@ -425,7 +421,6 @@ pub fn parse_file(
     source: &helix_core::ropey::Rope,
     helix_cell: &mut Option<highlighting::HelixCell>,
     slide_show: &mut crate::SlideShow,
-    font_system: Arc<Mutex<FontSystem>>,
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
 ) -> Result<(), Vec<Error>> {
@@ -568,7 +563,6 @@ pub fn parse_file(
                             source,
                             helix_cell,
                             &hasher,
-                            Arc::clone(&font_system),
                             egui_ctx,
                             &mut errors_present,
                             file_path,
@@ -649,14 +643,7 @@ pub fn parse_file(
     if is_new {
         slide_show.viewboxes.shrink_to_fit();
         slide_show.objects.shrink_to_fit();
-        citations::parse_citations(
-            file_path,
-            egui_ctx,
-            &hasher,
-            slide_show,
-            Arc::clone(&font_system),
-        )
-        .unwrap();
+        citations::parse_citations(file_path, &hasher, slide_show).unwrap();
     }
     drop(old_tree_cursor);
     drop(new_tree_cursor);

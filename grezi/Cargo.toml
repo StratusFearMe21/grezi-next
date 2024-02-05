@@ -54,7 +54,6 @@ cairo-rs = { version = "0.18.5", features = ["pdf", "ps", "svg", "freetype"] }
 hunspell-rs = "0.4.0"
 indexmap = "2.1.0"
 crossbeam-queue = "0.3.11"
-libc = "0.2.150"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]

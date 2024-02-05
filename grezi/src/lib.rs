@@ -18,10 +18,7 @@ use atomic_float::AtomicF32;
 #[cfg(not(target_arch = "wasm32"))]
 use crossbeam_queue::SegQueue;
 use eframe::{
-    egui::{
-        self, FontData, FontDefinitions, FontTweak, Id, Image, ImageSize, Modifiers, Rect, Sense,
-        SizeHint, Ui, ViewportBuilder, ViewportId,
-    },
+    egui::{self, Id, Image, ImageSize, Rect, Sense, SizeHint, Ui, ViewportBuilder, ViewportId},
     egui_wgpu,
     emath::Align2,
     epaint::{
@@ -31,10 +28,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{
-        fontdb::{Query, ID},
-        Buffer, Edit, Family, FontSystem, Metrics, TextBounds,
-    },
+    glyphon::{fontdb::ID, Buffer, Edit, FontSystem, Metrics, TextBounds},
     BufferWithTextArea, GlyphonRendererCallback,
 };
 // use frame_history::FrameHistory;
@@ -507,13 +501,11 @@ impl Resolved {
                     if gamma_multiply > 0.0 {
                         // ui.painter()
                         //     .rect(obj_pos, Rounding::default(), Color32::RED, Stroke::NONE);
-                        let ppi = ui.ctx().pixels_per_point();
                         let response = ui.allocate_rect(obj_pos, Sense::click_and_drag());
 
                         if let Some(click) = response.interact_pointer_pos() {
                             if response.dragged() {
-                                let drag =
-                                    ((click - obj_pos.min.to_vec2()) + response.drag_delta()) * ppi;
+                                let drag = (click - obj_pos.min.to_vec2()) + response.drag_delta();
                                 buffer.0.write().action(
                                     font_system,
                                     egui_glyphon::glyphon::Action::Drag {
@@ -522,7 +514,7 @@ impl Resolved {
                                     },
                                 );
                             } else {
-                                let click = (click - obj_pos.min.to_vec2()) * ppi;
+                                let click = click - obj_pos.min.to_vec2();
                                 buffer.0.write().action(
                                     font_system,
                                     egui_glyphon::glyphon::Action::Click {
@@ -534,10 +526,9 @@ impl Resolved {
                         }
 
                         let boxes = buffer.highlight_boxes();
-                        let obj_pos = obj_pos * ppi;
                         for r#box in &boxes {
                             ui.painter().rect_filled(
-                                r#box.translate(obj_pos.min.to_vec2()) / ppi,
+                                r#box.translate(obj_pos.min.to_vec2()),
                                 Rounding::default(),
                                 Color32::BLUE,
                             );
@@ -551,7 +542,7 @@ impl Resolved {
                                     egui::Window::new("copy_cosmic_text")
                                         .id(Id::new((idx, "copy_cosmic_text")))
                                         .title_bar(false)
-                                        .fixed_pos(r#box.translate(obj_pos.min.to_vec2()).max / ppi)
+                                        .fixed_pos(r#box.translate(obj_pos.min.to_vec2()).max)
                                         .resizable(false)
                                         .collapsible(false)
                                         .show(ui.ctx(), |ui| {
@@ -581,11 +572,13 @@ impl Resolved {
                             buffer.0.write().set_select_opt(None);
                         }
 
+                        let ppi = ui.ctx().pixels_per_point();
+                        let obj_pos = obj_pos * ppi;
                         buffers.push(BufferWithTextArea::new(
                             Arc::clone(buffer),
                             obj_pos.left(),
                             obj_pos.top(),
-                            1.0,
+                            ppi,
                             gamma_multiply,
                             TextBounds {
                                 left: obj_pos.left() as i32,
@@ -724,8 +717,7 @@ impl Resolved {
                                 locations.max.y,
                             ),
                         }
-                        .translate(obj_pos * ui.ctx().pixels_per_point())
-                            / ui.ctx().pixels_per_point(),
+                        .translate(obj_pos),
                         Rounding::ZERO,
                         *color,
                     );
@@ -742,20 +734,16 @@ impl Resolved {
         index: usize,
         size: Rect,
         slide_show: &SlideShow,
-        ppi: f32,
     ) -> Splits {
         match self.viewboxes.get(&hash) {
             None => {
                 let split = match slide_show.viewboxes.get(&hash).unwrap().split_on {
                     ViewboxIn::Size => Splits {
-                        unadjusted: Rect::from_min_size(
-                            Pos2::ZERO,
-                            Vec2::new(1920.0 * ppi, 1080.0 * ppi),
-                        ),
+                        unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
                     },
                     ViewboxIn::Custom(hash, index) => {
-                        self.resolve_layout(hash, index, size, slide_show, ppi)
+                        self.resolve_layout(hash, index, size, slide_show)
                     }
                     ViewboxIn::Inherit(_) => unreachable!(),
                 };
@@ -768,7 +756,6 @@ impl Resolved {
                     constraints,
                     split,
                     unresolved_layout.margin,
-                    ppi,
                 );
                 let splits = Splits {
                     unadjusted: layout.unadjusted[index],
@@ -808,31 +795,24 @@ impl Resolved {
             Align2::CENTER_CENTER.align_size_within_rect(size, size_raw)
         };
         let mut images = Vec::with_capacity(3);
-        let ppi = ui.ctx().pixels_per_point();
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => Splits {
-                    unadjusted: Rect::from_min_size(
-                        Pos2::ZERO,
-                        Vec2::new(1920.0 * ppi, 1080.0 * ppi),
-                    ),
+                    unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                     adjusted: size,
                 },
                 ViewboxIn::Custom(hash, index) => {
-                    resolved.resolve_layout(hash, index, size, slide_show, ppi)
+                    resolved.resolve_layout(hash, index, size, slide_show)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
             let second_viewbox = match object.locations[1].1 {
                 ViewboxIn::Size => Splits {
-                    unadjusted: Rect::from_min_size(
-                        Pos2::ZERO,
-                        Vec2::new(1920.0 * ppi, 1080.0 * ppi),
-                    ),
+                    unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                     adjusted: size,
                 },
                 ViewboxIn::Custom(hash, index) => {
-                    resolved.resolve_layout(hash, index, size, slide_show, ppi)
+                    resolved.resolve_layout(hash, index, size, slide_show)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
@@ -888,9 +868,8 @@ impl Resolved {
                     });
                 }
                 parser::objects::ObjectType::Text(job, font_size, line_height) => {
-                    let factor =
-                        (second_viewbox.adjusted.size() / second_viewbox.unadjusted.size()) * ppi;
-                    let font_size = *font_size * factor.x * ppi;
+                    let factor = second_viewbox.adjusted.size() / second_viewbox.unadjusted.size();
+                    let font_size = dbg!(*font_size * factor.x);
                     let mut buffer = Buffer::new(
                         font_system,
                         Metrics::new(
@@ -898,7 +877,7 @@ impl Resolved {
                             line_height.map_or(font_size * 1.1, |h| h * font_size),
                         ),
                     );
-                    buffer.set_size(font_system, second_viewbox.adjusted.width() * ppi, f32::MAX);
+                    buffer.set_size(font_system, second_viewbox.adjusted.width(), f32::MAX);
                     parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
                     buffer.shape_until_scroll(font_system);
 
@@ -1111,7 +1090,7 @@ impl Resolved {
                             Pos2::from(text_object.locations[1][0]),
                             Pos2::from(text_object.locations[1][1]),
                         ]);
-                        Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size()) * ppi
+                        Rect::from_min_size(Pos2::new(0.0, 0.0), to_rect.size())
                     };
                     let scaled_time = if text_object.scaled_time[1] < 0.1 {
                         [0.0, 0.0]
@@ -1226,9 +1205,9 @@ pub enum SlideShowSource {
     Http,
 }
 
-struct Layouts {
-    unadjusted: Vec<Rect>,
-    adjusted: Vec<Rect>,
+pub struct Layouts {
+    pub unadjusted: Vec<Rect>,
+    pub adjusted: Vec<Rect>,
 }
 
 struct Splits {
@@ -1239,17 +1218,10 @@ struct Splits {
 fn resolve_layout_raw(
     size: Rect,
     direction: Direction,
-    mut constraints: Vec<Constraint>,
+    constraints: Vec<Constraint>,
     splits: Splits,
     margin: f32,
-    ppi: f32,
 ) -> Layouts {
-    constraints.iter_mut().for_each(|c| match c {
-        Constraint::Length(l) => *l *= ppi,
-        Constraint::Max(m) => *m *= ppi,
-        Constraint::Min(m) => *m *= ppi,
-        _ => {}
-    });
     let unadjusted = layout::Layout::default()
         .direction(direction)
         .margin(margin)
@@ -1257,8 +1229,8 @@ fn resolve_layout_raw(
         .split(splits.unadjusted)
         .unwrap();
     let factor = match direction {
-        Direction::Horizontal => size.width() / (1920.0 * ppi),
-        Direction::Vertical => size.height() / (1080.0 * ppi),
+        Direction::Horizontal => size.width() / 1920.0,
+        Direction::Vertical => size.height() / 1080.0,
     };
     let adjusted = unadjusted
         .iter()
@@ -1309,6 +1281,12 @@ impl MyEguiApp {
 
                 #[cfg(target_arch = "wasm32")]
                 {
+                    use egui::FontData;
+                    use egui::FontDefinitions;
+                    use egui::FontTweak;
+                    use egui_glyphon::glyphon::fontdb::Query;
+                    use egui_glyphon::glyphon::Family;
+
                     let fetch_ctx = egui_ctx.clone();
                     ehttp::fetch(ehttp::Request::get(hash), move |response| {
                         let res = response.unwrap();
@@ -1487,7 +1465,6 @@ impl MyEguiApp {
                             &file,
                             &mut helix_cell,
                             &mut slide_show,
-                            Arc::clone(&font_system),
                             &ctx,
                             &std::fs::canonicalize(presentation.as_ref().unwrap()).unwrap(),
                         )
