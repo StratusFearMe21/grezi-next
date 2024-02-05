@@ -12,7 +12,7 @@ pub mod formatter;
 pub mod you_can;
 
 use crate::{
-    parser::{Error, GrzCursor, NodeKind},
+    parser::{viewboxes::ViewboxIn, AstObject, Error, GrzCursor, NodeKind},
     MyEguiApp,
 };
 use helix_core::ropey::{Rope, RopeSlice};
@@ -127,7 +127,6 @@ pub fn start_lsp(
         .flatten()
         .map(|(f, _)| f.clone())
         .collect();
-    let mut sources: IndexSet<String, ahash::RandomState> = IndexSet::default();
 
     // Run the server and wait for the two threads to end (typically by trigger LSP Exit event).
     let server_capabilities = serde_json::to_value(ServerCapabilities {
@@ -3163,49 +3162,63 @@ pub fn hover(
 
                     let hashed_vb = hasher.hash_one(vb_name);
                     if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
-                        query_cursor.set_point_range(
-                            name_node.range().start_point..Point {
-                                row: usize::MAX,
-                                column: usize::MAX,
-                            },
-                        );
-
-                        let mut iter = query_cursor.matches(
-                            vb_in_slide_query,
-                            tree_info.root_node(),
-                            RopeProvider(current_rope.slice(..)),
-                        );
-
-                        let on_slide = iter.find(|query_match| {
-                            current_rope.byte_slice(query_match.captures[0].node.byte_range())
-                                == vb_name
-                        });
-
-                        if let Some(mut on_slide) = on_slide.map(|q_match| q_match.captures[0].node)
-                        {
-                            while on_slide.kind_id() != NodeKind::Slide as u16 {
-                                if let Some(parent) = on_slide.parent() {
-                                    on_slide = parent;
-                                } else {
-                                    return None;
-                                }
+                        let mut already_on_slide = false;
+                        match &app.slide_show.read().slide_show[app.index.load(Ordering::Relaxed)] {
+                            AstObject::Slide { objects, .. } => {
+                                already_on_slide = objects
+                                    .iter()
+                                    .flat_map(|o| &o.locations)
+                                    .any(|(_, vb)| matches!(vb, ViewboxIn::Custom(vb, _) if *vb == hashed_vb))
                             }
-                            let range = on_slide.range();
+                            _ => {}
+                        }
 
-                            query_cursor
-                                .set_point_range(Point { row: 0, column: 0 }..range.end_point);
+                        if !already_on_slide {
+                            query_cursor.set_point_range(
+                                name_node.range().start_point..Point {
+                                    row: usize::MAX,
+                                    column: usize::MAX,
+                                },
+                            );
 
                             let mut iter = query_cursor.matches(
-                                slide_index_query,
+                                vb_in_slide_query,
                                 tree_info.root_node(),
                                 RopeProvider(current_rope.slice(..)),
                             );
 
-                            let slide_num = iter
-                                .position(|n| n.captures[0].node.id() == on_slide.id())
-                                .unwrap_or_default();
+                            let on_slide = iter.find(|query_match| {
+                                current_rope.byte_slice(query_match.captures[0].node.byte_range())
+                                    == vb_name
+                            });
 
-                            app.index.store(slide_num, Ordering::Relaxed);
+                            if let Some(mut on_slide) =
+                                on_slide.map(|q_match| q_match.captures[0].node)
+                            {
+                                while on_slide.kind_id() != NodeKind::Slide as u16 {
+                                    if let Some(parent) = on_slide.parent() {
+                                        on_slide = parent;
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                                let range = on_slide.range();
+
+                                query_cursor
+                                    .set_point_range(Point { row: 0, column: 0 }..range.end_point);
+
+                                let mut iter = query_cursor.matches(
+                                    slide_index_query,
+                                    tree_info.root_node(),
+                                    RopeProvider(current_rope.slice(..)),
+                                );
+
+                                let slide_num = iter
+                                    .position(|n| n.captures[0].node.id() == on_slide.id())
+                                    .unwrap_or_default();
+
+                                app.index.store(slide_num, Ordering::Relaxed);
+                            }
                             app.next.store(false, Ordering::Relaxed);
                             app.obj_dbg.store(0, Ordering::Relaxed);
 

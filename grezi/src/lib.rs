@@ -1239,11 +1239,17 @@ struct Splits {
 fn resolve_layout_raw(
     size: Rect,
     direction: Direction,
-    constraints: Vec<Constraint>,
+    mut constraints: Vec<Constraint>,
     splits: Splits,
     margin: f32,
     ppi: f32,
 ) -> Layouts {
+    constraints.iter_mut().for_each(|c| match c {
+        Constraint::Length(l) => *l *= ppi,
+        Constraint::Max(m) => *m *= ppi,
+        Constraint::Min(m) => *m *= ppi,
+        _ => {}
+    });
     let unadjusted = layout::Layout::default()
         .direction(direction)
         .margin(margin)
