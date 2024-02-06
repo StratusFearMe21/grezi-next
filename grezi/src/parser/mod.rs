@@ -30,39 +30,6 @@ use thiserror::Error;
 
 include!(concat!(env!("OUT_DIR"), "/kinds.rs"));
 
-#[macro_export]
-/// A macro for converting a lineup value, a viewbox and an object to a pair of x, y coordinates.
-macro_rules! get_pos {
-    ($line_up:expr, $vbx:expr, $obj:expr) => {
-        match $line_up {
-            LineUp::TopLeft => [$vbx.min.x, $vbx.min.y],
-            LineUp::TopRight => [$vbx.max.x - $obj.width(), $vbx.min.y],
-            LineUp::BottomLeft => [$vbx.min.x, $vbx.max.y - $obj.height()],
-            LineUp::BottomRight => [$vbx.max.x - $obj.width(), $vbx.max.y - $obj.height()],
-            LineUp::CenterTop => [
-                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.width() / 2.0),
-                $vbx.min.y,
-            ],
-            LineUp::CenterBottom => [
-                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.width() / 2.0),
-                $vbx.max.y - $obj.height(),
-            ],
-            LineUp::CenterLeft => [
-                $vbx.min.x,
-                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.max.y / 2.0),
-            ],
-            LineUp::CenterRight => [
-                $vbx.max.x - $obj.width(),
-                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.height() / 2.0),
-            ],
-            LineUp::CenterCenter => [
-                ($vbx.min.x + $vbx.max.x) / 2.0 - ($obj.width() / 2.0),
-                ($vbx.min.y + $vbx.max.y) / 2.0 - ($obj.height() / 2.0),
-            ],
-        }
-    };
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum AstObject {
     Slide {

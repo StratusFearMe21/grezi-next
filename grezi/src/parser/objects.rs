@@ -7,7 +7,7 @@ use std::{
 
 use eframe::{
     egui::{Image, ImageFit, Ui},
-    emath::Align,
+    emath::{Align, Align2},
     epaint::{mutex::RwLock, Color32, FontFamily, FontId, Pos2, Rect, Vec2},
 };
 use egui_glyphon::glyphon::{Attrs, Buffer, Edit, Family, FontSystem, Shaping, Style, Weight};
@@ -19,14 +19,11 @@ use super::{
     highlighting::{self, HelixCell},
     GrzCursor,
 };
-use super::{
-    viewboxes::{LineUp, ViewboxIn},
-    NodeKind,
-};
+use super::{viewboxes::ViewboxIn, NodeKind};
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Object {
-    pub position: Option<LineUp>,
+    pub position: Option<Align2>,
     pub viewbox: Option<ViewboxIn>,
     pub object: ObjectType,
 }

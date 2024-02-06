@@ -5,7 +5,7 @@ use std::{
 };
 
 use ecolor::Color32;
-use eframe::epaint::Rect;
+use eframe::{emath::Align2, epaint::Rect};
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,6 +20,10 @@ pub enum Actions {
         persist: bool,
         color: Color32,
     },
+    Line {
+        objects: [u64; 2],
+        locations: [Align2; 2],
+    },
     SpeakerNotes(Arc<str>),
 }
 
@@ -31,6 +35,10 @@ pub enum ResolvedActions {
         locations_of_object: [[f32; 2]; 2],
         scaled_time: [f32; 2],
         color: Color32,
+    },
+    Line {
+        locations_of_objects: [[[f32; 2]; 2]; 2],
+        scaled_times: [[f32; 2]; 2],
     },
     SpeakerNotes(Arc<str>),
 }

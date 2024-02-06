@@ -2,7 +2,6 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     hash::{BuildHasher, BuildHasherDefault, Hasher},
-    str::FromStr,
 };
 
 use crate::layout::UnresolvedLayout;
@@ -12,15 +11,16 @@ use super::GrzCursor;
 use super::{
     actions::Actions,
     objects::{Object, ObjectState, ResolvedObject},
-    viewboxes::{LineUp, ViewboxIn},
+    viewboxes::ViewboxIn,
     AstObject, FieldName, NodeKind, PassThroughHasher,
 };
+use eframe::emath::Align2;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SlideObj {
     pub object: u64,
-    pub locations: [(LineUp, ViewboxIn); 2],
+    pub locations: [(Align2, ViewboxIn); 2],
     pub scaled_time: [f32; 2],
     pub state: ObjectState,
 }
@@ -131,6 +131,8 @@ pub fn parse_slide_object(
     last_obj: Option<&SlideObj>,
     mut insert_fn: impl FnMut(SlideObj),
 ) -> Result<(), super::Error> {
+    use crate::parser::viewboxes::align_from_str;
+
     use super::Error;
 
     tree_cursor.goto_first_child()?;
@@ -269,7 +271,7 @@ pub fn parse_slide_object(
         } else {
             let mut lineup_first_locations = match edges.get(..2) {
                 Some(s) => {
-                    lineup_first = LineUp::from_str(s)
+                    lineup_first = align_from_str(s)
                         .map_err(|_| Error::InvalidParameter(tree_cursor.node().range().into()))?;
                     (lineup_first, viewbox_first)
                 }
@@ -282,7 +284,7 @@ pub fn parse_slide_object(
             };
             let lineup_second = match edges.get(2..4) {
                 Some(s) => {
-                    line_up_now = LineUp::from_str(s)
+                    line_up_now = align_from_str(s)
                         .map_err(|_| Error::InvalidParameter(tree_cursor.node().range().into()))?;
                     (line_up_now, viewbox)
                 }

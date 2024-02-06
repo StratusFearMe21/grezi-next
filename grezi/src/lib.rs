@@ -46,7 +46,7 @@ use parser::{
     color::Color,
     objects::{Editor, Object, ObjectState, ObjectType},
     slides::{ResolvedSlideObj, SlideObj},
-    viewboxes::{LineUp, ViewboxIn},
+    viewboxes::ViewboxIn,
     AstObject, PassThroughHasher,
 };
 use serde::{Deserialize, Serialize};
@@ -714,6 +714,40 @@ impl Resolved {
                     );
                 }
                 ResolvedActions::SpeakerNotes(_) => {}
+                ResolvedActions::Line {
+                    locations_of_objects,
+                    scaled_times,
+                } => {
+                    let first_time = if scaled_times[0][0] < time {
+                        (time - scaled_times[0][0]).clamp(0.0, scaled_times[0][1])
+                    } else {
+                        0.0
+                    };
+                    let second_time = if scaled_times[1][0] < time {
+                        (time - scaled_times[1][0]).clamp(0.0, scaled_times[1][1])
+                    } else {
+                        0.0
+                    };
+                    let first_obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
+                        EaseOutCubic,
+                        locations_of_objects[0][0],
+                        locations_of_objects[0][1],
+                        first_time,
+                        scaled_times[0][1],
+                    ));
+                    let second_obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
+                        EaseOutCubic,
+                        locations_of_objects[1][0],
+                        locations_of_objects[1][1],
+                        second_time,
+                        scaled_times[1][1],
+                    ));
+
+                    ui.painter().line_segment(
+                        [first_obj_pos, second_obj_pos],
+                        Stroke::new(5.0 / ui.ctx().pixels_per_point(), Color32::WHITE),
+                    );
+                }
             }
         }
     }
@@ -826,15 +860,13 @@ impl Resolved {
             match &obj.object {
                 parser::objects::ObjectType::Spinner => {
                     let size = ResolvedObject::Spinner.bounds(second_viewbox.adjusted.size(), ui);
-                    let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox.adjusted, size).into(),
-                        size.size(),
-                    );
+                    let first_pos = object.locations[0]
+                        .0
+                        .align_size_within_rect(size.size(), first_viewbox.adjusted);
                     let first_pos = [first_pos.min, first_pos.max];
-                    let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox.adjusted, size).into(),
-                        size.size(),
-                    );
+                    let second_pos = object.locations[1]
+                        .0
+                        .align_size_within_rect(size.size(), second_viewbox.adjusted);
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved.slide.push(ResolvedSlideObj {
                         object: ResolvedObject::Spinner,
@@ -855,15 +887,13 @@ impl Resolved {
                     };
 
                     let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
-                    let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox.adjusted, size).into(),
-                        size.size(),
-                    );
+                    let first_pos = object.locations[0]
+                        .0
+                        .align_size_within_rect(size.size(), first_viewbox.adjusted);
                     let first_pos = [first_pos.min, first_pos.max];
-                    let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox.adjusted, size).into(),
-                        size.size(),
-                    );
+                    let second_pos = object.locations[1]
+                        .0
+                        .align_size_within_rect(size.size(), second_viewbox.adjusted);
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved.slide.push(ResolvedSlideObj {
                         object: resolved_obj,
@@ -895,15 +925,13 @@ impl Resolved {
                         egui_glyphon::glyphon::Editor::new(buffer),
                     ))));
                     let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
-                    let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox.adjusted, size).into(),
-                        size.size(),
-                    );
-                    let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox.adjusted, size).into(),
-                        size.size(),
-                    );
+                    let first_pos = object.locations[0]
+                        .0
+                        .align_size_within_rect(size.size(), first_viewbox.adjusted);
                     let first_pos = [first_pos.min, first_pos.max];
+                    let second_pos = object.locations[1]
+                        .0
+                        .align_size_within_rect(size.size(), second_viewbox.adjusted);
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved.slide.push(ResolvedSlideObj {
                         object: resolved_obj,
@@ -1014,16 +1042,13 @@ impl Resolved {
                     //         }
                     //     },
                     // };
-                    let first_pos = Rect::from_min_size(
-                        get_pos!(object.locations[0].0, first_viewbox.adjusted, first_size).into(),
-                        first_size.size(),
-                    );
+                    let first_pos = object.locations[0]
+                        .0
+                        .align_size_within_rect(first_size.size(), first_viewbox.adjusted);
                     let first_pos = [first_pos.min, first_pos.max];
-                    let second_pos = Rect::from_min_size(
-                        get_pos!(object.locations[1].0, second_viewbox.adjusted, second_size)
-                            .into(),
-                        second_size.size(),
-                    );
+                    let second_pos = object.locations[1]
+                        .0
+                        .align_size_within_rect(second_size.size(), second_viewbox.adjusted);
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved.slide.push(ResolvedSlideObj {
                         object: resolved_obj.clone(),
@@ -1122,6 +1147,7 @@ impl Resolved {
                 Actions::SpeakerNotes(speaker_notes) => {
                     resolved.speaker_notes = Some(Arc::clone(speaker_notes))
                 }
+                Actions::Line { objects, locations } => {}
             }
         }
         resolved
@@ -1169,8 +1195,8 @@ impl SlideShow {
                 objects: vec![SlideObj {
                     object: spinner_hash,
                     locations: [
-                        (LineUp::CenterTop, ViewboxIn::Custom(halves_hash, 0)),
-                        (LineUp::CenterCenter, ViewboxIn::Custom(halves_hash, 0)),
+                        (Align2::CENTER_TOP, ViewboxIn::Custom(halves_hash, 0)),
+                        (Align2::CENTER_CENTER, ViewboxIn::Custom(halves_hash, 0)),
                     ],
                     scaled_time: [0.0, 0.5],
                     state: ObjectState::Entering,
