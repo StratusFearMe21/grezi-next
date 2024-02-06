@@ -334,7 +334,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
         }
     }
 
-    Ok(dbg!(formatting_cursor.edits))
+    Ok(formatting_cursor.edits)
 }
 
 #[derive(Debug, Clone, Copy)]
