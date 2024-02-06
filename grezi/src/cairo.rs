@@ -119,6 +119,18 @@ pub fn cairo_draw_shape(
                 cairo_draw_shape(ctx, shape, textures, fonts);
             }
         }
+        egui::Shape::LineSegment { points, stroke } => {
+            let color: palette::Srgba<u8> =
+                palette::cast::from_array(stroke.color.to_srgba_unmultiplied());
+            let color: palette::Srgba<f64> = color.into_format();
+            // let color: palette::LinSrgba<f64> = color.into_linear();
+            ctx.set_source_rgba(color.red, color.green, color.blue, color.alpha);
+            ctx.set_line_width(stroke.width as f64);
+
+            ctx.move_to(points[0].x as f64, points[0].y as f64);
+            ctx.line_to(points[1].x as f64, points[1].y as f64);
+            ctx.stroke().unwrap();
+        }
         egui::Shape::Rect(rect) => {
             let texture = textures.get(&rect.fill_texture_id);
             if let Some(texture) = texture {

@@ -7,10 +7,13 @@ use std::{
 
 use eframe::{
     egui::{Image, ImageFit, Ui},
-    emath::{Align, Align2},
+    emath::Align2,
     epaint::{mutex::RwLock, Color32, FontFamily, FontId, Pos2, Rect, Vec2},
 };
-use egui_glyphon::glyphon::{Attrs, Buffer, Edit, Family, FontSystem, Shaping, Style, Weight};
+use egui_glyphon::glyphon::{
+    cosmic_text::Align, cosmic_text::BufferRef, Attrs, Buffer, Edit, Family, FontSystem, Shaping,
+    Style, Weight,
+};
 use serde::{Deserialize, Serialize};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -41,13 +44,19 @@ pub fn add_job_to_buffer(job: &Job, buffer: &mut Buffer, font_system: &mut FontS
                     .color(egui_glyphon::glyphon::Color::rgba(c[0], c[1], c[2], c[3])),
             )
         }),
+        Attrs::new(),
         Shaping::Advanced,
     );
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ObjectType {
-    Text(Job, f32, Option<f32>),
+    Text {
+        job: Job,
+        font_size: f32,
+        line_height: Option<f32>,
+        align: Option<Align>,
+    },
     Image {
         uri: String,
         bytes: Arc<[u8]>,
@@ -61,11 +70,14 @@ pub enum ObjectType {
     Spinner,
 }
 
-pub struct Editor(pub egui_glyphon::glyphon::Editor);
+pub struct Editor(pub egui_glyphon::glyphon::Editor<'static>);
 
 impl AsRef<Buffer> for Editor {
     fn as_ref(&self) -> &Buffer {
-        self.0.buffer()
+        match self.0.buffer_ref() {
+            BufferRef::Owned(b) => b,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -76,7 +88,7 @@ impl Debug for Editor {
 }
 
 impl Deref for Editor {
-    type Target = egui_glyphon::glyphon::Editor;
+    type Target = egui_glyphon::glyphon::Editor<'static>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -91,31 +103,15 @@ impl DerefMut for Editor {
 
 impl Editor {
     pub fn highlight_boxes(&self) -> Vec<Rect> {
-        use std::cmp;
-
         let mut rects = Vec::new();
 
-        let line_height = self.0.buffer().metrics().line_height;
+        let line_height = self.as_ref().metrics().line_height;
 
-        for run in self.0.buffer().layout_runs() {
+        for run in self.as_ref().layout_runs() {
             let line_i = run.line_i;
             let line_top = run.line_top;
 
-            if let Some(select) = self.0.select_opt() {
-                let (start, end) = match select.line.cmp(&self.0.cursor().line) {
-                    cmp::Ordering::Greater => (self.0.cursor(), select),
-                    cmp::Ordering::Less => (select, self.0.cursor()),
-                    cmp::Ordering::Equal => {
-                        /* select.line == self.0.cursor.line */
-                        if select.index < self.0.cursor().index {
-                            (select, self.0.cursor())
-                        } else {
-                            /* select.index >= self.0.cursor.index */
-                            (self.0.cursor(), select)
-                        }
-                    }
-                };
-
+            if let Some((start, end)) = self.selection_bounds() {
                 if line_i >= start.line && line_i <= end.line {
                     let mut range_opt: Option<(f32, f32)> = None;
                     for glyph in run.glyphs.iter() {
@@ -132,7 +128,7 @@ impl Editor {
                             {
                                 range_opt = match range_opt.take() {
                                     Some((min, max)) => Some((min.min(c_x), max.max(c_x + c_w))),
-                                    None => Some((c_x, (c_x + c_w))),
+                                    None => Some((c_x, c_x + c_w)),
                                 };
                             } else if let Some((min, max)) = range_opt.take() {
                                 rects.push(Rect::from_min_size(
@@ -146,7 +142,7 @@ impl Editor {
 
                     if run.glyphs.is_empty() && end.line > line_i {
                         // Highlight all of internal empty lines
-                        range_opt = Some((0.0, self.0.buffer().size().0));
+                        range_opt = Some((0.0, self.as_ref().size().0));
                     }
 
                     if let Some((mut min, mut max)) = range_opt.take() {
@@ -155,7 +151,7 @@ impl Editor {
                             if run.rtl {
                                 min = 0.0;
                             } else {
-                                max = self.0.buffer().size().0;
+                                max = self.as_ref().size().0;
                             }
                         }
                         rects.push(Rect::from_min_size(
@@ -216,7 +212,7 @@ pub fn measure_buffer(buffer: &Buffer, vb: Vec2) -> Rect {
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(buffer) => measure_buffer(buffer.read().0.buffer(), vb),
+            ResolvedObject::Text(buffer) => measure_buffer(buffer.read().as_ref(), vb),
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
                     let mut size = None;
@@ -437,7 +433,7 @@ pub fn parse_objects(
         "Paragraph" | "Header" => {
             let mut text = None;
             let mut color = None;
-            let mut align = Align::LEFT;
+            let mut align = None;
             let mut font = (
                 FontFamily::Proportional,
                 Range {
@@ -467,9 +463,11 @@ pub fn parse_objects(
                 match parameter.0.as_ref() {
                     "value" | "code" => text = Some(parameter.1),
                     "align" => match value.as_ref() {
-                        "left" | "Left" => align = Align::LEFT,
-                        "center" | "Center" => align = Align::Center,
-                        "right" | "Right" => align = Align::RIGHT,
+                        "left" | "Left" => align = Some(Align::Left),
+                        "center" | "Center" => align = Some(Align::Center),
+                        "right" | "Right" => align = Some(Align::Right),
+                        "justified" | "Justified" => align = Some(Align::Justified),
+                        "end" | "End" => align = Some(Align::End),
                         _ => {
                             errors_present
                                 .push(super::Error::InvalidParameter(parameter.1.range().into()));
@@ -668,7 +666,12 @@ pub fn parse_objects(
                     job
                 }
             };
-            ObjectType::Text(job, font_size, None)
+            ObjectType::Text {
+                job,
+                font_size,
+                line_height: None,
+                align,
+            }
         }
         _ => return Err(super::Error::NotFound(obj_range.into())),
     };

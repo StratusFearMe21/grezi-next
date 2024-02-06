@@ -27,42 +27,42 @@ pub enum Direction {
     Center,
 }
 
-pub fn align_from_str(s: &str) -> Result<Align2, ()> {
-    match Direction::from_str(&s[..1])? {
-        Direction::Up => match Direction::from_str(&s[1..2])? {
-            Direction::Up => Ok(Align2::CENTER_TOP),
-            Direction::Down => Ok(Align2::CENTER_CENTER),
-            Direction::Left => Ok(Align2::LEFT_TOP),
-            Direction::Right => Ok(Align2::RIGHT_TOP),
-            Direction::Center => Ok(Align2::CENTER_TOP),
+pub fn align_from_str(s: &str) -> Option<Align2> {
+    match Direction::from_str(s.get(..1)?).ok()? {
+        Direction::Up => match Direction::from_str(s.get(1..2)?).ok()? {
+            Direction::Up => Some(Align2::CENTER_TOP),
+            Direction::Down => Some(Align2::CENTER_CENTER),
+            Direction::Left => Some(Align2::LEFT_TOP),
+            Direction::Right => Some(Align2::RIGHT_TOP),
+            Direction::Center => Some(Align2::CENTER_TOP),
         },
-        Direction::Down => match Direction::from_str(&s[1..2])? {
-            Direction::Up => Ok(Align2::CENTER_CENTER),
-            Direction::Down => Ok(Align2::CENTER_BOTTOM),
-            Direction::Left => Ok(Align2::LEFT_BOTTOM),
-            Direction::Right => Ok(Align2::RIGHT_BOTTOM),
-            Direction::Center => Ok(Align2::CENTER_BOTTOM),
+        Direction::Down => match Direction::from_str(s.get(1..2)?).ok()? {
+            Direction::Up => Some(Align2::CENTER_CENTER),
+            Direction::Down => Some(Align2::CENTER_BOTTOM),
+            Direction::Left => Some(Align2::LEFT_BOTTOM),
+            Direction::Right => Some(Align2::RIGHT_BOTTOM),
+            Direction::Center => Some(Align2::CENTER_BOTTOM),
         },
-        Direction::Left => match Direction::from_str(&s[1..2])? {
-            Direction::Up => Ok(Align2::LEFT_TOP),
-            Direction::Down => Ok(Align2::LEFT_BOTTOM),
-            Direction::Left => Ok(Align2::LEFT_CENTER),
-            Direction::Right => Ok(Align2::CENTER_CENTER),
-            Direction::Center => Ok(Align2::LEFT_CENTER),
+        Direction::Left => match Direction::from_str(s.get(1..2)?).ok()? {
+            Direction::Up => Some(Align2::LEFT_TOP),
+            Direction::Down => Some(Align2::LEFT_BOTTOM),
+            Direction::Left => Some(Align2::LEFT_CENTER),
+            Direction::Right => Some(Align2::CENTER_CENTER),
+            Direction::Center => Some(Align2::LEFT_CENTER),
         },
-        Direction::Right => match Direction::from_str(&s[1..2])? {
-            Direction::Up => Ok(Align2::RIGHT_TOP),
-            Direction::Down => Ok(Align2::RIGHT_BOTTOM),
-            Direction::Left => Ok(Align2::CENTER_CENTER),
-            Direction::Right => Ok(Align2::RIGHT_CENTER),
-            Direction::Center => Ok(Align2::RIGHT_CENTER),
+        Direction::Right => match Direction::from_str(s.get(1..2)?).ok()? {
+            Direction::Up => Some(Align2::RIGHT_TOP),
+            Direction::Down => Some(Align2::RIGHT_BOTTOM),
+            Direction::Left => Some(Align2::CENTER_CENTER),
+            Direction::Right => Some(Align2::RIGHT_CENTER),
+            Direction::Center => Some(Align2::RIGHT_CENTER),
         },
-        Direction::Center => match Direction::from_str(&s[1..2])? {
-            Direction::Up => Ok(Align2::CENTER_TOP),
-            Direction::Down => Ok(Align2::CENTER_BOTTOM),
-            Direction::Left => Ok(Align2::LEFT_CENTER),
-            Direction::Right => Ok(Align2::RIGHT_CENTER),
-            Direction::Center => Ok(Align2::CENTER_CENTER),
+        Direction::Center => match Direction::from_str(s.get(1..2)?).ok()? {
+            Direction::Up => Some(Align2::CENTER_TOP),
+            Direction::Down => Some(Align2::CENTER_BOTTOM),
+            Direction::Left => Some(Align2::LEFT_CENTER),
+            Direction::Right => Some(Align2::RIGHT_CENTER),
+            Direction::Center => Some(Align2::CENTER_CENTER),
         },
     }
 }

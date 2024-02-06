@@ -157,7 +157,12 @@ pub fn parse_citations(
                 super::objects::Object {
                     position: None,
                     viewbox: None,
-                    object: super::objects::ObjectType::Text(job, 24.0, Some(2.0)),
+                    object: super::objects::ObjectType::Text {
+                        job,
+                        font_size: 24.0,
+                        line_height: Some(2.0),
+                        align: None,
+                    },
                 },
             );
             slideshow.objects.insert(
@@ -165,11 +170,12 @@ pub fn parse_citations(
                 super::objects::Object {
                     position: None,
                     viewbox: None,
-                    object: super::objects::ObjectType::Text(
-                        vec![(header.to_string(), Color32::WHITE, "sans-serif".to_owned())],
-                        48.0,
-                        None,
-                    ),
+                    object: super::objects::ObjectType::Text {
+                        job: vec![(header.to_string(), Color32::WHITE, "sans-serif".to_owned())],
+                        font_size: 48.0,
+                        line_height: None,
+                        align: None,
+                    },
                 },
             );
             slideshow.slide_show.push(super::AstObject::Slide {

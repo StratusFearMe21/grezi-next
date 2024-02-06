@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::GrzCursor;
-use super::{AstObject, NodeKind, PassThroughHasher};
+use super::{objects::ObjectState, AstObject, NodeKind, PassThroughHasher};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Actions {
@@ -21,8 +21,9 @@ pub enum Actions {
         color: Color32,
     },
     Line {
-        objects: [u64; 2],
+        objects: [usize; 2],
         locations: [Align2; 2],
+        color: Color32,
     },
     SpeakerNotes(Arc<str>),
 }
@@ -39,6 +40,9 @@ pub enum ResolvedActions {
     Line {
         locations_of_objects: [[[f32; 2]; 2]; 2],
         scaled_times: [[f32; 2]; 2],
+        color: Color32,
+        state: ObjectState,
+        scale: f32,
     },
     SpeakerNotes(Arc<str>),
 }
@@ -48,7 +52,7 @@ pub fn parse_actions(
     tree_cursor: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
-    on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
+    on_screen: &HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
     slide_in_ast: usize,
     errors_present: &mut Vec<super::Error>,
 ) -> Result<AstObject, super::Error> {
@@ -85,7 +89,7 @@ fn parse_single_action(
     action_walker: &mut GrzCursor<'_>,
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
-    on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
+    on_screen: &HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<Actions, super::Error> {
     use std::borrow::Cow;
 
@@ -170,7 +174,7 @@ fn parse_single_action(
 
         Ok(Actions::Highlight {
             locations,
-            index: *object,
+            index: object.0,
             persist: false,
             color,
         })

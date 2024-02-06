@@ -130,9 +130,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle"
-version = "1.0.5"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2faccea4cc4ab4a667ce676a30e8ec13922a692c99bb8f5b11f1502c72e04220"
+checksum = "8901269c6307e8d93993578286ac0edf7f195079ffff5ebdeea6a59ffb7e36bc"
 
 [[package]]
 name = "anstyle-parse"
@@ -780,9 +780,9 @@ dependencies = [
 [[package]]
 name = "cosmic-text"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75acbfb314aeb4f5210d379af45ed1ec2c98c7f1790bf57b8a4c562ac0c51b71"
+source = "git+https://github.com/StratusFearMe21/cosmic-text?branch=serde#5e40dd454c243a282b401291066a3e9ba807fcce"
 dependencies = [
+ "bitflags 2.4.2",
  "fontdb",
  "libm",
  "log",
@@ -790,8 +790,10 @@ dependencies = [
  "rustc-hash",
  "rustybuzz",
  "self_cell",
+ "serde",
  "swash",
  "sys-locale",
+ "ttf-parser 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-script",
@@ -1019,7 +1021,7 @@ checksum = "56ce8c6da7551ec6c462cbaf3bfbc75131ebbfa1c944aeaa9dab51ca1c5f0c3b"
 [[package]]
 name = "ecolor"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1028,7 +1030,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "bytemuck",
  "cocoa",
@@ -1062,7 +1064,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "accesskit",
  "ahash",
@@ -1097,7 +1099,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "bytemuck",
  "document-features",
@@ -1114,7 +1116,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "arboard",
  "egui",
@@ -1130,7 +1132,7 @@ dependencies = [
 [[package]]
 name = "egui_extras"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "egui",
  "ehttp 0.4.0",
@@ -1145,7 +1147,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1195,7 +1197,7 @@ checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
 [[package]]
 name = "emath"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "bytemuck",
  "serde",
@@ -1267,7 +1269,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.26.0"
-source = "git+https://github.com/emilk/egui#56bf8b79f3ad56c34a2753248cfe38a9e0ccac8b"
+source = "git+https://github.com/emilk/egui#b35a7dd7de00efb8d4219b1668b5373cf739f32b"
 dependencies = [
  "ab_glyph",
  "ahash",
@@ -1444,16 +1446,16 @@ dependencies = [
 
 [[package]]
 name = "fontdb"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "020e203f177c0fb250fb19455a252e838d2bbbce1f80f25ecc42402aafa8cd38"
+version = "0.16.0"
+source = "git+https://github.com/StratusFearMe21/fontdb?branch=serde#145231493e0315a1c6a5ca41cbed8db99fd4a22d"
 dependencies = [
  "fontconfig-parser",
  "log",
- "memmap2 0.8.0",
+ "memmap2 0.9.4",
+ "serde",
  "slotmap",
  "tinyvec",
- "ttf-parser 0.19.2",
+ "ttf-parser 0.20.0 (git+https://github.com/StratusFearMe21/ttf-parser?branch=serde)",
 ]
 
 [[package]]
@@ -2194,7 +2196,7 @@ dependencies = [
 [[package]]
 name = "glyphon"
 version = "0.5.0"
-source = "git+https://github.com/StratusFearMe21/glyphon#8ca654fe1d44d3de06519abca6dddd8377e2a480"
+source = "git+https://github.com/StratusFearMe21/glyphon#e6851e7c2880119ff5f927ef5415f0ef4a970cc7"
 dependencies = [
  "cosmic-text",
  "etagere",
@@ -2610,9 +2612,9 @@ dependencies = [
 
 [[package]]
 name = "hermit-abi"
-version = "0.3.4"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d3d0e0f38255e7fa3cf31335b3a56f05febd18025f4db5ef7a0cfb4f8da651f"
+checksum = "d0c62115964e08cb8039170eb33c1d0e2388a256930279edca206fff675f82c3"
 
 [[package]]
 name = "hexf-parse"
@@ -3027,15 +3029,6 @@ dependencies = [
 
 [[package]]
 name = "memmap2"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43a5a03cefb0d953ec0be133036f14e109412fa594edc2f77227249db66cc3ed"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "memmap2"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fe751422e4a8caa417e13c3ea66452215d7d63e19e604f4980461212f3ae1322"
@@ -3391,7 +3384,7 @@ version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4586edfe4c648c71797a74c84bacb32b52b212eff5dfe2bb9f2c599844023e7"
 dependencies = [
- "ttf-parser 0.20.0",
+ "ttf-parser 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -3545,9 +3538,9 @@ dependencies = [
 
 [[package]]
 name = "polling"
-version = "3.3.2"
+version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "545c980a3880efd47b2e262f6a4bb6daad6555cf3367aa9c4e52895f69537a41"
+checksum = "30054e72317ab98eddd8561db0f6524df3367636884b7b21b703e4b280a84a14"
 dependencies = [
  "cfg-if",
  "concurrent-queue",
@@ -3694,6 +3687,9 @@ name = "rangemap"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "977b1e897f9d764566891689e642653e5ed90c6895106acd005eb4c1d0203991"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "raw-window-handle"
@@ -3920,15 +3916,15 @@ dependencies = [
 
 [[package]]
 name = "rustybuzz"
-version = "0.11.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ee8fe2a8461a0854a37101fe7a1b13998d0cfa987e43248e81d2a5f4570f6fa"
+checksum = "f0ae5692c5beaad6a9e22830deeed7874eae8a4e3ba4076fb48e12c56856222c"
 dependencies = [
- "bitflags 1.3.2",
+ "bitflags 2.4.2",
  "bytemuck",
  "libm",
  "smallvec",
- "ttf-parser 0.20.0",
+ "ttf-parser 0.20.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicode-bidi-mirroring",
  "unicode-ccc",
  "unicode-properties",
@@ -4119,6 +4115,7 @@ version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbff4acf519f630b3a3ddcfaea6c06b42174d9a44bc70c620e9ed1649d58b82a"
 dependencies = [
+ "serde",
  "version_check",
 ]
 
@@ -4358,13 +4355,12 @@ checksum = "69758bda2e78f098e4ccb393021a0963bb3442eac05f135c30f61b7370bbafae"
 
 [[package]]
 name = "tempfile"
-version = "3.9.0"
+version = "3.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01ce4141aa927a6d1bd34a041795abd0db1cccba5d5f24b009f694bdf3a1f3fa"
+checksum = "a365e8cd18e44762ef95d87f284f4b5cd04107fec2ff3052bd6a3e6069669e67"
 dependencies = [
  "cfg-if",
  "fastrand",
- "redox_syscall 0.4.1",
  "rustix",
  "windows-sys 0.52.0",
 ]
@@ -4677,15 +4673,17 @@ dependencies = [
 
 [[package]]
 name = "ttf-parser"
-version = "0.19.2"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49d64318d8311fc2668e48b63969f4343e0a85c4a109aa8460d6672e364b8bd1"
+checksum = "17f77d76d837a7830fe1d4f12b7b4ba4192c1888001c7164257e4bc6d21d96b4"
 
 [[package]]
 name = "ttf-parser"
 version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f77d76d837a7830fe1d4f12b7b4ba4192c1888001c7164257e4bc6d21d96b4"
+source = "git+https://github.com/StratusFearMe21/ttf-parser?branch=serde#0599c4c650883cf6add9d7b78329a17b736bf060"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "type-map"

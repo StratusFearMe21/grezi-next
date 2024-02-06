@@ -391,10 +391,12 @@ pub fn parse_file(
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
 ) -> Result<(), Vec<Error>> {
+    use self::objects::ObjectState;
+
     let mut bg = (Color::default(), None);
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-    let mut on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
+    let mut on_screen: HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
     let mut is_new = old_tree.is_none();
@@ -491,7 +493,8 @@ pub fn parse_file(
                     }) = slide_show.slide_show.get_mut(ast_object_at)
                     {
                         for (index, obj) in objects.iter_mut().enumerate() {
-                            on_screen.insert(obj.object, index);
+                            on_screen
+                                .insert(obj.object, (index, obj.state == ObjectState::Exiting));
                             if let Some(object) = slide_show.objects.get_mut(&obj.object) {
                                 object.viewbox = Some(obj.locations[1].1);
                                 object.position = Some(obj.locations[1].0);

@@ -28,7 +28,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{fontdb::ID, Buffer, Edit, FontSystem, Metrics},
+    glyphon::{cosmic_text::Selection, fontdb::ID, Buffer, Edit, FontSystem, Metrics},
     BufferWithTextArea, GlyphonRendererCallback,
 };
 // use frame_history::FrameHistory;
@@ -96,7 +96,7 @@ pub struct MyEguiApp {
     pub export: bool,
     pub clear_color: Color32,
     pub font_system: Arc<Mutex<FontSystem>>,
-    // pub frame_history: FrameHistory,
+    pub in_drag: bool, // pub frame_history: FrameHistory,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -558,7 +558,7 @@ impl Resolved {
                                 }
                             }
 
-                            if buffer_read.select_opt().is_some() {
+                            if buffer_read.selection_bounds().is_some() {
                                 if ui.input_mut(|i| i.events.contains(&egui::Event::Copy)) {
                                     ui.ctx().output_mut(|t| {
                                         t.copied_text =
@@ -569,7 +569,7 @@ impl Resolved {
                         }
 
                         if response.clicked_elsewhere() && !window_clicked {
-                            buffer.write().0.set_select_opt(None);
+                            buffer.write().0.set_selection(Selection::None);
                         }
 
                         buffers.push(BufferWithTextArea::new(
@@ -717,6 +717,9 @@ impl Resolved {
                 ResolvedActions::Line {
                     locations_of_objects,
                     scaled_times,
+                    color,
+                    state,
+                    scale,
                 } => {
                     let first_time = if scaled_times[0][0] < time {
                         (time - scaled_times[0][0]).clamp(0.0, scaled_times[0][1])
@@ -743,10 +746,30 @@ impl Resolved {
                         scaled_times[1][1],
                     ));
 
-                    ui.painter().line_segment(
-                        [first_obj_pos, second_obj_pos],
-                        Stroke::new(5.0 / ui.ctx().pixels_per_point(), Color32::WHITE),
-                    );
+                    let gamma = match state {
+                        ObjectState::Entering => keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            0.0,
+                            1.0,
+                            second_time,
+                            scaled_times[1][1],
+                        ),
+                        ObjectState::Exiting => keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            1.0,
+                            0.0,
+                            second_time,
+                            scaled_times[1][1],
+                        ),
+                        ObjectState::OnScreen => 1.0,
+                    };
+
+                    if gamma > 0.0 {
+                        ui.painter().line_segment(
+                            [first_obj_pos, second_obj_pos],
+                            Stroke::new(2.5 * *scale, color.gamma_multiply(gamma)),
+                        );
+                    }
                 }
             }
         }
@@ -902,7 +925,12 @@ impl Resolved {
                         state: object.state,
                     });
                 }
-                parser::objects::ObjectType::Text(job, font_size, line_height) => {
+                parser::objects::ObjectType::Text {
+                    job,
+                    font_size,
+                    line_height,
+                    align,
+                } => {
                     let factor = second_viewbox.adjusted.size() / second_viewbox.unadjusted.size();
                     let font_size = *font_size * factor.x;
                     let mut buffer = Buffer::new(
@@ -919,7 +947,10 @@ impl Resolved {
                         f32::MAX,
                     );
                     parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
-                    buffer.shape_until_scroll(font_system);
+                    for line in &mut buffer.lines {
+                        line.set_align(*align);
+                    }
+                    buffer.shape_until_scroll(font_system, true);
 
                     let resolved_obj = ResolvedObject::Text(Arc::new(RwLock::new(Editor(
                         egui_glyphon::glyphon::Editor::new(buffer),
@@ -1025,23 +1056,6 @@ impl Resolved {
                         .bounds(scale.unwrap_or_else(|| first_viewbox.adjusted.size()), ui);
                     let second_size = resolved_obj
                         .bounds(scale.unwrap_or_else(|| second_viewbox.adjusted.size()), ui);
-                    // let size = Rect {
-                    //     min: size.min,
-                    //     max: {
-                    //         if second_viewbox.max.x / second_viewbox.max.y > size.max.x / size.max.y
-                    //         {
-                    //             Pos2::new(
-                    //                 second_viewbox.max.y * size.max.x / size.max.y,
-                    //                 second_viewbox.max.y,
-                    //             )
-                    //         } else {
-                    //             Pos2::new(
-                    //                 second_viewbox.max.x,
-                    //                 second_viewbox.max.x * size.max.y / size.max.x,
-                    //             )
-                    //         }
-                    //     },
-                    // };
                     let first_pos = object.locations[0]
                         .0
                         .align_size_within_rect(first_size.size(), first_viewbox.adjusted);
@@ -1072,8 +1086,9 @@ impl Resolved {
                         let (from_rect, to_rect) = match &text_object.object {
                             ResolvedObject::Text(buffer) => (
                                 {
-                                    let ref buffer = buffer.read().0;
-                                    let glyph = buffer.buffer().lines.get(locations[0][0]).unwrap();
+                                    let buffer = buffer.read();
+                                    let buffer = buffer.as_ref();
+                                    let glyph = buffer.lines.get(locations[0][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
                                         .iter()
@@ -1086,15 +1101,16 @@ impl Resolved {
                                         Pos2::new(
                                             glyph.x,
                                             glyph.y
-                                                + buffer.buffer().metrics().line_height
+                                                + buffer.metrics().line_height
                                                     * locations[0][0] as f32,
                                         ),
                                         Vec2::new(0.0, glyph.y_offset),
                                     )
                                 },
                                 {
-                                    let ref buffer = buffer.read().0;
-                                    let glyph = buffer.buffer().lines.get(locations[1][0]).unwrap();
+                                    let buffer = buffer.read();
+                                    let buffer = buffer.as_ref();
+                                    let glyph = buffer.lines.get(locations[1][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
                                         .iter()
@@ -1107,12 +1123,12 @@ impl Resolved {
                                         Pos2::new(
                                             glyph.x,
                                             glyph.y
-                                                + buffer.buffer().metrics().line_height
+                                                + buffer.metrics().line_height
                                                     * locations[1][0] as f32,
                                         ),
                                         Vec2::new(
                                             glyph.w,
-                                            glyph.y_offset + buffer.buffer().metrics().line_height,
+                                            glyph.y_offset + buffer.metrics().line_height,
                                         ),
                                     )
                                 },
@@ -1147,7 +1163,97 @@ impl Resolved {
                 Actions::SpeakerNotes(speaker_notes) => {
                     resolved.speaker_notes = Some(Arc::clone(speaker_notes))
                 }
-                Actions::Line { objects, locations } => {}
+                Actions::Line {
+                    objects,
+                    locations,
+                    color,
+                } => {
+                    let object_one = resolved.slide.get(objects[0]).unwrap();
+                    let object_two = resolved.slide.get(objects[1]).unwrap();
+
+                    let first_obj_pos_min = Rect::from([
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_one.locations[0][0],
+                            object_one.locations[1][0],
+                            0.0,
+                            object_one.scaled_time[1],
+                        )),
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_one.locations[0][1],
+                            object_one.locations[1][1],
+                            0.0,
+                            object_one.scaled_time[1],
+                        )),
+                    ]);
+                    let first_obj_pos_max = Rect::from([
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_one.locations[0][0],
+                            object_one.locations[1][0],
+                            object_one.scaled_time[1],
+                            object_one.scaled_time[1],
+                        )),
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_one.locations[0][1],
+                            object_one.locations[1][1],
+                            object_one.scaled_time[1],
+                            object_one.scaled_time[1],
+                        )),
+                    ]);
+
+                    let second_obj_pos_min = Rect::from([
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_two.locations[0][0],
+                            object_two.locations[1][0],
+                            0.0,
+                            object_two.scaled_time[1],
+                        )),
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_two.locations[0][1],
+                            object_two.locations[1][1],
+                            0.0,
+                            object_two.scaled_time[1],
+                        )),
+                    ]);
+                    let second_obj_pos_max = Rect::from([
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_two.locations[0][0],
+                            object_two.locations[1][0],
+                            object_two.scaled_time[1],
+                            object_two.scaled_time[1],
+                        )),
+                        Pos2::from(keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            object_two.locations[0][1],
+                            object_two.locations[1][1],
+                            object_two.scaled_time[1],
+                            object_two.scaled_time[1],
+                        )),
+                    ]);
+
+                    resolved.actions.push(ResolvedActions::Line {
+                        locations_of_objects: [
+                            [
+                                locations[0].pos_in_rect(&first_obj_pos_min).into(),
+                                locations[0].pos_in_rect(&first_obj_pos_max).into(),
+                            ],
+                            [
+                                locations[1].pos_in_rect(&second_obj_pos_min).into(),
+                                locations[1].pos_in_rect(&second_obj_pos_max).into(),
+                            ],
+                        ],
+                        scaled_times: [object_one.scaled_time, object_two.scaled_time],
+                        color: *color,
+                        state: object_two.state,
+                        scale: (size.width() / 1920.0),
+                    });
+                }
             }
         }
         resolved
@@ -1166,11 +1272,11 @@ impl SlideShow {
     pub fn used_fonts(&self, font_system: &mut FontSystem) -> IndexSet<ID, ahash::RandomState> {
         let mut hashset = IndexSet::default();
         for obj in self.objects.values() {
-            if let ObjectType::Text(job, _, _) = &obj.object {
+            if let ObjectType::Text { job, .. } = &obj.object {
                 let mut buffer = Buffer::new(font_system, Metrics::new(12.0, 24.0));
                 buffer.set_size(font_system, f32::MAX, f32::MAX);
                 parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
-                buffer.shape_until_scroll(font_system);
+                buffer.shape_until_scroll(font_system, false);
 
                 buffer.layout_runs().for_each(|r| {
                     r.glyphs.iter().for_each(|g| {
@@ -1583,6 +1689,7 @@ impl MyEguiApp {
                 clear_color: Color::default().into(),
                 font_system,
                 resolved_images: Arc::new(Mutex::new(HashMap::default())),
+                in_drag: false,
                 // frame_history: FrameHistory::default(),
             },
             slide_show.1,
@@ -1656,6 +1763,54 @@ impl MyEguiApp {
                 if self.restart_timer.load(Ordering::Relaxed) {
                     self.time = 0.0;
                     self.restart_timer.store(false, Ordering::Relaxed);
+                }
+
+                let response = ui.allocate_rect(window_size, Sense::click_and_drag());
+
+                let drag_delta = response.drag_delta().x;
+                if (drag_delta < -50.0 && !self.in_drag) || response.clicked() {
+                    self.in_drag = true;
+                    let _ = self
+                        .index
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |idx| {
+                            if idx != slide_show.slide_show.len() - 1 {
+                                self.resolved.store(None);
+                                self.time = 0.0;
+                                index += 1;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.speaker_view.clear_resolved();
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.vb_dbg.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.obj_dbg.store(0, Ordering::Relaxed);
+                                self.next.store(true, Ordering::Relaxed);
+                                Some(idx + 1)
+                            } else {
+                                None
+                            }
+                        });
+                } else if drag_delta > 50.0 && !self.in_drag {
+                    self.in_drag = true;
+                    let _ = self
+                        .index
+                        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |idx| {
+                            if idx != 0 {
+                                self.resolved.store(None);
+                                self.time = 1000.0;
+                                index -= 1;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.speaker_view.clear_resolved();
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.vb_dbg.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.obj_dbg.store(0, Ordering::Relaxed);
+                                self.next.store(false, Ordering::Relaxed);
+                                return Some(idx - 1);
+                            }
+                            None
+                        });
+                } else if drag_delta == 0.0 {
+                    self.in_drag = false;
                 }
 
                 let resolved = if let Some(resolved) = self.resolved.load_full().and_then(|r| {

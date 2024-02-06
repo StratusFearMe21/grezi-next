@@ -37,7 +37,7 @@ pub struct ResolvedSlideObj {
 pub fn parse_slides(
     tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
-    on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
+    on_screen: &mut HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
     source: &helix_core::ropey::Rope,
     errors_present: &mut Vec<super::Error>,
@@ -47,7 +47,7 @@ pub fn parse_slides(
     tree_cursor.goto_first_child()?;
     tree_cursor.goto_first_child()?;
     let mut slide_objects = Vec::new();
-    let mut slide_on_screen: HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>> =
+    let mut slide_on_screen: HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
         tree_cursor.fork(|cursor| {
@@ -65,7 +65,10 @@ pub fn parse_slides(
                         .map(|o| crate::lsp::you_can::borrow_unchecked(o))
                 },
                 |object| {
-                    slide_on_screen.insert(object.object, slide_objects.len());
+                    slide_on_screen.insert(
+                        object.object,
+                        (slide_objects.len(), object.state == ObjectState::Exiting),
+                    );
                     slide_objects.push(object);
                 },
             ) {
@@ -124,7 +127,7 @@ pub fn parse_slides(
 pub fn parse_slide_object(
     tree_cursor: &mut GrzCursor<'_>,
     hasher: &ahash::RandomState,
-    on_screen: &mut HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
+    on_screen: &mut HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
     objects: &mut HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
     source: &helix_core::ropey::Rope,
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
@@ -246,7 +249,11 @@ pub fn parse_slide_object(
         from = Some(viewbox);
     }
 
-    let mut state = if on_screen.contains_key(&object_name) {
+    let mut state = if on_screen
+        .get(&object_name)
+        .map(|e| !e.1)
+        .unwrap_or_default()
+    {
         ObjectState::OnScreen
     } else {
         ObjectState::Entering
@@ -271,8 +278,9 @@ pub fn parse_slide_object(
         } else {
             let mut lineup_first_locations = match edges.get(..2) {
                 Some(s) => {
-                    lineup_first = align_from_str(s)
-                        .map_err(|_| Error::InvalidParameter(tree_cursor.node().range().into()))?;
+                    lineup_first = align_from_str(s).ok_or_else(|| {
+                        Error::InvalidParameter(tree_cursor.node().range().into())
+                    })?;
                     (lineup_first, viewbox_first)
                 }
                 None => {
@@ -284,8 +292,9 @@ pub fn parse_slide_object(
             };
             let lineup_second = match edges.get(2..4) {
                 Some(s) => {
-                    line_up_now = align_from_str(s)
-                        .map_err(|_| Error::InvalidParameter(tree_cursor.node().range().into()))?;
+                    line_up_now = align_from_str(s).ok_or_else(|| {
+                        Error::InvalidParameter(tree_cursor.node().range().into())
+                    })?;
                     (line_up_now, viewbox)
                 }
                 None => match edges.get(2..) {
@@ -340,13 +349,15 @@ fn parse_slide_function(
     slide_objects: &mut [SlideObj],
     next: &mut bool,
     max_time: &mut f32,
-    slide_on_screen: &HashMap<u64, usize, BuildHasherDefault<PassThroughHasher>>,
+    slide_on_screen: &HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
     errors_present: &mut Vec<super::Error>,
 ) -> Result<Option<Actions>, super::Error> {
     use cssparser::ParserInput;
     use ecolor::Color32;
 
-    use crate::parser::{actions::HIGHLIGHT_COLOR_DEFAULT, color::DefaultColorParser};
+    use crate::parser::{
+        actions::HIGHLIGHT_COLOR_DEFAULT, color::DefaultColorParser, viewboxes::align_from_str,
+    };
 
     tree_cursor.goto_first_child()?;
     let key: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
@@ -490,9 +501,101 @@ fn parse_slide_function(
 
             Ok(Some(Actions::Highlight {
                 locations,
-                index: *object,
+                index: object.0,
                 persist: true,
                 color,
+            }))
+        }
+        "line" => {
+            tree_cursor.goto_next_sibling()?;
+            let first_object = slide_on_screen
+                .get({
+                    let mut hasher = hasher.build_hasher();
+                    std::hash::Hash::hash(
+                        &source.byte_slice(tree_cursor.node().byte_range()),
+                        &mut hasher,
+                    );
+                    &hasher.finish()
+                })
+                .ok_or_else(|| super::Error::NotFound(tree_cursor.node().range().into()))?;
+            tree_cursor.goto_next_sibling()?;
+
+            let first_direction = match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::StringLiteral => {
+                    tree_cursor.goto_first_child()?;
+                    let dir: Cow<'_, str> =
+                        source.byte_slice(tree_cursor.node().byte_range()).into();
+                    let dir = align_from_str(dir.as_ref()).ok_or_else(|| {
+                        super::Error::InvalidParameter(tree_cursor.node().range().into())
+                    })?;
+                    tree_cursor.goto_parent();
+                    Some(dir)
+                }
+                _ => None,
+            };
+
+            tree_cursor.goto_next_sibling()?;
+            let second_object = slide_on_screen
+                .get({
+                    let mut hasher = hasher.build_hasher();
+                    std::hash::Hash::hash(
+                        &source.byte_slice(tree_cursor.node().byte_range()),
+                        &mut hasher,
+                    );
+                    &hasher.finish()
+                })
+                .ok_or_else(|| super::Error::NotFound(tree_cursor.node().range().into()))?;
+            tree_cursor.goto_next_sibling()?;
+
+            let second_direction = match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::StringLiteral => {
+                    tree_cursor.goto_first_child()?;
+                    let dir: Cow<'_, str> =
+                        source.byte_slice(tree_cursor.node().byte_range()).into();
+                    let dir = align_from_str(dir.as_ref()).ok_or_else(|| {
+                        super::Error::InvalidParameter(tree_cursor.node().range().into())
+                    })?;
+                    tree_cursor.goto_parent();
+                    Some(dir)
+                }
+                _ => None,
+            };
+
+            tree_cursor.goto_next_sibling()?;
+
+            let color: Color32 = match NodeKind::from(tree_cursor.node().kind_id()) {
+                NodeKind::StringLiteral => {
+                    let value: Cow<'_, str> = source
+                        .byte_slice(
+                            tree_cursor
+                                .node()
+                                .child(1 /* second child */)
+                                .unwrap_or(tree_cursor.node())
+                                .byte_range(),
+                        )
+                        .into();
+                    let t = super::color::parse_color_with(
+                        &mut DefaultColorParser::new(None),
+                        &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
+                    )
+                    .map_err(|e| {
+                        super::Error::ColorError(
+                            tree_cursor.node().range().into(),
+                            format!("{:?}", e),
+                        )
+                    })?;
+
+                    t.1.into()
+                }
+                _ => Color32::WHITE,
+            };
+
+            Ok(first_direction.and_then(|first_diretion| {
+                Some(Actions::Line {
+                    objects: [first_object.0, second_object.0],
+                    locations: [first_diretion, second_direction?],
+                    color,
+                })
             }))
         }
         _ => Err(super::Error::ActionNotFound(
