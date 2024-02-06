@@ -25,7 +25,7 @@ pub struct SlideObj {
     pub state: ObjectState,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ResolvedSlideObj {
     pub object: ResolvedObject,
     pub locations: [[[f32; 2]; 2]; 2],

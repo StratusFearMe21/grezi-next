@@ -1,5 +1,5 @@
 use helix_core::{
-    tree_sitter::{Node, Tree, TreeCursor},
+    tree_sitter::{Node, Point, Tree, TreeCursor},
     Rope,
 };
 use lsp_types::{Position, TextEdit};
@@ -8,6 +8,34 @@ use crate::{
     parser::{Error, NodeKind},
     MyEguiApp,
 };
+
+pub fn char_range_from_byte_range(
+    byte_range: helix_core::tree_sitter::Range,
+    current_rope: &Rope,
+) -> Result<lsp_types::Range, Error> {
+    Ok(lsp_types::Range {
+        start: char_pos_from_byte_pos(byte_range.start_point, current_rope)?,
+        end: char_pos_from_byte_pos(byte_range.end_point, current_rope)?,
+    })
+}
+
+pub fn char_pos_from_byte_pos(byte_pos: Point, current_rope: &Rope) -> Result<Position, Error> {
+    let line = current_rope.get_line(byte_pos.row).ok_or_else(|| {
+        Error::NotFound(
+            helix_core::tree_sitter::Range {
+                start_byte: 0,
+                end_byte: 0,
+                start_point: byte_pos,
+                end_point: byte_pos,
+            }
+            .into(),
+        )
+    })?;
+    Ok(Position {
+        line: byte_pos.row as u32,
+        character: line.byte_to_char(byte_pos.column) as u32,
+    })
+}
 
 pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Error> {
     let tree_info = app.tree_info.lock();
@@ -41,7 +69,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
             formatting_cursor.revisit(
                 WhitespaceEdit::Assert(concat!("\n", $tab_two)),
                 current_rope,
-            );
+            )?;
             formatting_cursor.goto_parent();
         };
     }
@@ -104,9 +132,9 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         formatting_cursor
                             .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
                     }
-                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope)?;
                 } else {
-                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope)?;
                 }
 
                 formatting_cursor.goto_parent();
@@ -128,7 +156,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                                 formatting_cursor
                                     .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
                             } else {
-                                formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                                formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope)?;
                                 break;
                             }
                         }
@@ -139,9 +167,9 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         formatting_cursor
                             .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
                     }
-                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope)?;
                 } else {
-                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope)?;
                 }
 
                 formatting_cursor.goto_parent();
@@ -173,16 +201,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                             language_location = false;
                             let location = formatting_cursor.tree_cursor.node().range();
                             formatting_cursor.edits.push(TextEdit {
-                                range: lsp_types::Range {
-                                    start: Position {
-                                        line: location.start_point.row as u32,
-                                        character: location.start_point.column as u32,
-                                    },
-                                    end: Position {
-                                        line: location.end_point.row as u32,
-                                        character: location.end_point.column as u32,
-                                    },
-                                },
+                                range: char_range_from_byte_range(location, current_rope)?,
                                 new_text: "code".to_owned(),
                             });
                         } else {
@@ -192,31 +211,13 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         code_location = Some(formatting_cursor.edits.len());
                         let location = formatting_cursor.tree_cursor.node().range();
                         formatting_cursor.edits.push(TextEdit {
-                            range: lsp_types::Range {
-                                start: Position {
-                                    line: location.start_point.row as u32,
-                                    character: location.start_point.column as u32,
-                                },
-                                end: Position {
-                                    line: location.end_point.row as u32,
-                                    character: location.end_point.column as u32,
-                                },
-                            },
+                            range: char_range_from_byte_range(location, current_rope)?,
                             new_text: "value".to_owned(),
                         });
                     } else if value_rope == "language" {
                         if let Some(value_location) = value_location.take() {
                             formatting_cursor.edits.push(TextEdit {
-                                range: lsp_types::Range {
-                                    start: Position {
-                                        line: value_location.start_point.row as u32,
-                                        character: value_location.start_point.column as u32,
-                                    },
-                                    end: Position {
-                                        line: value_location.end_point.row as u32,
-                                        character: value_location.end_point.column as u32,
-                                    },
-                                },
+                                range: char_range_from_byte_range(value_location, current_rope)?,
                                 new_text: "code".to_owned(),
                             });
                         } else {
@@ -237,7 +238,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         formatting_cursor.edits.remove(code_location);
                     }
                 }
-                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope)?;
                 formatting_cursor.goto_parent();
                 formatting_cursor.goto_parent();
             }
@@ -269,7 +270,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                                 formatting_cursor
                                     .goto_next_sibling(WhitespaceEdit::Assert(" "), current_rope)?;
                             } else {
-                                formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                                formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope)?;
                                 break;
                             }
                         }
@@ -280,9 +281,9 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                         formatting_cursor
                             .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;
                     }
-                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope);
+                    formatting_cursor.revisit(WhitespaceEdit::Assert("\n"), current_rope)?;
                 } else {
-                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope);
+                    formatting_cursor.revisit(WhitespaceEdit::Delete, current_rope)?;
                 }
 
                 formatting_cursor.goto_parent();
@@ -314,18 +315,16 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
                     new_text: "\n".to_string(),
                 };
 
-                let pos = Position {
-                    line: formatting_cursor.last_range.end_point.row as u32,
-                    character: formatting_cursor.last_range.end_point.column as u32,
-                };
+                let pos =
+                    char_pos_from_byte_pos(formatting_cursor.last_range.end_point, current_rope)?;
                 edit.range.end = pos;
                 edit.range.start = pos;
 
                 if formatting_cursor.node().kind_id() == NodeKind::Whitespace as u16 {
-                    let pos = Position {
-                        line: formatting_cursor.last_range.start_point.row as u32,
-                        character: formatting_cursor.last_range.start_point.column as u32,
-                    };
+                    let pos = char_pos_from_byte_pos(
+                        formatting_cursor.last_range.start_point,
+                        current_rope,
+                    )?;
                     edit.range.start = pos;
                 }
 
@@ -335,7 +334,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
         }
     }
 
-    Ok(formatting_cursor.edits)
+    Ok(dbg!(formatting_cursor.edits))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -438,16 +437,10 @@ impl<'a> FormattingCursor<'a> {
         self.edited = false;
         self.last_range = self.tree_cursor.node().range();
 
-        let pos = Position {
-            line: self.last_range.start_point.row as u32,
-            character: self.last_range.start_point.column as u32,
-        };
+        let pos = char_pos_from_byte_pos(self.last_range.start_point, current_rope)?;
         edit.range.start = pos;
 
-        let pos = Position {
-            line: self.last_range.end_point.row as u32,
-            character: self.last_range.end_point.column as u32,
-        };
+        let pos = char_pos_from_byte_pos(self.last_range.end_point, current_rope)?;
         edit.range.end = pos;
         if self.tree_cursor.node().kind_id() == NodeKind::Whitespace as u16 {
             let next;
@@ -503,7 +496,11 @@ impl<'a> FormattingCursor<'a> {
         Ok(true)
     }
 
-    pub fn revisit(&mut self, whitespace_rule: WhitespaceEdit, current_rope: &Rope) {
+    pub fn revisit(
+        &mut self,
+        whitespace_rule: WhitespaceEdit,
+        current_rope: &Rope,
+    ) -> Result<(), Error> {
         match whitespace_rule {
             WhitespaceEdit::Assert(assertion) => {
                 if current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte)
@@ -515,16 +512,7 @@ impl<'a> FormattingCursor<'a> {
                         }
                     } else {
                         self.edits.push(TextEdit {
-                            range: lsp_types::Range {
-                                start: Position {
-                                    line: self.last_range.start_point.row as u32,
-                                    character: self.last_range.start_point.column as u32,
-                                },
-                                end: Position {
-                                    line: self.last_range.end_point.row as u32,
-                                    character: self.last_range.end_point.column as u32,
-                                },
-                            },
+                            range: char_range_from_byte_range(self.last_range, current_rope)?,
                             new_text: assertion.to_owned(),
                         });
                     }
@@ -545,6 +533,7 @@ impl<'a> FormattingCursor<'a> {
             }
             _ => unimplemented!(),
         }
+        Ok(())
     }
 
     pub fn goto_parent(&mut self) -> bool {

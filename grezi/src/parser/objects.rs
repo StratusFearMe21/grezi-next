@@ -1,6 +1,7 @@
 use std::{
     fmt::Debug,
     hash::{BuildHasher, Hasher},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -63,11 +64,11 @@ pub enum ObjectType {
     Spinner,
 }
 
-pub struct Editor(pub RwLock<egui_glyphon::glyphon::Editor>);
+pub struct Editor(pub egui_glyphon::glyphon::Editor);
 
 impl AsRef<Buffer> for Editor {
     fn as_ref(&self) -> &Buffer {
-        unsafe { std::mem::transmute(self.0.read().buffer()) }
+        self.0.buffer()
     }
 }
 
@@ -77,30 +78,43 @@ impl Debug for Editor {
     }
 }
 
+impl Deref for Editor {
+    type Target = egui_glyphon::glyphon::Editor;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Editor {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl Editor {
     pub fn highlight_boxes(&self) -> Vec<Rect> {
         use std::cmp;
 
-        let editor = self.0.read();
         let mut rects = Vec::new();
 
-        let line_height = editor.buffer().metrics().line_height;
+        let line_height = self.0.buffer().metrics().line_height;
 
-        for run in editor.buffer().layout_runs() {
+        for run in self.0.buffer().layout_runs() {
             let line_i = run.line_i;
             let line_top = run.line_top;
 
-            if let Some(select) = editor.select_opt() {
-                let (start, end) = match select.line.cmp(&editor.cursor().line) {
-                    cmp::Ordering::Greater => (editor.cursor(), select),
-                    cmp::Ordering::Less => (select, editor.cursor()),
+            if let Some(select) = self.0.select_opt() {
+                let (start, end) = match select.line.cmp(&self.0.cursor().line) {
+                    cmp::Ordering::Greater => (self.0.cursor(), select),
+                    cmp::Ordering::Less => (select, self.0.cursor()),
                     cmp::Ordering::Equal => {
-                        /* select.line == editor.cursor.line */
-                        if select.index < editor.cursor().index {
-                            (select, editor.cursor())
+                        /* select.line == self.0.cursor.line */
+                        if select.index < self.0.cursor().index {
+                            (select, self.0.cursor())
                         } else {
-                            /* select.index >= editor.cursor.index */
-                            (editor.cursor(), select)
+                            /* select.index >= self.0.cursor.index */
+                            (self.0.cursor(), select)
                         }
                     }
                 };
@@ -135,7 +149,7 @@ impl Editor {
 
                     if run.glyphs.is_empty() && end.line > line_i {
                         // Highlight all of internal empty lines
-                        range_opt = Some((0.0, editor.buffer().size().0));
+                        range_opt = Some((0.0, self.0.buffer().size().0));
                     }
 
                     if let Some((mut min, mut max)) = range_opt.take() {
@@ -144,7 +158,7 @@ impl Editor {
                             if run.rtl {
                                 min = 0.0;
                             } else {
-                                max = editor.buffer().size().0;
+                                max = self.0.buffer().size().0;
                             }
                         }
                         rects.push(Rect::from_min_size(
@@ -159,9 +173,9 @@ impl Editor {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ResolvedObject {
-    Text(Arc<Editor>),
+    Text(Arc<RwLock<Editor>>),
     Image {
         image: Image<'static>,
         scale: Option<Vec2>,
@@ -205,7 +219,7 @@ pub fn measure_buffer(buffer: &Buffer, vb: Vec2) -> Rect {
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(buffer) => measure_buffer(buffer.0.read().buffer(), vb),
+            ResolvedObject::Text(buffer) => measure_buffer(buffer.read().0.buffer(), vb),
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
                     let mut size = None;
@@ -316,7 +330,14 @@ pub fn parse_objects(
 
                         tint = Some(t.1.into());
                     }
-                    "height" => height = Some(value.parse::<f32>().unwrap()),
+                    "height" => {
+                        height = Some(value.parse::<f32>().map_err(|_| {
+                            super::Error::KnownMissing(
+                                parameter.1.range().into(),
+                                "Valid floating point number".into(),
+                            )
+                        })?)
+                    }
                     _ => {}
                 }
             }
@@ -479,11 +500,27 @@ pub fn parse_objects(
                             parameter.1.range(),
                         );
                     }
-                    "font_size" => font_size = value.parse::<f32>().unwrap(),
+                    "font_size" => {
+                        font_size = value.parse::<f32>().map_err(|_| {
+                            super::Error::KnownMissing(
+                                parameter.1.range().into(),
+                                "Valid floating point number".into(),
+                            )
+                        })?
+                    }
                     "language" => {
                         language = Some((
                             value,
-                            parameter.1.child(1 /* second child */).unwrap().range(),
+                            parameter
+                                .1
+                                .child(1 /* second child */)
+                                .ok_or_else(|| {
+                                    super::Error::KnownMissing(
+                                        parameter.1.range().into(),
+                                        "Valid string containing a programming language".into(),
+                                    )
+                                })?
+                                .range(),
                         ))
                     }
                     _ => {}

@@ -49,6 +49,8 @@ use lsp_types::{
     WorkspaceEdit,
 };
 
+use self::formatter::{char_pos_from_byte_pos, char_range_from_byte_range};
+
 pub fn start_lsp(
     mut app: crate::MyEguiApp,
     current_thread: std::thread::Thread,
@@ -333,7 +335,7 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    prepare_rename(&app, pos),
+                                    prepare_rename(&app, pos, &current_rope),
                                 )))
                                 .unwrap();
                         }
@@ -486,28 +488,11 @@ pub fn start_lsp(
                                                                     .text_document_position
                                                                     .position,
                                                             },
-                                                            replace: lsp_types::Range {
-                                                                start: Position {
-                                                                    line: completion_range
-                                                                        .start_point
-                                                                        .row
-                                                                        as u32,
-                                                                    character: completion_range
-                                                                        .start_point
-                                                                        .column
-                                                                        as u32,
-                                                                },
-                                                                end: Position {
-                                                                    line: completion_range
-                                                                        .end_point
-                                                                        .row
-                                                                        as u32,
-                                                                    character: completion_range
-                                                                        .end_point
-                                                                        .column
-                                                                        as u32,
-                                                                },
-                                                            },
+                                                            replace: char_range_from_byte_range(
+                                                                completion_range,
+                                                                &current_rope,
+                                                            )
+                                                            .unwrap(),
                                                         },
                                                     ),
                                                 ),
@@ -541,28 +526,12 @@ pub fn start_lsp(
                                                                         .text_document_position
                                                                         .position,
                                                                 },
-                                                                replace: lsp_types::Range {
-                                                                    start: Position {
-                                                                        line: completion_range
-                                                                            .start_point
-                                                                            .row
-                                                                            as u32,
-                                                                        character: completion_range
-                                                                            .start_point
-                                                                            .column
-                                                                            as u32,
-                                                                    },
-                                                                    end: Position {
-                                                                        line: completion_range
-                                                                            .end_point
-                                                                            .row
-                                                                            as u32,
-                                                                        character: completion_range
-                                                                            .end_point
-                                                                            .column
-                                                                            as u32,
-                                                                    },
-                                                                },
+                                                                replace:
+                                                                    char_range_from_byte_range(
+                                                                        completion_range,
+                                                                        &current_rope,
+                                                                    )
+                                                                    .unwrap(),
                                                             },
                                                         ),
                                                     ),
@@ -620,30 +589,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -692,30 +643,12 @@ pub fn start_lsp(
                                         .text_document_position
                                         .position,
                                         },
-                                        replace: lsp_types::Range {
-                                        start: Position {
-                                        line: completion_range
-                                        .start_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .start_point
-                                        .column
-                                        as u32,
-                                        },
-                                        end: Position {
-                                        line: completion_range
-                                        .end_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .end_point
-                                        .column
-                                        as u32,
-                                        },
-                                        },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                         },
                                         ),
                                         ),
@@ -743,30 +676,12 @@ pub fn start_lsp(
                                         .text_document_position
                                         .position,
                                         },
-                                        replace: lsp_types::Range {
-                                        start: Position {
-                                        line: completion_range
-                                        .start_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .start_point
-                                        .column
-                                        as u32,
-                                        },
-                                        end: Position {
-                                        line: completion_range
-                                        .end_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .end_point
-                                        .column
-                                        as u32,
-                                        },
-                                        },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                         },
                                         ),
                                         ),
@@ -794,30 +709,12 @@ pub fn start_lsp(
                                         .text_document_position
                                         .position,
                                         },
-                                        replace: lsp_types::Range {
-                                        start: Position {
-                                        line: completion_range
-                                        .start_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .start_point
-                                        .column
-                                        as u32,
-                                        },
-                                        end: Position {
-                                        line: completion_range
-                                        .end_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .end_point
-                                        .column
-                                        as u32,
-                                        },
-                                        },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                         },
                                         ),
                                         ),
@@ -845,30 +742,12 @@ pub fn start_lsp(
                                         .text_document_position
                                         .position,
                                         },
-                                        replace: lsp_types::Range {
-                                        start: Position {
-                                        line: completion_range
-                                        .start_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .start_point
-                                        .column
-                                        as u32,
-                                        },
-                                        end: Position {
-                                        line: completion_range
-                                        .end_point
-                                        .row
-                                        as u32,
-                                        character:
-                                        completion_range
-                                        .end_point
-                                        .column
-                                        as u32,
-                                        },
-                                        },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                         },
                                         ),
                                         ),
@@ -906,30 +785,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -957,30 +818,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1008,30 +851,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1059,30 +884,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1110,30 +917,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1161,30 +950,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1212,30 +983,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1263,30 +1016,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -1314,30 +1049,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -1365,30 +1082,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -1416,30 +1115,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -1467,30 +1148,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -1528,30 +1191,12 @@ pub fn start_lsp(
                                                                                 .text_document_position
                                                                                 .position,
                                                                         },
-                                                                        replace: lsp_types::Range {
-                                                                            start: Position {
-                                                                                line: completion_range
-                                                                                    .start_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .start_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                            end: Position {
-                                                                                line: completion_range
-                                                                                    .end_point
-                                                                                    .row
-                                                                                    as u32,
-                                                                                character:
-                                                                                    completion_range
-                                                                                        .end_point
-                                                                                        .column
-                                                                                        as u32,
-                                                                            },
-                                                                        },
+                                                                        replace:
+                                                                            char_range_from_byte_range(
+                                                                                completion_range,
+                                                                                &current_rope,
+                                                                            )
+                                                                            .unwrap(),
                                                                     },
                                                                 ),
                                                             ),
@@ -1579,30 +1224,12 @@ pub fn start_lsp(
                                                                             .text_document_position
                                                                             .position,
                                                                     },
-                                                                    replace: lsp_types::Range {
-                                                                        start: Position {
-                                                                            line: completion_range
-                                                                                .start_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .start_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                        end: Position {
-                                                                            line: completion_range
-                                                                                .end_point
-                                                                                .row
-                                                                                as u32,
-                                                                            character:
-                                                                                completion_range
-                                                                                    .end_point
-                                                                                    .column
-                                                                                    as u32,
-                                                                        },
-                                                                    },
+                                                                    replace:
+                                                                        char_range_from_byte_range(
+                                                                            completion_range,
+                                                                            &current_rope,
+                                                                        )
+                                                                        .unwrap(),
                                                                 },
                                                             ),
                                                         ),
@@ -1676,28 +1303,12 @@ pub fn start_lsp(
                                                                         .text_document_position
                                                                         .position,
                                                                 },
-                                                                replace: lsp_types::Range {
-                                                                    start: Position {
-                                                                        line: completion_range
-                                                                            .start_point
-                                                                            .row
-                                                                            as u32,
-                                                                        character: completion_range
-                                                                            .start_point
-                                                                            .column
-                                                                            as u32,
-                                                                    },
-                                                                    end: Position {
-                                                                        line: completion_range
-                                                                            .end_point
-                                                                            .row
-                                                                            as u32,
-                                                                        character: completion_range
-                                                                            .end_point
-                                                                            .column
-                                                                            as u32,
-                                                                    },
-                                                                },
+                                                                replace:
+                                                                    char_range_from_byte_range(
+                                                                        completion_range,
+                                                                        &current_rope,
+                                                                    )
+                                                                    .unwrap(),
                                                             },
                                                         ),
                                                     ),
@@ -2287,6 +1898,7 @@ pub fn start_lsp(
 fn prepare_rename(
     app: &MyEguiApp,
     pos: TextDocumentPositionParams,
+    current_rope: &Rope,
 ) -> Option<PrepareRenameResponse> {
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
@@ -2301,16 +1913,9 @@ fn prepare_rename(
         .and_then(|f| {
             if matches!(NodeKind::from(f.kind_id()), NodeKind::Identifier) {
                 let node_range = f.range();
-                Some(PrepareRenameResponse::Range(lsp_types::Range {
-                    start: Position {
-                        line: node_range.start_point.row as u32,
-                        character: node_range.start_point.column as u32,
-                    },
-                    end: Position {
-                        line: node_range.end_point.row as u32,
-                        character: node_range.end_point.column as u32,
-                    },
-                }))
+                Some(PrepareRenameResponse::Range(
+                    char_range_from_byte_range(node_range, current_rope).ok()?,
+                ))
             } else {
                 None
             }
@@ -2358,16 +1963,7 @@ fn rename(
             let range = node.range();
 
             workspace_edit.push(OneOf::Left(TextEdit {
-                range: lsp_types::Range {
-                    start: Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    },
-                    end: Position {
-                        line: range.end_point.row as u32,
-                        character: range.end_point.column as u32,
-                    },
-                },
+                range: char_range_from_byte_range(range, current_rope).unwrap(),
                 new_text: rename.new_name.clone(),
             }));
         }
@@ -2437,10 +2033,7 @@ fn inlay_hints(
                 let mut walker = query_node.parent().unwrap().walk();
                 while walker.goto_next_sibling() {}
                 let range = walker.node().range();
-                let mut position = Position {
-                    line: range.end_point.row as u32,
-                    character: range.end_point.column as u32,
-                };
+                let mut position = char_pos_from_byte_pos(range.end_point, current_rope).unwrap();
                 let mut hint = String::new();
 
                 if let Some(vb) = vb {
@@ -2480,10 +2073,7 @@ fn inlay_hints(
                     });
 
                     let range = edge.range();
-                    position = Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    };
+                    position = char_pos_from_byte_pos(range.start_point, current_rope).unwrap();
 
                     if slice.len_chars() < 3 {
                         std::fmt::Write::write_fmt(&mut hint, format_args!("{}", entry)).unwrap();
@@ -2517,10 +2107,7 @@ fn inlay_hints(
                 slide_num += 1;
                 let range = query_match.captures[0].node.range();
                 hints.push(InlayHint {
-                    position: Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    },
+                    position: char_pos_from_byte_pos(range.start_point, current_rope).unwrap(),
                     label: InlayHintLabel::String(format!("Slide {}:", slide_num)),
                     kind: Some(InlayHintKind::PARAMETER),
                     text_edits: None,
@@ -2824,16 +2411,7 @@ pub fn references(
             let range = query_match.captures[0].node.range();
             locations.push(Location {
                 uri: currently_open.clone(),
-                range: lsp_types::Range {
-                    start: Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    },
-                    end: Position {
-                        line: range.end_point.row as u32,
-                        character: range.end_point.column as u32,
-                    },
-                },
+                range: char_range_from_byte_range(range, current_rope).ok()?,
             });
         }
     }
@@ -2883,16 +2461,7 @@ pub fn goto_declaration(
             let range = query_match.captures[0].node.range();
             return Some(GotoDefinitionResponse::Scalar(Location {
                 uri: currently_open,
-                range: lsp_types::Range {
-                    start: Position {
-                        line: range.start_point.row as u32,
-                        character: range.start_point.column as u32,
-                    },
-                    end: Position {
-                        line: range.end_point.row as u32,
-                        character: range.end_point.column as u32,
-                    },
-                },
+                range: char_range_from_byte_range(range, current_rope).ok()?,
             }));
         }
     }
@@ -2927,27 +2496,10 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
                 symbols.push(DocumentSymbol {
                     name: format!("Slide {}", slide_num),
                     kind: SymbolKind::FUNCTION,
-                    range: lsp_types::Range {
-                        start: Position {
-                            line: range.start_point.row as u32,
-                            character: range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: range.end_point.row as u32,
-                            character: range.end_point.column as u32,
-                        },
-                    },
+                    range: char_range_from_byte_range(range, current_rope).ok()?,
                     detail: None,
-                    selection_range: lsp_types::Range {
-                        start: Position {
-                            line: selection_range.start_point.row as u32,
-                            character: selection_range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: selection_range.end_point.row as u32,
-                            character: selection_range.end_point.column as u32,
-                        },
-                    },
+                    selection_range: char_range_from_byte_range(selection_range, current_rope)
+                        .ok()?,
                     tags: None,
                     deprecated: None,
                     children: None,
@@ -2966,31 +2518,14 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
                 symbols.push(DocumentSymbol {
                     name: current_rope.byte_slice(byte_range).to_string(),
                     kind: SymbolKind::VARIABLE,
-                    range: lsp_types::Range {
-                        start: Position {
-                            line: range.start_point.row as u32,
-                            character: range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: range.end_point.row as u32,
-                            character: range.end_point.column as u32,
-                        },
-                    },
+                    range: char_range_from_byte_range(range, current_rope).ok()?,
                     detail: Some(format!(
                         "{}{}",
                         current_rope.slice(name_range),
                         current_rope.slice(index_range)
                     )),
-                    selection_range: lsp_types::Range {
-                        start: Position {
-                            line: selection_range.start_point.row as u32,
-                            character: selection_range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: selection_range.end_point.row as u32,
-                            character: selection_range.end_point.column as u32,
-                        },
-                    },
+                    selection_range: char_range_from_byte_range(selection_range, current_rope)
+                        .ok()?,
                     tags: None,
                     deprecated: None,
                     children: None,
@@ -3007,27 +2542,10 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
                 symbols.push(DocumentSymbol {
                     name: current_rope.byte_slice(byte_range).to_string(),
                     kind: SymbolKind::OBJECT,
-                    range: lsp_types::Range {
-                        start: Position {
-                            line: range.start_point.row as u32,
-                            character: range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: range.end_point.row as u32,
-                            character: range.end_point.column as u32,
-                        },
-                    },
+                    range: char_range_from_byte_range(range, current_rope).ok()?,
                     detail: Some(current_rope.slice(name_range).to_string()),
-                    selection_range: lsp_types::Range {
-                        start: Position {
-                            line: selection_range.start_point.row as u32,
-                            character: selection_range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: selection_range.end_point.row as u32,
-                            character: selection_range.end_point.column as u32,
-                        },
-                    },
+                    selection_range: char_range_from_byte_range(selection_range, current_rope)
+                        .ok()?,
                     tags: None,
                     deprecated: None,
                     children: None,
@@ -3042,27 +2560,10 @@ pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<Document
                 symbols.push(DocumentSymbol {
                     name: "Actions".to_string(),
                     kind: SymbolKind::ARRAY,
-                    range: lsp_types::Range {
-                        start: Position {
-                            line: range.start_point.row as u32,
-                            character: range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: range.end_point.row as u32,
-                            character: range.end_point.column as u32,
-                        },
-                    },
+                    range: char_range_from_byte_range(range, current_rope).ok()?,
                     detail: None,
-                    selection_range: lsp_types::Range {
-                        start: Position {
-                            line: selection_range.start_point.row as u32,
-                            character: selection_range.start_point.column as u32,
-                        },
-                        end: Position {
-                            line: selection_range.end_point.row as u32,
-                            character: selection_range.end_point.column as u32,
-                        },
-                    },
+                    selection_range: char_range_from_byte_range(selection_range, current_rope)
+                        .ok()?,
                     tags: None,
                     deprecated: None,
                     children: None,

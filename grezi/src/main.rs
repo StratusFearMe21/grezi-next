@@ -400,7 +400,9 @@ fn main() -> miette::Result<()> {
         "Grezi",
         native_options,
         Box::new(move |cc| {
-            GlyphonRenderer::insert(cc, Arc::clone(&font_system));
+            if let Some(ref render_state) = cc.wgpu_render_state {
+                GlyphonRenderer::insert(render_state, Arc::clone(&font_system));
+            }
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();
                 egui_extras::install_image_loaders(&lsp_egui_ctx);
@@ -441,7 +443,9 @@ fn main() {
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(move |cc| {
-                    GlyphonRenderer::insert(cc, Arc::clone(&font_system));
+                    if let Some(ref render_state) = cc.wgpu_render_state {
+                        GlyphonRenderer::insert(render_state, Arc::clone(&font_system));
+                    }
                     Box::new({
                         let app = MyEguiApp::new(font_system);
                         app.0.init_app(

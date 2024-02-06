@@ -169,7 +169,7 @@ pub fn cairo_draw_shape(
         egui::Shape::Callback(glyphon_callback) => {
             let callback = glyphon_callback
                 .callback
-                .downcast_ref::<GlyphonRendererCallback<Editor, Arc<Editor>>>()
+                .downcast_ref::<GlyphonRendererCallback<Editor>>()
                 .unwrap();
 
             struct RunIter<'a> {
@@ -201,10 +201,9 @@ pub fn cairo_draw_shape(
             }
 
             for buffer in callback.buffers.iter() {
-                let text_area = &buffer.0.get().0;
-
-                ctx.set_font_size(text_area.buffer.metrics().font_size as f64);
-                let mut glyphs = RunIter::new(text_area.buffer.layout_runs()).peekable();
+                let buffer_read = buffer.buffer.read();
+                ctx.set_font_size(buffer_read.as_ref().metrics().font_size as f64);
+                let mut glyphs = RunIter::new(buffer_read.as_ref().layout_runs()).peekable();
 
                 while glyphs.peek().is_some() {
                     let color;
@@ -247,8 +246,8 @@ pub fn cairo_draw_shape(
                         clusters.push(TextCluster::new(t.len() as i32, 1));
                         let glyph = cairo::Glyph::new(
                             g.1.glyph_id as u64,
-                            text_area.left as f64 + g.1.x as f64,
-                            text_area.top as f64 + g.0.line_y as f64 + g.1.y as f64,
+                            buffer.rect.left() as f64 + g.1.x as f64,
+                            buffer.rect.top() as f64 + g.0.line_y as f64 + g.1.y as f64,
                         );
                         new_glyphs.push(glyph);
                         glyphs.next();

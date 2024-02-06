@@ -28,7 +28,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{fontdb::ID, Buffer, Edit, FontSystem, Metrics, TextBounds},
+    glyphon::{fontdb::ID, Buffer, Edit, FontSystem, Metrics},
     BufferWithTextArea, GlyphonRendererCallback,
 };
 // use frame_history::FrameHistory;
@@ -453,7 +453,7 @@ impl Resolved {
         &self,
         ui: &mut Ui,
         time: f32,
-        buffers: &mut Vec<BufferWithTextArea<Editor, Arc<Editor>>>,
+        buffers: &mut Vec<BufferWithTextArea<Editor>>,
         font_system: &mut FontSystem,
     ) {
         ui.set_clip_rect(ui.max_rect());
@@ -506,7 +506,7 @@ impl Resolved {
                         if let Some(click) = response.interact_pointer_pos() {
                             if response.dragged() {
                                 let drag = (click - obj_pos.min.to_vec2()) + response.drag_delta();
-                                buffer.0.write().action(
+                                buffer.write().0.action(
                                     font_system,
                                     egui_glyphon::glyphon::Action::Drag {
                                         x: drag.x as i32,
@@ -515,7 +515,7 @@ impl Resolved {
                                 );
                             } else {
                                 let click = click - obj_pos.min.to_vec2();
-                                buffer.0.write().action(
+                                buffer.write().0.action(
                                     font_system,
                                     egui_glyphon::glyphon::Action::Click {
                                         x: click.x as i32,
@@ -525,7 +525,7 @@ impl Resolved {
                             }
                         }
 
-                        let boxes = buffer.highlight_boxes();
+                        let boxes = buffer.read().highlight_boxes();
                         for r#box in &boxes {
                             ui.painter().rect_filled(
                                 r#box.translate(obj_pos.min.to_vec2()),
@@ -536,7 +536,7 @@ impl Resolved {
 
                         let mut window_clicked = false;
                         {
-                            let buffer_read = buffer.0.read();
+                            let ref buffer_read = buffer.read().0;
                             if let Some(r#box) = boxes.last() {
                                 if ui.input(|i| i.any_touches()) {
                                     egui::Window::new("copy_cosmic_text")
@@ -569,24 +569,15 @@ impl Resolved {
                         }
 
                         if response.clicked_elsewhere() && !window_clicked {
-                            buffer.0.write().set_select_opt(None);
+                            buffer.write().0.set_select_opt(None);
                         }
 
-                        let ppi = ui.ctx().pixels_per_point();
-                        let obj_pos = obj_pos * ppi;
                         buffers.push(BufferWithTextArea::new(
                             Arc::clone(buffer),
-                            obj_pos.left(),
-                            obj_pos.top(),
-                            ppi,
+                            obj_pos,
                             gamma_multiply,
-                            TextBounds {
-                                left: obj_pos.left() as i32,
-                                top: obj_pos.top() as i32,
-                                right: obj_pos.right() as i32,
-                                bottom: obj_pos.bottom() as i32,
-                            },
                             egui_glyphon::glyphon::Color::rgb(255, 255, 255),
+                            ui.ctx(),
                         ));
                     }
                 }
@@ -797,20 +788,34 @@ impl Resolved {
         let mut images = Vec::with_capacity(3);
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
-                ViewboxIn::Size => Splits {
-                    unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
-                    adjusted: size,
-                },
+                ViewboxIn::Size => resolve_layout_raw(
+                    size,
+                    Direction::Horizontal,
+                    vec![Constraint::Min(0.0)],
+                    Splits {
+                        unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+                        adjusted: size,
+                    },
+                    15.0,
+                )
+                .get_splits(0),
                 ViewboxIn::Custom(hash, index) => {
                     resolved.resolve_layout(hash, index, size, slide_show)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
             let second_viewbox = match object.locations[1].1 {
-                ViewboxIn::Size => Splits {
-                    unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
-                    adjusted: size,
-                },
+                ViewboxIn::Size => resolve_layout_raw(
+                    size,
+                    Direction::Horizontal,
+                    vec![Constraint::Min(0.0)],
+                    Splits {
+                        unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
+                        adjusted: size,
+                    },
+                    15.0,
+                )
+                .get_splits(0),
                 ViewboxIn::Custom(hash, index) => {
                     resolved.resolve_layout(hash, index, size, slide_show)
                 }
@@ -869,7 +874,7 @@ impl Resolved {
                 }
                 parser::objects::ObjectType::Text(job, font_size, line_height) => {
                     let factor = second_viewbox.adjusted.size() / second_viewbox.unadjusted.size();
-                    let font_size = dbg!(*font_size * factor.x);
+                    let font_size = *font_size * factor.x;
                     let mut buffer = Buffer::new(
                         font_system,
                         Metrics::new(
@@ -877,11 +882,16 @@ impl Resolved {
                             line_height.map_or(font_size * 1.1, |h| h * font_size),
                         ),
                     );
-                    buffer.set_size(font_system, second_viewbox.adjusted.width(), f32::MAX);
+                    buffer.set_size(
+                        font_system,
+                        second_viewbox.adjusted.width(),
+                        // second_viewbox.adjusted.height(),
+                        f32::MAX,
+                    );
                     parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
                     buffer.shape_until_scroll(font_system);
 
-                    let resolved_obj = ResolvedObject::Text(Arc::new(Editor(RwLock::new(
+                    let resolved_obj = ResolvedObject::Text(Arc::new(RwLock::new(Editor(
                         egui_glyphon::glyphon::Editor::new(buffer),
                     ))));
                     let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
@@ -1037,7 +1047,7 @@ impl Resolved {
                         let (from_rect, to_rect) = match &text_object.object {
                             ResolvedObject::Text(buffer) => (
                                 {
-                                    let buffer = buffer.0.read();
+                                    let ref buffer = buffer.read().0;
                                     let glyph = buffer.buffer().lines.get(locations[0][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
@@ -1058,7 +1068,7 @@ impl Resolved {
                                     )
                                 },
                                 {
-                                    let buffer = buffer.0.read();
+                                    let ref buffer = buffer.read().0;
                                     let glyph = buffer.buffer().lines.get(locations[1][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
@@ -1208,6 +1218,15 @@ pub enum SlideShowSource {
 pub struct Layouts {
     pub unadjusted: Vec<Rect>,
     pub adjusted: Vec<Rect>,
+}
+
+impl Layouts {
+    fn get_splits(&self, idx: usize) -> Splits {
+        Splits {
+            unadjusted: self.unadjusted[idx],
+            adjusted: self.adjusted[idx],
+        }
+    }
 }
 
 struct Splits {
