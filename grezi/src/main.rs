@@ -120,8 +120,6 @@ pub struct Args {
     /// Specifies the expected run time of the presentation
     #[clap(long)]
     pub duration: Option<humantime::Duration>,
-    #[clap(short, long, value_parser = FitParser)]
-    pub window_size: Option<Fit>,
 }
 
 // When compiling natively:
@@ -146,13 +144,10 @@ fn main() -> miette::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: ViewportBuilder {
             fullscreen: Some(!args.lsp),
-            resizable: Some(args.window_size.is_none()),
-            inner_size: args.window_size.map(|f| f.0),
-            min_inner_size: args.window_size.map(|f| f.0),
-            max_inner_size: args.window_size.map(|f| f.0),
             ..Default::default()
         },
         vsync: true,
+        persist_window: false,
         ..Default::default()
     };
     let font_system = Arc::new(Mutex::new(FontSystem::new()));
