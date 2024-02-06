@@ -1935,4 +1935,12 @@ impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update(ctx);
     }
+
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
+    fn auto_save_interval(&self) -> std::time::Duration {
+        std::time::Duration::MAX
+    }
 }
