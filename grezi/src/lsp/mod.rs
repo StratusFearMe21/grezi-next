@@ -1275,7 +1275,7 @@ pub fn start_lsp(
                                             && parent
                                                 .child(0)
                                                 .map(|c| {
-                                                    &current_rope.slice(c.byte_range())
+                                                    &current_rope.byte_slice(c.byte_range())
                                                         == "font_family"
                                                 })
                                                 .unwrap_or_default()
