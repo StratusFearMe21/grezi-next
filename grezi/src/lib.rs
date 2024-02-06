@@ -1768,7 +1768,7 @@ impl MyEguiApp {
                 let response = ui.allocate_rect(window_size, Sense::click_and_drag());
 
                 let drag_delta = response.drag_delta().x;
-                if (drag_delta < -50.0 && !self.in_drag) || response.clicked() {
+                if (drag_delta < -20.0 && !self.in_drag) || response.clicked() {
                     self.in_drag = true;
                     let _ = self
                         .index
@@ -1789,7 +1789,7 @@ impl MyEguiApp {
                                 None
                             }
                         });
-                } else if drag_delta > 50.0 && !self.in_drag {
+                } else if drag_delta > 20.0 && !self.in_drag {
                     self.in_drag = true;
                     let _ = self
                         .index
