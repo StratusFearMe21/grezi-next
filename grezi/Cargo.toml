@@ -50,7 +50,7 @@ env_logger = "0.10"
 thiserror = "1.0.48"
 humantime = "2.1.0"
 cssparser = "0.33.0"
-cairo-rs = { version = "0.18.5", features = ["pdf", "ps", "svg", "freetype"] }
+cairo-rs = { version = "0.18.5", features = ["pdf", "ps", "svg", "freetype"], optional = true }
 hunspell-rs = "0.4.0"
 indexmap = "2.1.0"
 crossbeam-queue = "0.3.11"
@@ -70,3 +70,7 @@ tree-sitter = "0.20.10"
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
 tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
 case = "1.0.0"
+
+[features]
+default = ["cairo"]
+cairo = ["cairo-rs"]

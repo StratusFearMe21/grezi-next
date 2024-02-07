@@ -168,7 +168,7 @@ impl Editor {
 
 #[derive(Clone)]
 pub enum ResolvedObject {
-    Text(Arc<RwLock<Editor>>),
+    Text(Arc<RwLock<Editor>>, f32),
     Image {
         image: Image<'static>,
         scale: Option<Vec2>,
@@ -200,19 +200,25 @@ pub fn measure_buffer(buffer: &Buffer, vb: Vec2) -> Rect {
 
     let (max_width, max_height) = buffer.size();
 
-    Rect::from_min_size(
-        Pos2::ZERO,
-        Vec2::new(
-            if rtl { vb.x } else { width.min(max_width) },
-            (total_lines as f32 * buffer.metrics().line_height).min(max_height),
-        ),
-    )
+    let size = Vec2::new(
+        if rtl { vb.x } else { width.min(max_width) },
+        (total_lines as f32 * buffer.metrics().line_height).min(max_height),
+    );
+    match buffer.lines[0].align() {
+        Some(Align::Right) | Some(Align::End) => {
+            Align2::RIGHT_TOP.align_size_within_rect(size, Rect::from_min_size(Pos2::ZERO, vb))
+        }
+        Some(Align::Center) | Some(Align::Justified) => {
+            Align2::CENTER_TOP.align_size_within_rect(size, Rect::from_min_size(Pos2::ZERO, vb))
+        }
+        Some(Align::Left) | None => Rect::from_min_size(Pos2::ZERO, size),
+    }
 }
 
 impl ResolvedObject {
     pub fn bounds(&self, vb: Vec2, ui: &mut Ui) -> Rect {
         match self {
-            ResolvedObject::Text(buffer) => measure_buffer(buffer.read().as_ref(), vb),
+            ResolvedObject::Text(buffer, _) => measure_buffer(buffer.read().as_ref(), vb),
             ResolvedObject::Image { image, .. } => {
                 Rect::from_min_size(eframe::egui::pos2(0.0, 0.0), {
                     let mut size = None;
@@ -314,7 +320,11 @@ pub fn parse_objects(
                 match parameter.0.as_ref() {
                     "color" => {
                         let t = super::color::parse_color_with(
-                            &mut DefaultColorParser::new(None),
+                            &mut DefaultColorParser::new(Some(
+                                &mut crate::parser::color::Color::LinSrgb(
+                                    [1.0, 1.0, 1.0, 1.0].into(),
+                                ),
+                            )),
                             &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                         )
                         .map_err(|e| {
@@ -375,7 +385,11 @@ pub fn parse_objects(
                     }
                     "tint" => {
                         let t = super::color::parse_color_with(
-                            &mut DefaultColorParser::new(None),
+                            &mut DefaultColorParser::new(Some(
+                                &mut crate::parser::color::Color::LinSrgb(
+                                    [1.0, 1.0, 1.0, 1.0].into(),
+                                ),
+                            )),
                             &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                         )
                         .map_err(|e| {
@@ -476,7 +490,11 @@ pub fn parse_objects(
                     },
                     "color" => {
                         let c = super::color::parse_color_with(
-                            &mut DefaultColorParser::new(None),
+                            &mut DefaultColorParser::new(Some(
+                                &mut crate::parser::color::Color::LinSrgb(
+                                    [1.0, 1.0, 1.0, 1.0].into(),
+                                ),
+                            )),
                             &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                         )
                         .map_err(|e| {

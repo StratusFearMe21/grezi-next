@@ -1356,6 +1356,7 @@ pub fn start_lsp(
                         {
                             match command.command.as_str() {
                                 "treerestaurant_to_dot" => {
+                                    #[cfg(unix)]
                                     if let Ok(process) = std::process::Command::new("dot")
                                         .stdout(std::fs::File::create("out.dot").unwrap())
                                         .stdin(Stdio::piped())

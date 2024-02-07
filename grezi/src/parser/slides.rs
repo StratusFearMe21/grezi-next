@@ -484,7 +484,7 @@ fn parse_slide_function(
                         )
                         .into();
                     let t = super::color::parse_color_with(
-                        &mut DefaultColorParser::new(None),
+                        &mut DefaultColorParser::new(Some(&mut HIGHLIGHT_COLOR_DEFAULT.into())),
                         &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                     )
                     .map_err(|e| {
@@ -575,7 +575,7 @@ fn parse_slide_function(
                         )
                         .into();
                     let t = super::color::parse_color_with(
-                        &mut DefaultColorParser::new(None),
+                        &mut DefaultColorParser::new(Some(&mut Color32::WHITE.into())),
                         &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                     )
                     .map_err(|e| {

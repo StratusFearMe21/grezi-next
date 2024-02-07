@@ -1508,6 +1508,14 @@ impl From<Color> for Color32 {
     }
 }
 
+impl From<Color32> for Color {
+    fn from(value: Color32) -> Self {
+        let rgba = ecolor::Rgba::from(value);
+
+        Self::LinSrgb(rgba.to_rgba_unmultiplied().into())
+    }
+}
+
 impl From<Color> for [f32; 4] {
     fn from(val: Color) -> Self {
         match val {

@@ -55,7 +55,7 @@ use serde::{Deserialize, Serialize};
 use crate::parser::highlighting::HelixCell;
 use crate::parser::objects::ResolvedObject;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "cairo"))]
 pub mod cairo;
 // mod frame_history;
 mod layout;
@@ -480,7 +480,7 @@ impl Resolved {
                 )),
             ]);
             match &obj.object {
-                ResolvedObject::Text(buffer) => {
+                ResolvedObject::Text(buffer, x_translation) => {
                     let gamma_multiply = match obj.state {
                         ObjectState::Entering => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
@@ -502,6 +502,10 @@ impl Resolved {
                         // ui.painter()
                         //     .rect(obj_pos, Rounding::default(), Color32::RED, Stroke::NONE);
                         let response = ui.allocate_rect(obj_pos, Sense::click_and_drag());
+
+                        let width = obj_pos.width();
+                        let mut obj_pos = obj_pos.translate(Vec2::new(*x_translation, 0.0));
+                        obj_pos.set_width(-*x_translation + width);
 
                         if let Some(click) = response.interact_pointer_pos() {
                             if response.dragged() {
@@ -667,9 +671,7 @@ impl Resolved {
                     scaled_time,
                     color,
                 } => {
-                    let time = if !*persist {
-                        scaled_time[1]
-                    } else if scaled_time[0] < time {
+                    let time = if scaled_time[0] < time {
                         time - scaled_time[0]
                     } else {
                         0.0
@@ -678,7 +680,7 @@ impl Resolved {
                         EaseOutCubic,
                         locations_of_object[0],
                         locations_of_object[1],
-                        time,
+                        if !*persist { scaled_time[1] } else { time },
                         scaled_time[1],
                     ));
                     ui.ctx().debug_painter().rect_filled(
@@ -952,13 +954,16 @@ impl Resolved {
                     }
                     buffer.shape_until_scroll(font_system, true);
 
-                    let resolved_obj = ResolvedObject::Text(Arc::new(RwLock::new(Editor(
-                        egui_glyphon::glyphon::Editor::new(buffer),
+                    let buffer = Arc::new(RwLock::new(Editor(egui_glyphon::glyphon::Editor::new(
+                        buffer,
                     ))));
+                    let resolved_obj = ResolvedObject::Text(Arc::clone(&buffer), 0.0);
                     let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
+                    let resolved_obj = ResolvedObject::Text(buffer, -size.min.x);
                     let first_pos = object.locations[0]
                         .0
                         .align_size_within_rect(size.size(), first_viewbox.adjusted);
+
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = object.locations[1]
                         .0
@@ -1084,7 +1089,7 @@ impl Resolved {
                     let text_object = resolved.slide.get(*index).unwrap();
                     let locations = if let Some(locations) = locations {
                         let (from_rect, to_rect) = match &text_object.object {
-                            ResolvedObject::Text(buffer) => (
+                            ResolvedObject::Text(buffer, _) => (
                                 {
                                     let buffer = buffer.read();
                                     let buffer = buffer.as_ref();

@@ -157,7 +157,7 @@ fn parse_single_action(
                     )
                     .into();
                 let t = super::color::parse_color_with(
-                    &mut DefaultColorParser::new(None),
+                    &mut DefaultColorParser::new(Some(&mut HIGHLIGHT_COLOR_DEFAULT.into())),
                     &mut cssparser::Parser::new(&mut ParserInput::new(&value)),
                 )
                 .map_err(|e| {
