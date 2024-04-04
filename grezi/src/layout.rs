@@ -48,6 +48,8 @@ pub enum Constraint {
     Max(f32),
     /// Allocate at least this much of the box
     Min(f32),
+    /// Space evenly all the elements
+    Auto(super::parser::viewboxes::Direction),
 }
 
 impl Display for Constraint {
@@ -59,6 +61,7 @@ impl Display for Constraint {
             Constraint::Ratio(n, m) => write!(f, "{}:{}", n, m),
             Constraint::Length(n) => write!(f, "{}~", n),
             Constraint::Percentage(n) => write!(f, "{}%", n),
+            Constraint::Auto(d) => write!(f, "a{}", d),
         }
     }
 }
@@ -79,6 +82,7 @@ impl Constraint {
             Constraint::Length(l) => length.min(l),
             Constraint::Max(m) => length.min(m),
             Constraint::Min(m) => length.max(m),
+            Constraint::Auto(_) => length,
         }
     }
 
@@ -380,6 +384,12 @@ impl<'a> Layout<'a> {
                     solver.add_constraints(&[
                         element.size() | GE(STRONG) | m,
                         element.size() | EQ(MEDIUM) | m,
+                    ])?;
+                }
+                Constraint::Auto(_) => {
+                    solver.add_constraints(&[
+                        element.size() | GE(STRONG) | 0.0,
+                        element.size() | EQ(MEDIUM) | 0.0,
                     ])?;
                 }
             }

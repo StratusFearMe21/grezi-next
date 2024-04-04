@@ -14,6 +14,7 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     hash::{BuildHasherDefault, Hasher},
+    num::NonZeroU16,
     time::Duration,
 };
 
@@ -46,19 +47,23 @@ pub enum AstObject {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub struct PointFromRange(helix_core::tree_sitter::Range);
+pub struct PointFromRange(lsp_types::Range, std::ops::Range<usize>);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl From<&PointFromRange> for SourceSpan {
     fn from(value: &PointFromRange) -> Self {
-        (value.0.start_byte, value.0.end_byte - value.0.start_byte).into()
+        (value.1.start, value.1.len()).into()
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<helix_core::tree_sitter::Range> for PointFromRange {
-    fn from(value: helix_core::tree_sitter::Range) -> Self {
-        Self(value)
+impl PointFromRange {
+    pub fn new(range: helix_core::tree_sitter::Range, rope: &helix_core::Rope) -> Self {
+        use crate::lsp::formatter::char_range_from_byte_range;
+        Self(
+            char_range_from_byte_range(range, rope).unwrap(),
+            range.start_byte..range.end_byte,
+        )
     }
 }
 
@@ -106,7 +111,7 @@ pub enum Error {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Error {
-    pub fn range(&self) -> helix_core::tree_sitter::Range {
+    pub fn range(&self) -> lsp_types::Range {
         match self {
             Error::BadExit(range) => range.0,
             Error::ImplicitEdge(range) => range.0,
@@ -127,21 +132,12 @@ impl Error {
 #[cfg(not(target_arch = "wasm32"))]
 impl From<Error> for lsp_types::Diagnostic {
     fn from(error: Error) -> Self {
-        use lsp_types::{DiagnosticSeverity, Position, Range};
+        use lsp_types::DiagnosticSeverity;
         use miette::Severity;
         let range = error.range();
 
         lsp_types::Diagnostic {
-            range: Range {
-                start: Position {
-                    line: range.start_point.row as u32,
-                    character: range.start_point.column as u32,
-                },
-                end: Position {
-                    line: range.end_point.row as u32,
-                    character: range.end_point.column as u32,
-                },
-            },
+            range,
             severity: error.severity().map(|s| match s {
                 Severity::Warning => DiagnosticSeverity::WARNING,
                 Severity::Advice => DiagnosticSeverity::HINT,
@@ -259,19 +255,24 @@ impl Hasher for PassThroughHasher {
 #[cfg(not(target_arch = "wasm32"))]
 pub struct GrzCursor<'a> {
     tree_cursor: TreeCursor<'a>,
+    rope: &'a helix_core::Rope,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl<'a> GrzCursor<'a> {
-    pub fn new(tree: &'a Tree) -> GrzCursor<'a> {
+    pub fn new(tree: &'a Tree, rope: &'a helix_core::Rope) -> GrzCursor<'a> {
         GrzCursor {
             tree_cursor: tree.walk(),
+            rope,
         }
     }
 
     // TODO: Reduce allocations in here by reusing current tree_cursor
     pub fn fork<T>(&mut self, mut callback: impl FnMut(&mut Self) -> T) -> T {
-        callback(&mut GrzCursor::from_node(self.tree_cursor.node()))
+        callback(&mut GrzCursor::from_node(
+            self.tree_cursor.node(),
+            self.rope,
+        ))
     }
 
     fn check_for_error(&self, result: bool) -> Result<bool, Error> {
@@ -280,19 +281,26 @@ impl<'a> GrzCursor<'a> {
         }
 
         if self.tree_cursor.node().is_error() {
-            return Err(Error::Syntax(self.tree_cursor.node().range().into()));
+            return Err(Error::Syntax(PointFromRange::new(
+                self.tree_cursor.node().range(),
+                self.rope,
+            )));
         }
 
         if self.tree_cursor.node().is_missing() {
-            return Err(Error::Missing(self.tree_cursor.node().range().into()));
+            return Err(Error::Missing(PointFromRange::new(
+                self.tree_cursor.node().range(),
+                self.rope,
+            )));
         }
 
         Ok(result)
     }
 
-    pub fn from_node(node: Node<'a>) -> GrzCursor<'a> {
+    pub fn from_node(node: Node<'a>, rope: &'a helix_core::Rope) -> GrzCursor<'a> {
         GrzCursor {
             tree_cursor: node.walk(),
+            rope,
         }
     }
 
@@ -366,7 +374,7 @@ impl<'a> GrzCursor<'a> {
         self.tree_cursor.goto_parent()
     }
 
-    fn field_id(&self) -> Option<u16> {
+    fn field_id(&self) -> Option<NonZeroU16> {
         self.tree_cursor.field_id()
     }
 
@@ -433,8 +441,8 @@ pub fn parse_file(
         }
     }
 
-    let mut old_tree_cursor = GrzCursor::new(if let Some(t) = old_tree { t } else { tree });
-    let mut new_tree_cursor = GrzCursor::new(tree);
+    let mut old_tree_cursor = GrzCursor::new(if let Some(t) = old_tree { t } else { tree }, source);
+    let mut new_tree_cursor = GrzCursor::new(tree, source);
 
     match (
         old_tree_cursor.goto_first_child(),
@@ -560,7 +568,7 @@ pub fn parse_file(
                                 ) {
                                     Ok(c) => bg.1 = Some(c),
                                     Err(e) => errors_present.push(Error::ColorError(
-                                        node.range().into(),
+                                        PointFromRange::new(node.range(), source),
                                         format!("{:?}", e),
                                     )),
                                 }
@@ -596,9 +604,10 @@ pub fn parse_file(
                 }
                 ast_object_at += 1;
             }
-            kind => {
-                errors_present.push(Error::BadNode(new_tree_cursor.node().range().into(), kind))
-            }
+            kind => errors_present.push(Error::BadNode(
+                PointFromRange::new(new_tree_cursor.node().range(), source),
+                kind,
+            )),
         }
 
         loop {

@@ -95,6 +95,8 @@ fn parse_single_action(
 
     use cssparser::ParserInput;
 
+    use crate::parser::PointFromRange;
+
     use super::color::DefaultColorParser;
 
     action_walker.goto_first_child()?;
@@ -110,9 +112,12 @@ fn parse_single_action(
             );
             hasher.finish()
         };
-        let object = on_screen
-            .get(&object_name)
-            .ok_or_else(|| super::Error::NotFound(action_walker.node().range().into()))?;
+        let object = on_screen.get(&object_name).ok_or_else(|| {
+            super::Error::NotFound(PointFromRange::new(
+                action_walker.node().range().into(),
+                source,
+            ))
+        })?;
         action_walker.goto_next_sibling()?;
 
         let locations = match NodeKind::from(action_walker.node().kind_id()) {
@@ -120,20 +125,27 @@ fn parse_single_action(
                 let from = action_walker
                     .fork(|cursor| parse_highlight_location(cursor, source))
                     .map_err(|_| {
-                        super::Error::InvalidParameter(action_walker.node().range().into())
+                        super::Error::InvalidParameter(PointFromRange::new(
+                            action_walker.node().range().into(),
+                            source,
+                        ))
                     })?;
                 action_walker.goto_next_sibling()?;
                 let to = match NodeKind::from(action_walker.node().kind_id()) {
                     NodeKind::StringLiteral => action_walker
                         .fork(|cursor| parse_highlight_location(cursor, source))
                         .map_err(|_| {
-                            super::Error::InvalidParameter(action_walker.node().range().into())
+                            super::Error::InvalidParameter(PointFromRange::new(
+                                action_walker.node().range().into(),
+                                source,
+                            ))
                         })?,
                     // "number_literal" => &source[tree_cursor.node().byte_range()],
                     _ => {
-                        return Err(super::Error::InvalidParameter(
+                        return Err(super::Error::InvalidParameter(PointFromRange::new(
                             action_walker.node().range().into(),
-                        ))
+                            source,
+                        )))
                     }
                 };
                 match (from, to) {
@@ -162,7 +174,7 @@ fn parse_single_action(
                 )
                 .map_err(|e| {
                     super::Error::ColorError(
-                        action_walker.node().range().into(),
+                        PointFromRange::new(action_walker.node().range().into(), source),
                         format!("{:?}", e),
                     )
                 })?;
@@ -187,9 +199,10 @@ fn parse_single_action(
                 .into(),
         ))
     } else {
-        return Err(super::Error::ActionNotFound(
+        return Err(super::Error::ActionNotFound(PointFromRange::new(
             action_walker.node().range().into(),
-        ));
+            source,
+        )));
     }
 }
 

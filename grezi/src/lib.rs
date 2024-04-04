@@ -18,7 +18,7 @@ use atomic_float::AtomicF32;
 #[cfg(not(target_arch = "wasm32"))]
 use crossbeam_queue::SegQueue;
 use eframe::{
-    egui::{self, Id, Image, ImageSize, Rect, Sense, SizeHint, Ui, ViewportBuilder, ViewportId},
+    egui::{self, Image, ImageSize, Rect, Sense, SizeHint, Ui, ViewportBuilder, ViewportId},
     egui_wgpu,
     emath::Align2,
     epaint::{
@@ -28,7 +28,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{cosmic_text::Selection, fontdb::ID, Buffer, Edit, FontSystem, Metrics},
+    glyphon::{fontdb::ID, Attrs, Buffer, FontSystem, Metrics},
     BufferWithTextArea, GlyphonRendererCallback,
 };
 // use frame_history::FrameHistory;
@@ -44,7 +44,7 @@ use layout::{Constraint, Direction, UnresolvedLayout};
 use parser::{
     actions::{Actions, ResolvedActions},
     color::Color,
-    objects::{Editor, Object, ObjectState, ObjectType},
+    objects::{Object, ObjectState, ObjectType},
     slides::{ResolvedSlideObj, SlideObj},
     viewboxes::ViewboxIn,
     AstObject, PassThroughHasher,
@@ -339,8 +339,7 @@ impl SpeakerView {
             }
             let mut buffers = Vec::new();
             {
-                let mut font_system = font_system.lock();
-                next_resolved.draw_slide(ui, f32::MAX, &mut buffers, font_system.deref_mut());
+                next_resolved.draw_slide(ui, f32::MAX, &mut buffers);
                 next_resolved.draw_actions(ui, f32::MAX);
             }
             if let Some(slide) = slide_show.slide_show.get(c_index) {
@@ -387,8 +386,7 @@ impl SpeakerView {
                 );
             }
             {
-                let mut font_system = font_system.lock();
-                current_resolved.draw_slide(ui, f32::MAX, &mut buffers, font_system.deref_mut());
+                current_resolved.draw_slide(ui, f32::MAX, &mut buffers);
                 current_resolved.draw_actions(ui, f32::MAX);
             }
             ui.painter().add(egui_wgpu::Callback::new_paint_callback(
@@ -449,15 +447,10 @@ impl Resolved {
             ..Default::default()
         }
     }
-    fn draw_slide(
-        &self,
-        ui: &mut Ui,
-        time: f32,
-        buffers: &mut Vec<BufferWithTextArea<Editor>>,
-        font_system: &mut FontSystem,
-    ) {
-        ui.set_clip_rect(ui.max_rect());
-        for (idx, obj) in self.slide.iter().enumerate() {
+    fn draw_slide(&self, ui: &mut Ui, time: f32, buffers: &mut Vec<BufferWithTextArea>) {
+        let current_clip = ui.clip_rect();
+        ui.set_clip_rect(self.window_size);
+        for obj in self.slide.iter() {
             let time = if obj.scaled_time[0] < time {
                 (time - obj.scaled_time[0]).clamp(0.0, obj.scaled_time[1])
             } else {
@@ -501,80 +494,10 @@ impl Resolved {
                     if gamma_multiply > 0.0 {
                         // ui.painter()
                         //     .rect(obj_pos, Rounding::default(), Color32::RED, Stroke::NONE);
-                        let response = ui.allocate_rect(obj_pos, Sense::click_and_drag());
 
                         let width = obj_pos.width();
                         let mut obj_pos = obj_pos.translate(Vec2::new(*x_translation, 0.0));
                         obj_pos.set_width(-*x_translation + width);
-
-                        if let Some(click) = response.interact_pointer_pos() {
-                            if response.dragged() {
-                                let drag = (click - obj_pos.min.to_vec2()) + response.drag_delta();
-                                buffer.write().0.action(
-                                    font_system,
-                                    egui_glyphon::glyphon::Action::Drag {
-                                        x: drag.x as i32,
-                                        y: drag.y as i32,
-                                    },
-                                );
-                            } else {
-                                let click = click - obj_pos.min.to_vec2();
-                                buffer.write().0.action(
-                                    font_system,
-                                    egui_glyphon::glyphon::Action::Click {
-                                        x: click.x as i32,
-                                        y: click.y as i32,
-                                    },
-                                );
-                            }
-                        }
-
-                        let boxes = buffer.read().highlight_boxes();
-                        for r#box in &boxes {
-                            ui.painter().rect_filled(
-                                r#box.translate(obj_pos.min.to_vec2()),
-                                Rounding::default(),
-                                Color32::BLUE,
-                            );
-                        }
-
-                        let mut window_clicked = false;
-                        {
-                            let ref buffer_read = buffer.read().0;
-                            if let Some(r#box) = boxes.last() {
-                                if ui.input(|i| i.any_touches()) {
-                                    egui::Window::new("copy_cosmic_text")
-                                        .id(Id::new((idx, "copy_cosmic_text")))
-                                        .title_bar(false)
-                                        .fixed_pos(r#box.translate(obj_pos.min.to_vec2()).max)
-                                        .resizable(false)
-                                        .collapsible(false)
-                                        .show(ui.ctx(), |ui| {
-                                            if ui.button("Copy").clicked() {
-                                                window_clicked = true;
-                                                ui.ctx().output_mut(|t| {
-                                                    t.copied_text = buffer_read
-                                                        .copy_selection()
-                                                        .unwrap_or_default()
-                                                });
-                                            }
-                                        });
-                                }
-                            }
-
-                            if buffer_read.selection_bounds().is_some() {
-                                if ui.input_mut(|i| i.events.contains(&egui::Event::Copy)) {
-                                    ui.ctx().output_mut(|t| {
-                                        t.copied_text =
-                                            buffer_read.copy_selection().unwrap_or_default()
-                                    });
-                                }
-                            }
-                        }
-
-                        if response.clicked_elsewhere() && !window_clicked {
-                            buffer.write().0.set_selection(Selection::None);
-                        }
 
                         buffers.push(BufferWithTextArea::new(
                             Arc::clone(buffer),
@@ -659,6 +582,7 @@ impl Resolved {
                 ResolvedObject::Spinner => egui::Spinner::new().paint_at(ui, obj_pos),
             };
         }
+        ui.set_clip_rect(current_clip);
     }
 
     fn draw_actions(&self, ui: &mut Ui, time: f32) {
@@ -791,6 +715,7 @@ impl Resolved {
                     ViewboxIn::Size => Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
+                        auto_direction: None,
                     },
                     ViewboxIn::Custom(hash, index) => {
                         self.resolve_layout(hash, index, size, slide_show)
@@ -810,6 +735,7 @@ impl Resolved {
                 let splits = Splits {
                     unadjusted: layout.unadjusted[index],
                     adjusted: layout.adjusted[index],
+                    auto_direction: None,
                 };
                 self.viewboxes.insert(hash, layout);
                 splits
@@ -817,6 +743,7 @@ impl Resolved {
             Some(layout) => Splits {
                 unadjusted: layout.unadjusted[index],
                 adjusted: layout.adjusted[index],
+                auto_direction: None,
             },
         }
     }
@@ -854,6 +781,7 @@ impl Resolved {
                     Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
+                        auto_direction: None,
                     },
                     15.0,
                 )
@@ -871,6 +799,7 @@ impl Resolved {
                     Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
+                        auto_direction: None,
                     },
                     15.0,
                 )
@@ -948,15 +877,27 @@ impl Resolved {
                         // second_viewbox.adjusted.height(),
                         f32::MAX,
                     );
-                    parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
+                    buffer.set_rich_text(
+                        font_system,
+                        job.iter().enumerate().map(|(v, j)| {
+                            (
+                                if v == 0 {
+                                    j.0.trim_start()
+                                } else {
+                                    j.0.as_str()
+                                },
+                                j.1.as_attrs(),
+                            )
+                        }),
+                        Attrs::new(),
+                        egui_glyphon::glyphon::Shaping::Advanced,
+                    );
                     for line in &mut buffer.lines {
                         line.set_align(*align);
                     }
                     buffer.shape_until_scroll(font_system, true);
 
-                    let buffer = Arc::new(RwLock::new(Editor(egui_glyphon::glyphon::Editor::new(
-                        buffer,
-                    ))));
+                    let buffer = Arc::new(RwLock::new(buffer));
                     let resolved_obj = ResolvedObject::Text(Arc::clone(&buffer), 0.0);
                     let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
                     let resolved_obj = ResolvedObject::Text(buffer, -size.min.x);
@@ -1092,7 +1033,6 @@ impl Resolved {
                             ResolvedObject::Text(buffer, _) => (
                                 {
                                     let buffer = buffer.read();
-                                    let buffer = buffer.as_ref();
                                     let glyph = buffer.lines.get(locations[0][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
@@ -1114,7 +1054,6 @@ impl Resolved {
                                 },
                                 {
                                     let buffer = buffer.read();
-                                    let buffer = buffer.as_ref();
                                     let glyph = buffer.lines.get(locations[1][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
@@ -1280,7 +1219,12 @@ impl SlideShow {
             if let ObjectType::Text { job, .. } = &obj.object {
                 let mut buffer = Buffer::new(font_system, Metrics::new(12.0, 24.0));
                 buffer.set_size(font_system, f32::MAX, f32::MAX);
-                parser::objects::add_job_to_buffer(job, &mut buffer, font_system);
+                buffer.set_rich_text(
+                    font_system,
+                    job.iter().map(|j| (j.0.as_str(), j.1.as_attrs())),
+                    Attrs::new(),
+                    egui_glyphon::glyphon::Shaping::Advanced,
+                );
                 buffer.shape_until_scroll(font_system, false);
 
                 buffer.layout_runs().for_each(|r| {
@@ -1296,8 +1240,7 @@ impl SlideShow {
 }
 
 impl SlideShow {
-    // Creates a slide for exercising the Browser JIT on WASM to avoid jank
-    fn exercise_jit() -> SlideShow {
+    fn loading() -> SlideShow {
         let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
         let spinner_hash = hasher.hash_one("spinner");
         let halves_hash = hasher.hash_one("halves");
@@ -1355,6 +1298,7 @@ pub enum SlideShowSource {
 pub struct Layouts {
     pub unadjusted: Vec<Rect>,
     pub adjusted: Vec<Rect>,
+    pub auto_direction: Option<(usize, parser::viewboxes::Direction)>,
 }
 
 impl Layouts {
@@ -1362,6 +1306,9 @@ impl Layouts {
         Splits {
             unadjusted: self.unadjusted[idx],
             adjusted: self.adjusted[idx],
+            auto_direction: self
+                .auto_direction
+                .and_then(|d| if d.0 == idx { Some(d.1) } else { None }),
         }
     }
 }
@@ -1369,6 +1316,7 @@ impl Layouts {
 struct Splits {
     unadjusted: Rect,
     adjusted: Rect,
+    auto_direction: Option<parser::viewboxes::Direction>,
 }
 
 fn resolve_layout_raw(
@@ -1396,6 +1344,10 @@ fn resolve_layout_raw(
     Layouts {
         unadjusted,
         adjusted,
+        auto_direction: constraints.iter().enumerate().find_map(|p| match p.1 {
+            Constraint::Auto(d) => Some((p.0, *d)),
+            _ => None,
+        }),
     }
 }
 
@@ -1548,7 +1500,7 @@ impl MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))]
         let mut parser = {
             let mut parser = helix_core::tree_sitter::Parser::new();
-            parser.set_language(tree_sitter_grz::language()).unwrap();
+            parser.set_language(&tree_sitter_grz::language()).unwrap();
             parser
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -1565,7 +1517,7 @@ impl MyEguiApp {
                     .unwrap_or_default()
                     .starts_with("http")
                 {
-                    (SlideShow::exercise_jit(), SlideShowSource::Http)
+                    (SlideShow::loading(), SlideShowSource::Http)
                 } else {
                     let file = std::fs::read(presentation.as_ref().unwrap()).unwrap();
                     let slideshow: (Vec<Vec<u8>>, SlideShow) = bincode::deserialize(&file).unwrap();
@@ -1649,7 +1601,7 @@ impl MyEguiApp {
         };
 
         #[cfg(target_arch = "wasm32")]
-        let slide_show = (SlideShow::exercise_jit(), SlideShowSource::Http);
+        let slide_show = (SlideShow::loading(), SlideShowSource::Http);
 
         new_file.store(false, Ordering::Relaxed);
 
@@ -1707,6 +1659,7 @@ impl MyEguiApp {
         //         .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
         // }
         self.time += ctx.input(|i| i.stable_dt);
+        #[cfg(not(target_arch = "wasm32"))]
         let speaker_viewport = ViewportId::from_hash_of("speaker_view");
         #[cfg(not(target_arch = "wasm32"))]
         if ctx.input(|input| input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape)) {
@@ -1828,6 +1781,7 @@ impl MyEguiApp {
                     resolved
                 } else {
                     if let Some(slide) = slide_show.slide_show.get(index) {
+                        #[cfg(not(target_arch = "wasm32"))]
                         ctx.request_repaint_of(speaker_viewport);
                         match slide {
                             AstObject::Slide {
@@ -1875,7 +1829,7 @@ impl MyEguiApp {
                                         self.resolved.store(Some(Arc::clone(&resolved)));
                                         resolved
                                     }
-                                    _ => todo!(),
+                                    _ => Arc::new(Resolved::slideshow_end(window_size)),
                                 }
                             }
                         }
@@ -1900,13 +1854,7 @@ impl MyEguiApp {
                                 }
                                 self.clear_color = color;
                             }
-                            let mut font_system = self.font_system.lock();
-                            resolved.draw_slide(
-                                ui,
-                                self.time,
-                                &mut buffers,
-                                font_system.deref_mut(),
-                            );
+                            resolved.draw_slide(ui, self.time, &mut buffers);
                             resolved.draw_actions(ui, self.time);
 
                             if self.time < *max_time {
@@ -1928,13 +1876,7 @@ impl MyEguiApp {
                             let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
                             match slide {
                                 AstObject::Slide { max_time, .. } => {
-                                    let mut font_system = self.font_system.lock();
-                                    resolved.draw_slide(
-                                        ui,
-                                        *max_time,
-                                        &mut buffers,
-                                        font_system.deref_mut(),
-                                    );
+                                    resolved.draw_slide(ui, *max_time, &mut buffers);
                                 }
                                 _ => todo!(),
                             }

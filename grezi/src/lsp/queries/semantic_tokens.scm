@@ -4,9 +4,9 @@
 (viewbox
   name: (identifier) @variable.declaration)
 (viewbox_obj
-  operation: (operation) @operator)
+  operation: (_) @operator)
 (viewbox_obj
-  operation: (":") @operator)
+  value: (auto) @number)
 (viewbox_inner
   direction: (direction) @modifier)
 (slide_function

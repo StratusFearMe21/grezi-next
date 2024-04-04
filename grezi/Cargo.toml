@@ -13,29 +13,28 @@ num_enum = "0.7.0"
 serde = { version = "1.0.188", features = ["derive"] }
 log = "0.4.20"
 egui_extras.workspace = true
-image = "0.24.7"
+image = "0.24.9"
 egui-anim = { version = "0.1.0", path = "../egui-anim" }
 palette = { version = "0.7.3", default-features = false, features = ["serializing"] }
-ehttp = "0.3.1"
+ehttp = "0.5.0"
 ecolor.workspace = true
 bincode = "1.3.3"
 arc-swap = "1.6.0"
 atomic_float = { version = "0.1.0", default-features = false }
-egui-glyphon = { version = "0.1.0", git = "https://github.com/StratusFearMe21/egui-glyphon" }
-unicode-segmentation = "1.10.1"
+egui-glyphon = { version = "0.1.0", git = "https://git.nations.lol/fnmain/egui-glyphon" }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap = { version = "4.4.6", features = ["derive"] }
-miette = { version = "5.10.0", features = ["fancy", "backtrace"] }
-pulldown-cmark = { version = "0.9.3", default-features = false }
+miette = { version = "7.2.0", features = ["fancy", "backtrace"] }
+pulldown-cmark = { version = "0.10.2", default-features = false }
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
 tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
-helix-core = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
-helix-loader = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
-helix-term = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
-helix-view = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
-helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "f6021dd" }
+helix-core = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
+helix-loader = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
+helix-term = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
+helix-view = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
+helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
 eframe = { workspace = true, features = [
     "default_fonts",
     "wgpu",
@@ -44,13 +43,13 @@ eframe = { workspace = true, features = [
     "persistence",
 ] }
 lsp-server = "0.7.4"
-lsp-types = "0.94.1"
+lsp-types = "0.95.1"
 serde_json = "1.0.107"
-env_logger = "0.10"
+env_logger = "0.11"
 thiserror = "1.0.48"
 humantime = "2.1.0"
 cssparser = "0.33.0"
-cairo-rs = { version = "0.18.5", features = ["pdf", "ps", "svg", "freetype"], optional = true }
+cairo-rs = { version = "0.19.2", features = ["pdf", "ps", "svg", "freetype"], optional = true }
 hunspell-rs = "0.4.0"
 indexmap = "2.1.0"
 crossbeam-queue = "0.3.11"
@@ -66,7 +65,7 @@ eframe = { workspace = true, features = [
 wasm-bindgen-futures = "0.4.38"
 
 [build-dependencies]
-tree-sitter = "0.20.10"
+tree-sitter = ">=0.22.2"
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
 tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
 case = "1.0.0"

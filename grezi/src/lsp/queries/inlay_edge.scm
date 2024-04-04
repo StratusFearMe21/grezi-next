@@ -13,3 +13,7 @@
         (edge_parser) @edge)
 ]
 (slide) @slide
+(obj_param
+    key: (identifier) @key
+    value: (string_literal) @value
+    (#eq? @key "value"))

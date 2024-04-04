@@ -4,7 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use eframe::epaint::{Color32, FontId};
+use arc_swap::ArcSwap;
+use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Style, Weight};
 use helix_core::tree_sitter::Node;
 use helix_core::{
     ropey::{Rope, RopeBuilder},
@@ -14,16 +15,15 @@ use helix_core::{
     syntax::{HighlightConfiguration, HighlightEvent, InjectionLanguageMarker},
     Syntax,
 };
-use helix_view::theme::Color;
 use helix_view::theme::Modifier;
 
-use super::{objects::Job, GrzCursor, NodeKind, PassThroughHasher};
+use super::{objects::serde_suck::AttrsSerde, GrzCursor, NodeKind, PassThroughHasher};
 
 #[derive(Clone)]
 pub struct HelixCell {
     theme: helix_view::Theme,
     text_style: helix_view::theme::Style,
-    loader: Arc<helix_core::syntax::Loader>,
+    loader: Arc<ArcSwap<helix_core::syntax::Loader>>,
     loaded_syntaxes: std::collections::HashMap<
         u64,
         Arc<HighlightConfiguration>,
@@ -34,12 +34,12 @@ pub struct HelixCell {
 pub fn highlight_text(
     text: Node<'_>,
     lang: (Cow<'_, str>, Range),
-    font_id: FontId,
+    font_id: Attrs<'_>,
     helix_cell: &mut Option<HelixCell>,
     source: &Rope,
     hasher: &ahash::RandomState,
-) -> Result<Job, super::Error> {
-    let mut job = Job::new();
+) -> Result<Vec<(String, AttrsSerde)>, super::Error> {
+    let mut job = Vec::new();
     let helix = helix_cell.get_or_insert_with(|| {
         let mut theme_parent_dirs = vec![helix_loader::config_dir()];
         theme_parent_dirs.extend(helix_loader::runtime_dirs().iter().cloned());
@@ -48,8 +48,10 @@ pub fn highlight_text(
         let theme = theme_loader.load("dark_plus").unwrap();
 
         let text_style = theme.get("ui.text");
-        let syn_loader_conf = helix_core::config::user_syntax_loader().unwrap();
-        let loader = Arc::new(helix_core::syntax::Loader::new(syn_loader_conf));
+        let syn_loader_conf = helix_core::config::user_lang_config().unwrap();
+        let loader = Arc::new(ArcSwap::new(Arc::new(
+            helix_core::syntax::Loader::new(syn_loader_conf).unwrap(),
+        )));
 
         HelixCell {
             theme,
@@ -61,7 +63,7 @@ pub fn highlight_text(
 
     let mut rope = RopeBuilder::new();
 
-    let mut walker = GrzCursor::from_node(text);
+    let mut walker = GrzCursor::from_node(text, source);
     walker.goto_first_child()?;
 
     let mut slice: Cow<'_, str>;
@@ -94,6 +96,7 @@ pub fn highlight_text(
     let highlight_config = helix.loaded_syntaxes.entry(hash).or_insert_with(|| {
         if let Some(highlight) = helix
             .loader
+            .load()
             .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(lang.0))
             .and_then(|config| config.highlight_config(helix.theme.scopes()))
         {
@@ -101,6 +104,7 @@ pub fn highlight_text(
         } else {
             helix
                 .loader
+                .load()
                 .language_configuration_for_injection_string(&InjectionLanguageMarker::Name(
                     "markdown".into(),
                 ))
@@ -134,7 +138,7 @@ pub fn highlight_text(
                     acc.patch(helix.theme.highlight(span.0))
                 });
 
-                let Color::Rgb(f_r, f_g, f_b) = style.fg.unwrap() else {
+                let helix_view::theme::Color::Rgb(f_r, f_g, f_b) = style.fg.unwrap() else {
                     todo!()
                 };
 
@@ -142,19 +146,20 @@ pub fn highlight_text(
 
                 for line in slice.lines() {
                     if line.len_bytes() != 0 {
-                        let mut font = String::new();
-                        match &font_id.family {
-                            eframe::epaint::FontFamily::Proportional => font.push_str("sans-serif"),
-                            eframe::epaint::FontFamily::Monospace => font.push_str("monospace"),
-                            eframe::epaint::FontFamily::Name(n) => font.push_str(n.as_ref()),
-                        }
-                        if style.add_modifier.contains(Modifier::ITALIC) {
-                            font.push_str(":italic");
-                        }
-                        if style.add_modifier.contains(Modifier::BOLD) {
-                            font.push_str(":bold")
-                        }
-                        job.push((line.to_string(), Color32::from_rgb(f_r, f_g, f_b), font));
+                        job.push((
+                            line.to_string(),
+                            AttrsOwned::new({
+                                let mut attrs = font_id.color(Color::rgb(f_r, f_g, f_b));
+                                if style.add_modifier.contains(Modifier::BOLD) {
+                                    attrs = attrs.weight(Weight::BOLD);
+                                }
+                                if style.add_modifier.contains(Modifier::ITALIC) {
+                                    attrs = attrs.style(Style::Italic);
+                                }
+                                attrs
+                            })
+                            .into(),
+                        ));
                     }
                 }
             }

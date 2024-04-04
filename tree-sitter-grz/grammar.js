@@ -173,19 +173,22 @@ module.exports = grammar({
 
     operation: _ => /[%\+~-]/,
 
-    viewbox_obj: $ => seq(
-      field('value', $.number_literal),
-      choice(
-        field('operation', $.operation),
-        seq(field('operation', ':'), field('denominator', $.number_literal))
-      )
+    viewbox_obj: $ => choice(
+      seq(
+        field('value', $.number_literal),
+        choice(
+          field('operation', $.operation),
+          seq(field('operation', ':'), field('denominator', $.number_literal))
+        )
+      ),
+      seq(field('value', alias('a', $.auto)), optional('~'), $.edge_parser)
     ),
 
     direction: _ => /[\^_<>]/,
 
     viewbox_inner: $ => seq(
       field('direction', $.direction),
-      field('parameters', sep($.viewbox_obj, ',')),
+      sep($.viewbox_obj, ','),
       optional(','),
       ']'
     ),

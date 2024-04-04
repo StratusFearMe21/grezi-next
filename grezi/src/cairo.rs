@@ -17,8 +17,6 @@ use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::parser::objects::Editor;
-
 pub fn fonts_to_ft(
     font_system: Arc<Mutex<FontSystem>>,
     used_fonts: &IndexSet<ID, ahash::RandomState>,
@@ -181,7 +179,7 @@ pub fn cairo_draw_shape(
         egui::Shape::Callback(glyphon_callback) => {
             let callback = glyphon_callback
                 .callback
-                .downcast_ref::<GlyphonRendererCallback<Editor>>()
+                .downcast_ref::<GlyphonRendererCallback>()
                 .unwrap();
 
             struct RunIter<'a> {
@@ -214,8 +212,8 @@ pub fn cairo_draw_shape(
 
             for buffer in callback.buffers.iter() {
                 let buffer_read = buffer.buffer.read();
-                ctx.set_font_size(buffer_read.as_ref().metrics().font_size as f64);
-                let mut glyphs = RunIter::new(buffer_read.as_ref().layout_runs()).peekable();
+                ctx.set_font_size(buffer_read.metrics().font_size as f64);
+                let mut glyphs = RunIter::new(buffer_read.layout_runs()).peekable();
 
                 while glyphs.peek().is_some() {
                     let color;

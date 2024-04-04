@@ -5,7 +5,7 @@ use helix_core::{
 use lsp_types::{Position, TextEdit};
 
 use crate::{
-    parser::{Error, NodeKind},
+    parser::{Error, NodeKind, PointFromRange},
     MyEguiApp,
 };
 
@@ -21,15 +21,15 @@ pub fn char_range_from_byte_range(
 
 pub fn char_pos_from_byte_pos(byte_pos: Point, current_rope: &Rope) -> Result<Position, Error> {
     let line = current_rope.get_line(byte_pos.row).ok_or_else(|| {
-        Error::NotFound(
+        Error::NotFound(PointFromRange::new(
             helix_core::tree_sitter::Range {
                 start_byte: 0,
                 end_byte: 0,
                 start_point: byte_pos,
                 end_point: byte_pos,
-            }
-            .into(),
-        )
+            },
+            current_rope,
+        ))
     })?;
     Ok(Position {
         line: byte_pos.row as u32,
@@ -41,7 +41,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
     let tree_info = app.tree_info.lock();
     let tree_info = tree_info.as_ref().unwrap();
 
-    let mut formatting_cursor = FormattingCursor::new(tree_info);
+    let mut formatting_cursor = FormattingCursor::new(tree_info, current_rope);
 
     formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
 
@@ -290,7 +290,7 @@ pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>
             }
             kind => {
                 return Err(Error::BadNode(
-                    formatting_cursor.node().range().into(),
+                    PointFromRange::new(formatting_cursor.node().range().into(), current_rope),
                     kind,
                 ))
             }
@@ -349,15 +349,17 @@ pub struct FormattingCursor<'a> {
     pub edits: Vec<TextEdit>,
     pub last_range: helix_core::tree_sitter::Range,
     pub edited: bool,
+    rope: &'a Rope,
 }
 
 impl<'a> FormattingCursor<'a> {
-    pub fn new(tree: &'a Tree) -> FormattingCursor<'a> {
+    pub fn new(tree: &'a Tree, rope: &'a Rope) -> FormattingCursor<'a> {
         FormattingCursor {
             tree_cursor: tree.walk(),
             edits: Vec::new(),
             last_range: tree.root_node().range(),
             edited: false,
+            rope,
         }
     }
 
@@ -367,11 +369,17 @@ impl<'a> FormattingCursor<'a> {
         }
 
         if self.tree_cursor.node().is_error() {
-            return Err(Error::Syntax(self.tree_cursor.node().range().into()));
+            return Err(Error::Syntax(PointFromRange::new(
+                self.tree_cursor.node().range().into(),
+                self.rope,
+            )));
         }
 
         if self.tree_cursor.node().is_missing() {
-            return Err(Error::Missing(self.tree_cursor.node().range().into()));
+            return Err(Error::Missing(PointFromRange::new(
+                self.tree_cursor.node().range().into(),
+                self.rope,
+            )));
         }
 
         Ok(result)

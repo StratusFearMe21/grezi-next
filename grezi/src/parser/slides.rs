@@ -44,12 +44,14 @@ pub fn parse_slides(
     bg: (super::Color, Option<(std::time::Duration, super::Color)>),
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
+    use std::num::NonZeroU16;
+
     tree_cursor.goto_first_child()?;
     tree_cursor.goto_first_child()?;
     let mut slide_objects = Vec::new();
     let mut slide_on_screen: HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
-    while tree_cursor.field_id() == Some(FieldName::Objects as u16) {
+    while tree_cursor.field_id() == NonZeroU16::new(FieldName::Objects as u16) {
         tree_cursor.fork(|cursor| {
             match parse_slide_object(
                 cursor,
@@ -134,7 +136,7 @@ pub fn parse_slide_object(
     last_obj: Option<&SlideObj>,
     mut insert_fn: impl FnMut(SlideObj),
 ) -> Result<(), super::Error> {
-    use crate::parser::viewboxes::align_from_str;
+    use crate::parser::{viewboxes::align_from_str, PointFromRange};
 
     use super::Error;
 
@@ -145,10 +147,14 @@ pub fn parse_slide_object(
         std::hash::Hash::hash(&name, &mut hasher);
         hasher.finish()
     };
-    let object = objects
-        .get_mut(&object_name)
-        .ok_or_else(|| Error::NotFound(tree_cursor.node().range().into()))?;
+    let object = objects.get_mut(&object_name).ok_or_else(|| {
+        Error::NotFound(crate::parser::PointFromRange::new(
+            tree_cursor.node().range().into(),
+            source,
+        ))
+    })?;
     tree_cursor.goto_next_sibling()?;
+    let mut idx_range = None;
     let mut viewbox = if tree_cursor.node().kind_id() == NodeKind::SlideVb as u16 {
         let inline_vb_hash_range = tree_cursor.node().range();
         tree_cursor.goto_first_child_raw()?;
@@ -169,7 +175,7 @@ pub fn parse_slide_object(
             vb.margin = 0.0;
             if vb.constraints.is_empty() {
                 return Err(super::Error::KnownMissing(
-                    vb_range.into(),
+                    PointFromRange::new(vb_range.into(), source),
                     "constraints".into(),
                 ));
             }
@@ -180,23 +186,33 @@ pub fn parse_slide_object(
             tree_cursor.goto_parent();
 
             if vb.constraints.get(vb_index).is_none() {
-                return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                return Err(super::Error::NotFound(PointFromRange::new(
+                    tree_cursor.node().range().into(),
+                    source,
+                )));
             }
             viewboxes.insert(name, vb);
 
             ViewboxIn::Custom(name, vb_index)
         } else {
-            object
-                .viewbox
-                .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+            object.viewbox.ok_or_else(|| {
+                Error::ImplicitEdge(PointFromRange::new(
+                    tree_cursor.node().range().into(),
+                    source,
+                ))
+            })?
         };
+        idx_range = Some(tree_cursor.node().range());
         tree_cursor.goto_parent();
         tree_cursor.goto_next_sibling()?;
         vb
     } else {
-        object
-            .viewbox
-            .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+        object.viewbox.ok_or_else(|| {
+            Error::ImplicitEdge(PointFromRange::new(
+                tree_cursor.node().range().into(),
+                source,
+            ))
+        })?
     };
     let mut from: Option<ViewboxIn>;
     match NodeKind::from(tree_cursor.node().kind_id()) {
@@ -216,7 +232,12 @@ pub fn parse_slide_object(
 
     if let ViewboxIn::Inherit(index) = viewbox {
         viewbox = last_obj
-            .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+            .ok_or_else(|| {
+                Error::ImplicitEdge(PointFromRange::new(
+                    tree_cursor.node().range().into(),
+                    source,
+                ))
+            })?
             .locations[1]
             .1;
 
@@ -224,7 +245,10 @@ pub fn parse_slide_object(
             if let ViewboxIn::Custom(vb, vb_idx) = &mut viewbox {
                 if let Some(vb) = viewboxes.get(vb) {
                     if vb.constraints.get(idx).is_none() {
-                        return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                        return Err(super::Error::NotFound(PointFromRange::new(
+                            idx_range.unwrap().into(),
+                            source,
+                        )));
                     }
                     *vb_idx = idx
                 }
@@ -233,14 +257,22 @@ pub fn parse_slide_object(
     }
     if let Some(ViewboxIn::Inherit(index)) = from {
         let mut viewbox = last_obj
-            .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?
+            .ok_or_else(|| {
+                Error::ImplicitEdge(PointFromRange::new(
+                    tree_cursor.node().range().into(),
+                    source,
+                ))
+            })?
             .locations[1]
             .1;
         if let Some(idx) = index {
             if let ViewboxIn::Custom(vb, vb_idx) = &mut viewbox {
                 if let Some(vb) = viewboxes.get(vb) {
                     if vb.constraints.get(idx).is_none() {
-                        return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                        return Err(super::Error::NotFound(PointFromRange::new(
+                            idx_range.unwrap().into(),
+                            source,
+                        )));
                     }
                     *vb_idx = idx
                 }
@@ -266,9 +298,12 @@ pub fn parse_slide_object(
         let viewbox_first = from.unwrap_or_else(|| object.viewbox.unwrap_or(viewbox));
         let line_up_now;
         if &edges[..1] == ":" || &edges[..1] == "|" || &edges[..1] == "{" || edges == name {
-            let object_position = object
-                .position
-                .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?;
+            let object_position = object.position.ok_or_else(|| {
+                Error::ImplicitEdge(PointFromRange::new(
+                    tree_cursor.node().range().into(),
+                    source,
+                ))
+            })?;
             lineup_first = object_position;
             line_up_now = object_position;
             (
@@ -279,21 +314,30 @@ pub fn parse_slide_object(
             let mut lineup_first_locations = match edges.get(..2) {
                 Some(s) => {
                     lineup_first = align_from_str(s).ok_or_else(|| {
-                        Error::InvalidParameter(tree_cursor.node().range().into())
+                        Error::InvalidParameter(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        ))
                     })?;
                     (lineup_first, viewbox_first)
                 }
                 None => {
-                    lineup_first = object
-                        .position
-                        .ok_or_else(|| Error::ImplicitEdge(tree_cursor.node().range().into()))?;
+                    lineup_first = object.position.ok_or_else(|| {
+                        Error::ImplicitEdge(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        ))
+                    })?;
                     (lineup_first, viewbox_first)
                 }
             };
             let lineup_second = match edges.get(2..4) {
                 Some(s) => {
                     line_up_now = align_from_str(s).ok_or_else(|| {
-                        Error::InvalidParameter(tree_cursor.node().range().into())
+                        Error::InvalidParameter(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        ))
                     })?;
                     (line_up_now, viewbox)
                 }
@@ -302,9 +346,12 @@ pub fn parse_slide_object(
                         line_up_now = lineup_first;
                         state = ObjectState::Exiting;
                         lineup_first_locations = {
-                            let lineup = object
-                                .position
-                                .ok_or_else(|| Error::BadExit(tree_cursor.node().range().into()))?;
+                            let lineup = object.position.ok_or_else(|| {
+                                Error::BadExit(PointFromRange::new(
+                                    tree_cursor.node().range().into(),
+                                    source,
+                                ))
+                            })?;
                             (lineup, viewbox_first)
                         };
                         (lineup_first, viewbox)
@@ -313,7 +360,10 @@ pub fn parse_slide_object(
                         line_up_now = lineup_first;
                         lineup_first_locations = (
                             object.position.ok_or_else(|| {
-                                Error::ImplicitEdge(tree_cursor.node().range().into())
+                                Error::ImplicitEdge(PointFromRange::new(
+                                    tree_cursor.node().range().into(),
+                                    source,
+                                ))
                             })?,
                             viewbox_first,
                         );
@@ -357,6 +407,7 @@ fn parse_slide_function(
 
     use crate::parser::{
         actions::HIGHLIGHT_COLOR_DEFAULT, color::DefaultColorParser, viewboxes::align_from_str,
+        PointFromRange,
     };
 
     tree_cursor.goto_first_child()?;
@@ -378,9 +429,10 @@ fn parse_slide_function(
                     }
                     Ok(None)
                 }
-                _ => Err(super::Error::InvalidParameter(
+                _ => Err(super::Error::InvalidParameter(PointFromRange::new(
                     tree_cursor.node().range().into(),
-                )),
+                    source,
+                ))),
             }
         }
         "time" => {
@@ -395,9 +447,10 @@ fn parse_slide_function(
                     }
                     Ok(None)
                 }
-                _ => Err(super::Error::InvalidParameter(
+                _ => Err(super::Error::InvalidParameter(PointFromRange::new(
                     tree_cursor.node().range().into(),
-                )),
+                    source,
+                ))),
             }
         }
         "next" => {
@@ -425,7 +478,12 @@ fn parse_slide_function(
                     );
                     &hasher.finish()
                 })
-                .ok_or_else(|| super::Error::NotFound(tree_cursor.node().range().into()))?;
+                .ok_or_else(|| {
+                    super::Error::NotFound(PointFromRange::new(
+                        tree_cursor.node().range().into(),
+                        source,
+                    ))
+                })?;
             tree_cursor.goto_next_sibling()?;
 
             let locations = match NodeKind::from(tree_cursor.node().kind_id()) {
@@ -433,7 +491,10 @@ fn parse_slide_function(
                     let from = match tree_cursor
                         .fork(|cursor| super::actions::parse_highlight_location(cursor, source))
                         .map_err(|_| {
-                            super::Error::InvalidParameter(tree_cursor.node().range().into())
+                            super::Error::InvalidParameter(PointFromRange::new(
+                                tree_cursor.node().range().into(),
+                                source,
+                            ))
                         }) {
                         Ok(from) => from,
                         Err(e) => {
@@ -449,9 +510,10 @@ fn parse_slide_function(
                                     super::actions::parse_highlight_location(cursor, source)
                                 })
                                 .map_err(|_| {
-                                    super::Error::InvalidParameter(
+                                    super::Error::InvalidParameter(PointFromRange::new(
                                         tree_cursor.node().range().into(),
-                                    )
+                                        source,
+                                    ))
                                 }) {
                                 Ok(to) => to,
                                 Err(e) => {
@@ -489,7 +551,7 @@ fn parse_slide_function(
                     )
                     .map_err(|e| {
                         super::Error::ColorError(
-                            tree_cursor.node().range().into(),
+                            PointFromRange::new(tree_cursor.node().range().into(), source),
                             format!("{:?}", e),
                         )
                     })?;
@@ -517,7 +579,12 @@ fn parse_slide_function(
                     );
                     &hasher.finish()
                 })
-                .ok_or_else(|| super::Error::NotFound(tree_cursor.node().range().into()))?;
+                .ok_or_else(|| {
+                    super::Error::NotFound(PointFromRange::new(
+                        tree_cursor.node().range().into(),
+                        source,
+                    ))
+                })?;
             tree_cursor.goto_next_sibling()?;
 
             let first_direction = match NodeKind::from(tree_cursor.node().kind_id()) {
@@ -526,7 +593,10 @@ fn parse_slide_function(
                     let dir: Cow<'_, str> =
                         source.byte_slice(tree_cursor.node().byte_range()).into();
                     let dir = align_from_str(dir.as_ref()).ok_or_else(|| {
-                        super::Error::InvalidParameter(tree_cursor.node().range().into())
+                        super::Error::InvalidParameter(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        ))
                     })?;
                     tree_cursor.goto_parent();
                     Some(dir)
@@ -544,7 +614,12 @@ fn parse_slide_function(
                     );
                     &hasher.finish()
                 })
-                .ok_or_else(|| super::Error::NotFound(tree_cursor.node().range().into()))?;
+                .ok_or_else(|| {
+                    super::Error::NotFound(PointFromRange::new(
+                        tree_cursor.node().range().into(),
+                        source,
+                    ))
+                })?;
             tree_cursor.goto_next_sibling()?;
 
             let second_direction = match NodeKind::from(tree_cursor.node().kind_id()) {
@@ -553,7 +628,10 @@ fn parse_slide_function(
                     let dir: Cow<'_, str> =
                         source.byte_slice(tree_cursor.node().byte_range()).into();
                     let dir = align_from_str(dir.as_ref()).ok_or_else(|| {
-                        super::Error::InvalidParameter(tree_cursor.node().range().into())
+                        super::Error::InvalidParameter(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        ))
                     })?;
                     tree_cursor.goto_parent();
                     Some(dir)
@@ -580,7 +658,7 @@ fn parse_slide_function(
                     )
                     .map_err(|e| {
                         super::Error::ColorError(
-                            tree_cursor.node().range().into(),
+                            PointFromRange::new(tree_cursor.node().range().into(), source),
                             format!("{:?}", e),
                         )
                     })?;
@@ -598,8 +676,9 @@ fn parse_slide_function(
                 })
             }))
         }
-        _ => Err(super::Error::ActionNotFound(
+        _ => Err(super::Error::ActionNotFound(PointFromRange::new(
             tree_cursor.node().range().into(),
-        )),
+            source,
+        ))),
     }
 }

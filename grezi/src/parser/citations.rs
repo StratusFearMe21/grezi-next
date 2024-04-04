@@ -1,15 +1,15 @@
 use std::path::Path;
 
-use ecolor::Color32;
 use eframe::emath::Align2;
-use helix_core::tree_sitter::Parser;
+use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Family};
+use helix_core::{tree_sitter::Parser, Rope};
 
 use crate::{
     layout::{Constraint, UnresolvedLayout},
     SlideShow,
 };
 
-use super::{color::Color, objects::Job, slides::SlideObj, viewboxes::ViewboxIn, GrzCursor};
+use super::{slides::SlideObj, viewboxes::ViewboxIn, GrzCursor};
 use num_enum::FromPrimitive;
 
 include!(concat!(env!("OUT_DIR"), "/kinds_ntbib.rs"));
@@ -27,17 +27,17 @@ pub fn parse_citations(
     {
         if path.exists() {
             let mut parser = Parser::new();
-            parser.set_language(tree_sitter_ntbib::language()).unwrap();
+            parser.set_language(&tree_sitter_ntbib::language()).unwrap();
             let find = file.find("<pre").unwrap_or_default();
             let file = &file[find..];
             let mut italics = false;
             let mut pre = false;
-            let mut job = Job::new();
+            let mut job = Vec::new();
             let mut header = "";
             let mut in_header = false;
-            let mut height = 0.0;
             if let Some(tree) = parser.parse(file, None) {
-                let mut tree_cursor = GrzCursor::new(&tree);
+                let t_r = Rope::new();
+                let mut tree_cursor = GrzCursor::new(&tree, &t_r);
 
                 tree_cursor.goto_first_child()?;
 
@@ -67,14 +67,22 @@ pub fn parse_citations(
                                     if !job.is_empty() {
                                         job.push((
                                             "\n".to_owned(),
-                                            Color32::WHITE,
-                                            if italics {
-                                                "sans-serif:italic".to_owned()
-                                            } else {
-                                                "sans-serif".to_owned()
-                                            },
+                                            AttrsOwned::new({
+                                                let attrs = Attrs::new()
+                                                    .color(Color::rgb(255, 255, 255))
+                                                    .family(
+                                                        egui_glyphon::glyphon::Family::SansSerif,
+                                                    );
+                                                if italics {
+                                                    attrs
+                                                        .style(egui_glyphon::glyphon::Style::Italic)
+                                                } else {
+                                                    attrs
+                                                }
+                                            })
+                                            .into(),
                                         ));
-                                        height += 24.0 * 3.0;
+                                        // height += 24.0 * 3.0;
                                     }
                                 }
                                 "i" => italics = false,
@@ -102,12 +110,17 @@ pub fn parse_citations(
                     {
                         job.push((
                             file[tree_cursor.node().byte_range()].to_owned(),
-                            Color32::WHITE,
-                            if italics {
-                                "sans-serif:italic".to_owned()
-                            } else {
-                                "sans-serif".to_owned()
-                            },
+                            AttrsOwned::new({
+                                let attrs = Attrs::new()
+                                    .color(Color::rgb(255, 255, 255))
+                                    .family(egui_glyphon::glyphon::Family::SansSerif);
+                                if italics {
+                                    attrs.style(egui_glyphon::glyphon::Style::Italic)
+                                } else {
+                                    attrs
+                                }
+                            })
+                            .into(),
                         ));
                     } else if in_header && header.is_empty() {
                         header = &file[tree_cursor.node().byte_range()];
@@ -171,7 +184,15 @@ pub fn parse_citations(
                     position: None,
                     viewbox: None,
                     object: super::objects::ObjectType::Text {
-                        job: vec![(header.to_string(), Color32::WHITE, "sans-serif".to_owned())],
+                        job: vec![(
+                            header.to_string(),
+                            AttrsOwned::new(
+                                Attrs::new()
+                                    .family(Family::SansSerif)
+                                    .color(Color::rgb(255, 255, 255)),
+                            )
+                            .into(),
+                        )],
                         font_size: 48.0,
                         line_height: None,
                         align: None,
@@ -200,7 +221,7 @@ pub fn parse_citations(
                     },
                 ],
                 actions: Vec::new(),
-                bg: (Color::default(), None),
+                bg: (super::color::Color::default(), None),
                 max_time: 0.5,
                 next: false,
             });

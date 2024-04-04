@@ -20,7 +20,7 @@ strip = true
 panic = "abort"
 
 [workspace.dependencies]
-egui_extras = {  git = "https://github.com/emilk/egui", features = ["all_loaders"] }
-ecolor = {  git = "https://github.com/emilk/egui" }
-eframe = {  git = "https://github.com/emilk/egui", default-features = false }
+egui_extras = { version = "0.27.2", features = ["all_loaders"] }
+ecolor = { version = "0.27.2" }
+eframe = { version = "0.27.2", default-features = false }
 

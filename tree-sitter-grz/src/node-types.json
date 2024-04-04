@@ -472,21 +472,17 @@
             "named": true
           }
         ]
-      },
-      "parameters": {
-        "multiple": true,
-        "required": false,
-        "types": [
-          {
-            "type": ",",
-            "named": false
-          },
-          {
-            "type": "viewbox_obj",
-            "named": true
-          }
-        ]
       }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "viewbox_obj",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -505,7 +501,7 @@
       },
       "operation": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": ":",
@@ -522,11 +518,25 @@
         "required": true,
         "types": [
           {
+            "type": "auto",
+            "named": true
+          },
+          {
             "type": "number_literal",
             "named": true
           }
         ]
       }
+    },
+    "children": {
+      "multiple": false,
+      "required": false,
+      "types": [
+        {
+          "type": "edge_parser",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -572,6 +582,10 @@
   {
     "type": "]",
     "named": false
+  },
+  {
+    "type": "auto",
+    "named": true
   },
   {
     "type": "comment",

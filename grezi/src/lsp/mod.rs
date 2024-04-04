@@ -8,11 +8,16 @@ use std::{
     sync::atomic::Ordering,
 };
 
+pub mod completion;
 pub mod formatter;
+pub mod inlay_hints;
+pub mod rename;
+pub mod semantic_tokens;
+pub mod symbols;
 pub mod you_can;
 
 use crate::{
-    parser::{viewboxes::ViewboxIn, AstObject, Error, GrzCursor, NodeKind},
+    parser::{viewboxes::ViewboxIn, AstObject, NodeKind, PointFromRange},
     MyEguiApp,
 };
 use helix_core::ropey::{Rope, RopeSlice};
@@ -31,25 +36,22 @@ use lsp_types::{
         GotoDeclaration, InlayHintRequest, PrepareRenameRequest, RangeFormatting, References,
         Rename, Request, SemanticTokensFullRequest,
     },
-    AnnotatedTextEdit, ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind,
-    CompletionItemLabelDetails, CompletionOptions, CompletionOptionsCompletionItem,
-    CompletionParams, CompletionResponse, CompletionTextEdit, DeclarationCapability,
-    DocumentChanges, DocumentFormattingParams, DocumentRangeFormattingParams, DocumentSymbol,
-    DocumentSymbolParams, DocumentSymbolResponse, ExecuteCommandOptions, ExecuteCommandParams,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, InlayHint, InlayHintKind, InlayHintLabel,
-    InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, InsertReplaceEdit,
-    InsertTextFormat, Location, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier,
-    Position, PositionEncodingKind, PrepareRenameResponse, PublishDiagnosticsParams,
-    ReferenceParams, RenameOptions, RenameParams, SaveOptions, SemanticToken,
-    SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensFullOptions,
-    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams, SemanticTokensResult,
-    SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams, SymbolKind,
-    TextDocumentEdit, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
-    WorkspaceEdit,
+    ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind, CompletionOptions,
+    CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
+    DeclarationCapability, DocumentChanges, DocumentFormattingParams,
+    DocumentRangeFormattingParams, DocumentSymbolParams, ExecuteCommandOptions,
+    ExecuteCommandParams, GotoDefinitionParams, Hover, InlayHintOptions, InlayHintParams,
+    InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, MessageType, OneOf,
+    OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind,
+    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensServerCapabilities,
+    ServerCapabilities, ShowMessageParams, TextDocumentEdit, TextDocumentPositionParams,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
 };
 
-use self::formatter::{char_pos_from_byte_pos, char_range_from_byte_range};
+use self::formatter::char_range_from_byte_range;
 
 pub fn start_lsp(
     mut app: crate::MyEguiApp,
@@ -63,63 +65,59 @@ pub fn start_lsp(
     let (connection, io_threads) = Connection::stdio();
 
     let mut query_cursor = QueryCursor::new();
-    let rename_query = Query::new(
-        tree_sitter_grz::language(),
-        include_str!("queries/rename.scm"),
-    )
-    .unwrap();
+    let tree_sitter_grz_lang = tree_sitter_grz::language();
+    let rename_query =
+        Query::new(&tree_sitter_grz_lang, include_str!("queries/rename.scm")).unwrap();
     let slide_complete_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/slide_complete.scm"),
     )
     .unwrap();
     let slide_index_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/slide_index.scm"),
     )
     .unwrap();
     let top_level_search_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/top_level_search.scm"),
     )
     .unwrap();
     let inlay_edge_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/inlay_edge.scm"),
     )
     .unwrap();
     let viewbox_name_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/viewbox_name.scm"),
     )
     .unwrap();
     let object_name_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/object_name.scm"),
     )
     .unwrap();
     let semantic_token_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/semantic_tokens.scm"),
     )
     .unwrap();
     let vb_in_slide_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/vb_in_slide.scm"),
     )
     .unwrap();
     let obj_in_slide_query = Query::new(
-        tree_sitter_grz::language(),
+        &tree_sitter_grz_lang,
         include_str!("queries/obj_in_slide.scm"),
     )
     .unwrap();
-    let strings_query = Query::new(
-        tree_sitter_grz::language(),
-        include_str!("queries/strings.scm"),
-    )
-    .unwrap();
+    let strings_query =
+        Query::new(&tree_sitter_grz_lang, include_str!("queries/strings.scm")).unwrap();
 
     let mut hunspell = None;
+    let mut error_free_tree: Option<Tree> = None;
     let fonts: IndexSet<String, ahash::RandomState> = app
         .font_system
         .lock()
@@ -186,10 +184,10 @@ pub fn start_lsp(
                     token_modifiers: semantic_token_query
                         .capture_names()
                         .iter()
+                        .map(|name| unsafe { std::mem::transmute::<&str, &'static str>(name) })
                         .filter_map(|name| {
                             // Safe because string exists for lifetime of LSP
-                            unsafe { std::mem::transmute::<&String, &'static String>(name) }
-                                .split_once('.')
+                            name.split_once('.')
                                 .map(|name| SemanticTokenModifier::new(name.1))
                         })
                         .collect(),
@@ -242,7 +240,6 @@ pub fn start_lsp(
         BuildHasherDefault<ahash::AHasher>,
     > = HashMap::default();
     let mut last_inlay_len = 16;
-    let mut error_tree = None;
     let mut currently_open = Url::parse("file:///dev/null").unwrap();
     for msg in &connection.receiver {
         match msg {
@@ -272,55 +269,6 @@ pub fn start_lsp(
                             let edits: Option<Vec<TextEdit>> =
                                 formatter::format_code(&app, &current_rope).ok();
 
-                            match edits.clone() {
-                                Some(edits) if !edits.is_empty() => {
-                                    current_document_version += 1;
-
-                                    let mut tree_info = app.tree_info.lock();
-                                    let tree_info = tree_info.as_mut().unwrap();
-
-                                    let transaction =
-                                        helix_lsp::util::generate_transaction_from_edits(
-                                            &current_rope,
-                                            edits,
-                                            helix_lsp::OffsetEncoding::Utf16,
-                                        );
-
-                                    let edits = generate_edits(
-                                        current_rope.slice(..),
-                                        transaction.changes(),
-                                    );
-                                    if transaction.apply(&mut current_rope) {
-                                        let source = current_rope.slice(..);
-                                        for edit in edits.iter().rev() {
-                                            tree_info.edit(edit);
-                                        }
-
-                                        // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
-                                        let tree = parser
-                                            .parse_with(
-                                                &mut |byte, _| {
-                                                    if byte <= source.len_bytes() {
-                                                        let (chunk, start_byte, _, _) =
-                                                            source.chunk_at_byte(byte);
-                                                        &chunk.as_bytes()[byte - start_byte..]
-                                                    } else {
-                                                        // out of range
-                                                        &[]
-                                                    }
-                                                },
-                                                Some(tree_info),
-                                            )
-                                            .unwrap();
-
-                                        *tree_info = tree;
-                                    } else {
-                                        panic!("Transaction could not be applied");
-                                    }
-                                }
-                                _ => {}
-                            }
-
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(rqid, edits)))
@@ -335,7 +283,7 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    prepare_rename(&app, pos, &current_rope),
+                                    rename::prepare_rename(&app, pos, &current_rope),
                                 )))
                                 .unwrap();
                         }
@@ -344,7 +292,7 @@ pub fn start_lsp(
                         if let Ok((rqid, _)) =
                             req.extract::<InlayHintParams>(InlayHintRequest::METHOD)
                         {
-                            let hints = inlay_hints(
+                            let hints = inlay_hints::inlay_hints(
                                 &app,
                                 &inlay_edge_query,
                                 &mut inlay_edge_map,
@@ -368,7 +316,7 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    Some(semantic_tokens(
+                                    Some(semantic_tokens::semantic_tokens(
                                         &app,
                                         &semantic_token_query,
                                         &current_rope,
@@ -394,7 +342,7 @@ pub fn start_lsp(
                                                         uri: currently_open.clone(),
                                                         version: Some(current_document_version),
                                                     },
-                                                edits: rename(
+                                                edits: rename::rename(
                                                     &app,
                                                     rename_params,
                                                     &current_rope,
@@ -418,7 +366,7 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    document_symbols(&app, &current_rope),
+                                    symbols::document_symbols(&app, &current_rope),
                                 )))
                                 .unwrap();
                         }
@@ -456,787 +404,89 @@ pub fn start_lsp(
                                         | NodeKind::SlideObjects
                                             if completion_node.prev_named_sibling().is_some() =>
                                         {
-                                            query_cursor.set_point_range(
-                                                Point { row: 0, column: 0 }..completion_point,
-                                            );
-                                            let iter = query_cursor.matches(
-                                                &viewbox_name_query,
-                                                tree_info.root_node(),
-                                                RopeProvider(current_rope.slice(..)),
-                                            );
-
-                                            let completion_range = completion_node.range();
-
-                                            let mut completions = vec![CompletionItem {
-                                                label: "Size".to_string(),
-                                                kind: Some(CompletionItemKind::VARIABLE),
-                                                deprecated: Some(false),
-                                                preselect: Some(true),
-                                                insert_text_format: Some(
-                                                    InsertTextFormat::PLAIN_TEXT,
-                                                ),
-                                                insert_text_mode: None,
-                                                text_edit: Some(
-                                                    CompletionTextEdit::InsertAndReplace(
-                                                        InsertReplaceEdit {
-                                                            new_text: "Size".to_string(),
-                                                            insert: lsp_types::Range {
-                                                                start: completion
-                                                                    .text_document_position
-                                                                    .position,
-                                                                end: completion
-                                                                    .text_document_position
-                                                                    .position,
-                                                            },
-                                                            replace: char_range_from_byte_range(
-                                                                completion_range,
-                                                                &current_rope,
-                                                            )
-                                                            .unwrap(),
-                                                        },
-                                                    ),
-                                                ),
-                                                additional_text_edits: Some(Vec::new()),
-                                                ..Default::default()
-                                            }];
-                                            completions.extend(iter.map(|query_match| {
-                                                let byte_range =
-                                                    query_match.captures[0].node.byte_range();
-                                                let label =
-                                                    current_rope.byte_slice(byte_range).to_string();
-
-                                                CompletionItem {
-                                                    label: label.clone(),
-                                                    kind: Some(CompletionItemKind::VARIABLE),
-                                                    deprecated: Some(false),
-                                                    preselect: Some(true),
-                                                    insert_text_format: Some(
-                                                        InsertTextFormat::PLAIN_TEXT,
-                                                    ),
-                                                    insert_text_mode: None,
-                                                    text_edit: Some(
-                                                        CompletionTextEdit::InsertAndReplace(
-                                                            InsertReplaceEdit {
-                                                                new_text: label,
-                                                                insert: lsp_types::Range {
-                                                                    start: completion
-                                                                        .text_document_position
-                                                                        .position,
-                                                                    end: completion
-                                                                        .text_document_position
-                                                                        .position,
-                                                                },
-                                                                replace:
-                                                                    char_range_from_byte_range(
-                                                                        completion_range,
-                                                                        &current_rope,
-                                                                    )
-                                                                    .unwrap(),
-                                                            },
-                                                        ),
-                                                    ),
-                                                    additional_text_edits: Some(Vec::new()),
-                                                    ..Default::default()
-                                                }
-                                            }));
-
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
                                                     rqid,
-                                                    Some(CompletionResponse::Array(completions)),
+                                                    Some(CompletionResponse::Array(
+                                                        completion::complete_viewbox(
+                                                            &mut query_cursor,
+                                                            &viewbox_name_query,
+                                                            tree_info,
+                                                            &current_rope,
+                                                            completion_point,
+                                                            completion_node,
+                                                            completion,
+                                                        ),
+                                                    )),
                                                 )))
                                                 .unwrap();
                                         }
                                         NodeKind::SlideObjects | NodeKind::SlideObj => {
-                                            query_cursor.set_point_range(
-                                                Point { row: 0, column: 0 }..completion_point,
-                                            );
-                                            let iter = query_cursor.matches(
-                                                &object_name_query,
-                                                tree_info.root_node(),
-                                                RopeProvider(current_rope.slice(..)),
-                                            );
-
-                                            let completions: Vec<CompletionItem> = iter
-                                                .map(|query_match| {
-                                                    let byte_range =
-                                                        query_match.captures[0].node.byte_range();
-                                                    let label = current_rope
-                                                        .byte_slice(byte_range)
-                                                        .to_string();
-                                                    let completion_range = completion_node.range();
-                                                    CompletionItem {
-                                                        kind: Some(CompletionItemKind::VARIABLE),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
-                                                        ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: format!(
-                                                                        "{}$0,",
-                                                                        label
-                                                                    ),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        label,
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    }
-                                                })
-                                                .collect();
-
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
                                                     rqid,
-                                                    Some(CompletionResponse::Array(completions)),
+                                                    Some(CompletionResponse::Array(
+                                                        completion::complete_object(
+                                                            &mut query_cursor,
+                                                            &object_name_query,
+                                                            tree_info,
+                                                            &current_rope,
+                                                            completion_point,
+                                                            completion_node,
+                                                            completion,
+                                                        ),
+                                                    )),
                                                 )))
                                                 .unwrap();
                                         }
                                         NodeKind::Obj
                                             if completion_node.prev_sibling().is_some() =>
                                         {
-                                            let completion_range = completion_node.range();
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
                                                     rqid,
-                                                    Some(CompletionResponse::Array(vec![
-                                        CompletionItem {
-                                        label: "Paragraph".to_string(),
-                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                        deprecated: Some(false),
-                                        preselect: Some(true),
-                                        insert_text_format: Some(
-                                        InsertTextFormat::PLAIN_TEXT,
-                                        ),
-                                        insert_text_mode: None,
-                                        text_edit: Some(
-                                        CompletionTextEdit::InsertAndReplace(
-                                        InsertReplaceEdit {
-                                        new_text: "Paragraph".to_string(),
-                                        insert: lsp_types::Range {
-                                        start: completion
-                                        .text_document_position
-                                        .position,
-                                        end: completion
-                                        .text_document_position
-                                        .position,
-                                        },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                        },
-                                        ),
-                                        ),
-                                        additional_text_edits: Some(Vec::new()),
-                                        ..Default::default()
-                                        },
-                                        CompletionItem {
-                                        label: "Header".to_string(),
-                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                        deprecated: Some(false),
-                                        preselect: Some(true),
-                                        insert_text_format: Some(
-                                        InsertTextFormat::PLAIN_TEXT,
-                                        ),
-                                        insert_text_mode: None,
-                                        text_edit: Some(
-                                        CompletionTextEdit::InsertAndReplace(
-                                        InsertReplaceEdit {
-                                        new_text: "Header".to_string(),
-                                        insert: lsp_types::Range {
-                                        start: completion
-                                        .text_document_position
-                                        .position,
-                                        end: completion
-                                        .text_document_position
-                                        .position,
-                                        },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                        },
-                                        ),
-                                        ),
-                                        additional_text_edits: Some(Vec::new()),
-                                        ..Default::default()
-                                        },
-                                        CompletionItem {
-                                        label: "Rect".to_string(),
-                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                        deprecated: Some(false),
-                                        preselect: Some(true),
-                                        insert_text_format: Some(
-                                        InsertTextFormat::PLAIN_TEXT,
-                                        ),
-                                        insert_text_mode: None,
-                                        text_edit: Some(
-                                        CompletionTextEdit::InsertAndReplace(
-                                        InsertReplaceEdit {
-                                        new_text: "Rect".to_string(),
-                                        insert: lsp_types::Range {
-                                        start: completion
-                                        .text_document_position
-                                        .position,
-                                        end: completion
-                                        .text_document_position
-                                        .position,
-                                        },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                        },
-                                        ),
-                                        ),
-                                        additional_text_edits: Some(Vec::new()),
-                                        ..Default::default()
-                                        },
-                                        CompletionItem {
-                                        label: "Image".to_string(),
-                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                        deprecated: Some(false),
-                                        preselect: Some(true),
-                                        insert_text_format: Some(
-                                        InsertTextFormat::PLAIN_TEXT,
-                                        ),
-                                        insert_text_mode: None,
-                                        text_edit: Some(
-                                        CompletionTextEdit::InsertAndReplace(
-                                        InsertReplaceEdit {
-                                        new_text: "Image".to_string(),
-                                        insert: lsp_types::Range {
-                                        start: completion
-                                        .text_document_position
-                                        .position,
-                                        end: completion
-                                        .text_document_position
-                                        .position,
-                                        },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                        },
-                                        ),
-                                        ),
-                                        additional_text_edits: Some(Vec::new()),
-                                        ..Default::default()
-                                        }])),
+                                                    Some(CompletionResponse::Array(
+                                                        completion::complete_object_type(
+                                                            &current_rope,
+                                                            completion_node,
+                                                            completion,
+                                                        ),
+                                                    )),
                                                 )))
                                                 .unwrap();
                                         }
                                         NodeKind::ObjInner => {
-                                            let completion_range = completion_node.range();
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
                                                     rqid,
-                                                    Some(CompletionResponse::Array(vec![
-                                                        CompletionItem {
-                                                            label: "value".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "value: \"$0\",".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                        CompletionItem {
-                                                            label: "height".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "height: \"$0\",".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                        CompletionItem {
-                                                            label: "code".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "code: r#\"$0\"#,".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                        CompletionItem {
-                                                            label: "tint".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "tint: $0,".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                        CompletionItem {
-                                                            label: "color".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "color: $0,".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                        CompletionItem {
-                                                            label: "background".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "background: $0,".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                        CompletionItem {
-                                                            label: "scale".to_string(),
-                                                            kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: "scale: \"$0\",".to_string(),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                    CompletionItem {
-                                                        label: "font_family".to_string(),
-                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
+                                                    Some(CompletionResponse::Array(
+                                                        completion::complete_object_params(
+                                                            &current_rope,
+                                                            completion_node,
+                                                            completion,
                                                         ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: "font_family: \"$0\",".to_string(),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    },
-                                                    CompletionItem {
-                                                        label: "source".to_string(),
-                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
-                                                        ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: "source: \"$0\",".to_string(),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    },
-                                                    CompletionItem {
-                                                        label: "font_size".to_string(),
-                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
-                                                        ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: "font_size: $0,".to_string(),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    },
-                                                    CompletionItem {
-                                                        label: "language".to_string(),
-                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
-                                                        ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: "language: \"$0\",".to_string(),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    },
-                                                    CompletionItem {
-                                                        label: "align".to_string(),
-                                                        kind: Some(CompletionItemKind::TYPE_PARAMETER),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
-                                                        ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: "align: \"$0\",".to_string(),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    }]))),
-                                                ))
+                                                    )),
+                                                )))
                                                 .unwrap();
                                         }
                                         NodeKind::Completion => {
-                                            let completion_range = parent_object.range();
                                             connection
                                                 .sender
                                                 .send(Message::Response(Response::new_ok(
                                                     rqid,
-                                                    Some(CompletionResponse::Array(vec![
-                                                        CompletionItem {
-                                                            label: "viewbox".to_string(),
-                                                            kind: Some(CompletionItemKind::SNIPPET),
-                                                            deprecated: Some(false),
-                                                            preselect: Some(true),
-                                                            insert_text_format: Some(
-                                                                InsertTextFormat::SNIPPET,
-                                                            ),
-                                                            insert_text_mode: None,
-                                                            text_edit: Some(
-                                                                CompletionTextEdit::InsertAndReplace(
-                                                                    InsertReplaceEdit {
-                                                                        new_text: format!("{}: ${{1:Size}}[0] >$0]", current_rope.byte_slice(completion_node.prev_named_sibling().unwrap().byte_range())),
-                                                                        insert: lsp_types::Range {
-                                                                            start: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                            end: completion
-                                                                                .text_document_position
-                                                                                .position,
-                                                                        },
-                                                                        replace:
-                                                                            char_range_from_byte_range(
-                                                                                completion_range,
-                                                                                &current_rope,
-                                                                            )
-                                                                            .unwrap(),
-                                                                    },
-                                                                ),
-                                                            ),
-                                                            additional_text_edits: Some(Vec::new()),
-                                                            ..Default::default()
-                                                        },
-                                                    CompletionItem {
-                                                        label: "object".to_string(),
-                                                        kind: Some(CompletionItemKind::SNIPPET),
-                                                        deprecated: Some(false),
-                                                        preselect: Some(true),
-                                                        insert_text_format: Some(
-                                                            InsertTextFormat::SNIPPET,
+                                                    Some(CompletionResponse::Array(
+                                                        completion::complete_top_level_object(
+                                                            &current_rope,
+                                                            parent_object,
+                                                            completion_node,
+                                                            completion,
                                                         ),
-                                                        insert_text_mode: None,
-                                                        text_edit: Some(
-                                                            CompletionTextEdit::InsertAndReplace(
-                                                                InsertReplaceEdit {
-                                                                    new_text: format!("{}: ${{1:Paragraph}}($0)", current_rope.byte_slice(completion_node.prev_named_sibling().unwrap().byte_range())),
-                                                                    insert: lsp_types::Range {
-                                                                        start: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                        end: completion
-                                                                            .text_document_position
-                                                                            .position,
-                                                                    },
-                                                                    replace:
-                                                                        char_range_from_byte_range(
-                                                                            completion_range,
-                                                                            &current_rope,
-                                                                        )
-                                                                        .unwrap(),
-                                                                },
-                                                            ),
-                                                        ),
-                                                        additional_text_edits: Some(Vec::new()),
-                                                        ..Default::default()
-                                                    }]))),
-                                                ))
+                                                    )),
+                                                )))
                                                 .unwrap();
                                         }
                                         _ => {
@@ -1255,7 +505,7 @@ pub fn start_lsp(
                                         .sender
                                         .send(Message::Response(Response::new_ok(
                                             rqid,
-                                            complete_source_file(
+                                            completion::complete_source_file(
                                                 completion,
                                                 &slide_complete_query,
                                                 tree_info,
@@ -1338,7 +588,7 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    goto_declaration(
+                                    symbols::goto_declaration(
                                         &app,
                                         goto_params,
                                         &top_level_search_query,
@@ -1416,7 +666,7 @@ pub fn start_lsp(
                                         &lsp_egui_ctx,
                                         Path::new(currently_open.path()),
                                     );
-                                    *tree_info = Some(tree);
+                                    *tree_info = Some(tree.clone());
                                     *app.slide_show_file.lock() = current_rope.clone();
                                     match ast {
                                         Ok(_) => {
@@ -1433,6 +683,7 @@ pub fn start_lsp(
                                                     ),
                                                 ))
                                                 .unwrap();
+                                            error_free_tree = Some(tree);
                                         }
                                         Err(errors) => {
                                             connection
@@ -1500,10 +751,12 @@ pub fn start_lsp(
                                                         {
                                                             warnings.push(
                                                                 super::parser::Error::SpellCheck(
-                                                                    query_match.captures[0]
-                                                                        .node
-                                                                        .range()
-                                                                        .into(),
+                                                                    PointFromRange::new(
+                                                                        query_match.captures[0]
+                                                                            .node
+                                                                            .range(),
+                                                                        &current_rope,
+                                                                    ),
                                                                     hunspell.suggest(text),
                                                                 ),
                                                             );
@@ -1564,7 +817,7 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    references(
+                                    symbols::references(
                                         &app,
                                         &rename_query,
                                         &current_rope,
@@ -1655,7 +908,7 @@ pub fn start_lsp(
                             &lsp_egui_ctx,
                             Path::new(currently_open.path()),
                         );
-                        *tree_info = Some(tree);
+                        *tree_info = Some(tree.clone());
                         *app.slide_show_file.lock() = current_rope.clone();
                         match ast {
                             Ok(_) => {
@@ -1671,6 +924,7 @@ pub fn start_lsp(
                                     )))
                                     .unwrap();
                                 current_thread.unpark();
+                                error_free_tree = Some(tree);
                             }
                             Err(errors) => {
                                 connection
@@ -1731,6 +985,9 @@ pub fn start_lsp(
                                     let source = current_rope.slice(..);
                                     for edit in edits.iter().rev() {
                                         tree_info.edit(edit);
+                                        if let Some(error_tree) = error_free_tree.as_mut() {
+                                            error_tree.edit(edit);
+                                        }
                                     }
 
                                     // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
@@ -1746,42 +1003,39 @@ pub fn start_lsp(
                                                     &[]
                                                 }
                                             },
-                                            Some(&*tree_info),
+                                            Some(error_free_tree.as_ref().unwrap_or(&*tree_info)),
                                         )
                                         .unwrap();
-                                    if !tree.root_node().has_error() {
-                                        let mut slide_show = app.slide_show.write();
+                                    let mut slide_show = app.slide_show.write();
 
-                                        match super::parser::parse_file(
-                                            &tree,
-                                            Some(error_tree.take().as_ref().unwrap_or(&*tree_info)),
-                                            &current_rope,
-                                            &mut app.helix_cell,
-                                            &mut slide_show,
-                                            &lsp_egui_ctx,
-                                            Path::new(currently_open.path()),
-                                        ) {
-                                            Ok(_) => {
-                                                connection
-                                                    .sender
-                                                    .send(Message::Notification(
-                                                        lsp_server::Notification::new(
-                                                            PublishDiagnostics::METHOD.to_string(),
-                                                            PublishDiagnosticsParams {
-                                                                uri: currently_open.clone(),
-                                                                diagnostics: vec![],
-                                                                version: Some(
-                                                                    current_document_version,
-                                                                ),
-                                                            },
-                                                        ),
-                                                    ))
-                                                    .unwrap();
-                                                app.resolved.store(None);
-                                                lsp_egui_ctx.request_repaint();
-                                            }
-                                            Err(errors) => {
-                                                connection
+                                    match super::parser::parse_file(
+                                        &tree,
+                                        Some(error_free_tree.as_ref().unwrap_or(&*tree_info)),
+                                        &current_rope,
+                                        &mut app.helix_cell,
+                                        &mut slide_show,
+                                        &lsp_egui_ctx,
+                                        Path::new(currently_open.path()),
+                                    ) {
+                                        Ok(_) => {
+                                            connection
+                                                .sender
+                                                .send(Message::Notification(
+                                                    lsp_server::Notification::new(
+                                                        PublishDiagnostics::METHOD.to_string(),
+                                                        PublishDiagnosticsParams {
+                                                            uri: currently_open.clone(),
+                                                            diagnostics: vec![],
+                                                            version: Some(current_document_version),
+                                                        },
+                                                    ),
+                                                ))
+                                                .unwrap();
+                                            app.resolved.store(None);
+                                            lsp_egui_ctx.request_repaint();
+                                        }
+                                        Err(errors) => {
+                                            connection
                                                     .sender
                                                     .send(Message::Notification(lsp_server::Notification::new(
                                                         PublishDiagnostics::METHOD.to_string(),
@@ -1799,12 +1053,11 @@ pub fn start_lsp(
                                                         },
                                                     )))
                                                     .unwrap();
-                                            }
                                         }
-                                    } else if error_tree.is_none() {
-                                        error_tree = Some(tree.clone());
                                     }
-
+                                    if !tree.root_node().has_error() {
+                                        error_free_tree = Some(tree.clone());
+                                    }
                                     *tree_info = tree;
                                 } else {
                                     panic!("Transaction could not be applied");
@@ -1894,695 +1147,6 @@ pub fn start_lsp(
     io_threads.join().unwrap();
 
     // Shut down gracefully.
-}
-
-fn prepare_rename(
-    app: &MyEguiApp,
-    pos: TextDocumentPositionParams,
-    current_rope: &Rope,
-) -> Option<PrepareRenameResponse> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-    let point = Point {
-        row: pos.position.line as usize,
-        column: pos.position.character as usize,
-    };
-
-    tree_info
-        .root_node()
-        .descendant_for_point_range(point, point)
-        .and_then(|f| {
-            if matches!(NodeKind::from(f.kind_id()), NodeKind::Identifier) {
-                let node_range = f.range();
-                Some(PrepareRenameResponse::Range(
-                    char_range_from_byte_range(node_range, current_rope).ok()?,
-                ))
-            } else {
-                None
-            }
-        })
-}
-
-fn rename(
-    app: &MyEguiApp,
-    rename: RenameParams,
-    current_rope: &Rope,
-    rename_query: &Query,
-    query_cursor: &mut QueryCursor,
-) -> Vec<OneOf<TextEdit, AnnotatedTextEdit>> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-    let mut workspace_edit: Vec<OneOf<TextEdit, AnnotatedTextEdit>> = Vec::new();
-    let point = Point {
-        row: rename.text_document_position.position.line as usize,
-        column: rename.text_document_position.position.character as usize,
-    };
-
-    let rename_node = tree_info
-        .root_node()
-        .descendant_for_point_range(point, point)
-        .unwrap();
-
-    // identifiers cannot have new lines, so this should work
-    let rename_name = current_rope.byte_slice(rename_node.byte_range());
-
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let iter = query_cursor.matches(
-        rename_query,
-        tree_info.root_node(),
-        RopeProvider(current_rope.slice(..)),
-    );
-
-    for query_match in iter {
-        let node = query_match.captures[0].node;
-        if current_rope.byte_slice(node.byte_range()).eq(&rename_name) {
-            let range = node.range();
-
-            workspace_edit.push(OneOf::Left(TextEdit {
-                range: char_range_from_byte_range(range, current_rope).unwrap(),
-                new_text: rename.new_name.clone(),
-            }));
-        }
-    }
-
-    workspace_edit
-}
-
-fn inlay_hints(
-    app: &MyEguiApp,
-    inlay_edge_query: &Query,
-    inlay_edge_map: &mut HashMap<
-        RopeSlice<'static>,
-        RopeSlice<'static>,
-        BuildHasherDefault<ahash::AHasher>,
-    >,
-    inlay_vb_map: &mut HashMap<
-        RopeSlice<'static>,
-        Cow<'_, str>,
-        BuildHasherDefault<ahash::AHasher>,
-    >,
-    current_rope: &Rope,
-    last_inlay_len: usize,
-    query_cursor: &mut QueryCursor,
-) -> Vec<InlayHint> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
-    let mut hints = Vec::with_capacity(last_inlay_len);
-
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-
-    let mut slide_num = 0;
-
-    let edge_iter = query_cursor.matches(
-        inlay_edge_query,
-        tree_info.root_node(),
-        RopeProvider(current_rope.slice(..)),
-    );
-
-    for query_match in edge_iter {
-        match query_match.pattern_index {
-            0 => {
-                let query_node = query_match.captures[0].node;
-                let query_slice = unsafe {
-                    you_can::borrow_unchecked(
-                        current_rope.byte_slice(query_match.captures[0].node.byte_range()),
-                    )
-                };
-
-                let mut vb = None;
-                let mut edge = query_match.captures.get(2).map(|capture| capture.node);
-
-                if let Some(v) = query_match.captures.get(1) {
-                    match NodeKind::from(v.node.kind_id()) {
-                        NodeKind::SlideVb => vb = Some(v.node),
-                        NodeKind::EdgeParser => edge = Some(v.node),
-                        _ => unreachable!(),
-                    }
-                }
-
-                let mut walker = query_node.parent().unwrap().walk();
-                while walker.goto_next_sibling() {}
-                let range = walker.node().range();
-                let mut position = char_pos_from_byte_pos(range.end_point, current_rope).unwrap();
-                let mut hint = String::new();
-
-                if let Some(vb) = vb {
-                    let mut vb: Cow<'_, str> = unsafe {
-                        you_can::borrow_unchecked(current_rope.byte_slice(vb.byte_range()))
-                    }
-                    .into();
-                    if vb.starts_with('|') {
-                        vb = Cow::Borrowed(": InlineVb[_]");
-                        inlay_vb_map.insert(query_slice, vb);
-                    } else if vb.starts_with('~') {
-                        if let Some(vb) = inlay_vb_map.get(&query_slice) {
-                            std::fmt::Write::write_fmt(&mut hint, format_args!("{}", &vb[1..]))
-                                .unwrap();
-                        }
-                    } else {
-                        inlay_vb_map.insert(query_slice, vb);
-                    }
-                } else {
-                    let entry = inlay_vb_map
-                        .entry(query_slice)
-                        .or_insert(Cow::Borrowed(": Unknown[_]"));
-
-                    std::fmt::Write::write_fmt(&mut hint, format_args!("{}", entry)).unwrap();
-                }
-
-                if let Some(edge) = edge {
-                    let slice = unsafe {
-                        you_can::borrow_unchecked(current_rope.byte_slice(edge.byte_range()))
-                    };
-                    let entry = inlay_edge_map.entry(query_slice).or_insert_with(|| {
-                        if edge.byte_range().len() == 4 {
-                            slice.byte_slice(2..)
-                        } else {
-                            slice
-                        }
-                    });
-
-                    let range = edge.range();
-                    position = char_pos_from_byte_pos(range.start_point, current_rope).unwrap();
-
-                    if slice.len_chars() < 3 {
-                        std::fmt::Write::write_fmt(&mut hint, format_args!("{}", entry)).unwrap();
-                        *entry = slice;
-                    } else {
-                        *entry = slice.byte_slice(2..);
-                    }
-                } else {
-                    let entry = inlay_edge_map.entry(query_slice);
-                    let entry = entry.or_insert_with(|| RopeSlice::from(""));
-
-                    std::fmt::Write::write_fmt(&mut hint, format_args!("{}{}", entry, entry))
-                        .unwrap();
-                }
-
-                if !hint.is_empty() {
-                    hints.push(InlayHint {
-                        position,
-                        // This parameter must NEVER be the actual borrowed slice
-                        label: InlayHintLabel::String(hint),
-                        kind: Some(InlayHintKind::PARAMETER),
-                        text_edits: None,
-                        tooltip: None,
-                        padding_right: Some(false),
-                        padding_left: Some(false),
-                        data: None,
-                    });
-                }
-            }
-            1 => {
-                slide_num += 1;
-                let range = query_match.captures[0].node.range();
-                hints.push(InlayHint {
-                    position: char_pos_from_byte_pos(range.start_point, current_rope).unwrap(),
-                    label: InlayHintLabel::String(format!("Slide {}:", slide_num)),
-                    kind: Some(InlayHintKind::PARAMETER),
-                    text_edits: None,
-                    tooltip: None,
-                    padding_right: Some(true),
-                    padding_left: Some(false),
-                    data: None,
-                });
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    {
-        inlay_edge_map.clear();
-        inlay_vb_map.clear();
-    }
-
-    hints
-}
-
-fn semantic_tokens(
-    app: &MyEguiApp,
-    semantic_token_query: &Query,
-    current_rope: &Rope,
-    query_cursor: &mut QueryCursor,
-) -> SemanticTokensResult {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
-    let start_node = tree_info.root_node();
-
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let iter = query_cursor.matches(
-        semantic_token_query,
-        start_node,
-        RopeProvider(current_rope.slice(..)),
-    );
-
-    let mut tokens = Vec::new();
-    let mut last_range = helix_core::tree_sitter::Range {
-        start_byte: 0,
-        end_byte: 0,
-        start_point: Point { row: 0, column: 0 },
-        end_point: Point { row: 0, column: 0 },
-    };
-    for query_match in iter {
-        let capture = query_match.captures.last().unwrap();
-        let range = capture.node.range();
-
-        if last_range != range {
-            let mut delta_line = (range.start_point.row - last_range.end_point.row) as u32;
-            let mut multiline = false;
-            for line in range.start_point.row..=range.end_point.row {
-                tokens.push(SemanticToken {
-                    delta_line,
-                    delta_start: if multiline {
-                        0
-                    } else if delta_line == 0 {
-                        (range.start_point.column - last_range.start_point.column) as u32
-                    } else {
-                        range.start_point.column as u32
-                    },
-                    length: if line == range.start_point.row {
-                        if range.end_point.row - range.start_point.row > 0 {
-                            current_rope
-                                .line(line)
-                                .slice(range.start_point.column..)
-                                .len_chars() as u32
-                        } else {
-                            (range.end_point.column - range.start_point.column) as u32
-                        }
-                    } else if line == range.end_point.row {
-                        current_rope
-                            .line(line)
-                            .slice(..range.end_point.column)
-                            .len_chars() as u32
-                    } else {
-                        current_rope.line(line).len_chars() as u32
-                    },
-                    token_type: capture.index,
-                    token_modifiers_bitset: if semantic_token_query.capture_names()
-                        [capture.index as usize]
-                        .contains('.')
-                    {
-                        0b00000001
-                    } else {
-                        0
-                    },
-                });
-                delta_line = 1;
-                multiline = true;
-            }
-
-            last_range = range;
-        }
-    }
-
-    SemanticTokensResult::Tokens(SemanticTokens {
-        data: tokens,
-        ..Default::default()
-    })
-}
-
-pub fn complete_source_file(
-    completion: CompletionParams,
-    slide_complete_query: &Query,
-    tree_info: &Tree,
-    current_rope: &Rope,
-    query_cursor: &mut QueryCursor,
-) -> Result<CompletionResponse, Error> {
-    let new_slide_range = lsp_types::Range {
-        start: Position {
-            line: completion.text_document_position.position.line,
-            character: 0,
-        },
-        end: Position {
-            line: completion.text_document_position.position.line,
-            character: 0,
-        },
-    };
-    let new_slide_item = CompletionItem {
-        label: "new".into(),
-        label_details: Some(CompletionItemLabelDetails {
-            description: Some("Create a new slide".to_string()),
-            detail: None,
-        }),
-        deprecated: Some(false),
-        insert_text_format: Some(InsertTextFormat::SNIPPET),
-        sort_text: Some("ffffffef".to_string()),
-        filter_text: Some("new".into()),
-        kind: Some(CompletionItemKind::SNIPPET),
-        preselect: Some(true),
-        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
-            new_text: "{$0}[]".to_string(),
-            insert: new_slide_range,
-            replace: new_slide_range,
-        })),
-        additional_text_edits: Some(Vec::new()),
-        ..Default::default()
-    };
-
-    let mut new_text = String::from("{\n");
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let iter = query_cursor.matches(
-        slide_complete_query,
-        tree_info.root_node(),
-        RopeProvider(current_rope.slice(..)),
-    );
-    let mut node = None;
-    for query_match in iter {
-        if query_match.captures[0].node.range().end_point.row
-            > completion.text_document_position.position.line as usize
-        {
-            break;
-        }
-        node = Some(query_match.captures[0].node);
-    }
-    let mut walker = if let Some(n) = node {
-        GrzCursor::from_node(n)
-    } else {
-        return Ok(CompletionResponse::Array(vec![new_slide_item]));
-    };
-
-    walker.goto_first_child()?;
-    walker.goto_first_child()?;
-
-    let mut line = String::new();
-    loop {
-        line.clear();
-        walker.goto_first_child_raw()?;
-        line.push_str("    ");
-        'outer: {
-            loop {
-                match NodeKind::from(walker.node().kind_id()) {
-                    NodeKind::EdgeParser => {
-                        if current_rope
-                            .byte_slice(walker.node().byte_range())
-                            .chunks()
-                            .any(|c| c.contains('|'))
-                        {
-                            break 'outer;
-                        }
-                    }
-                    NodeKind::Identifier => {
-                        current_rope
-                            .byte_slice(walker.node().byte_range())
-                            .chunks()
-                            .for_each(|c| line.push_str(c));
-                        line.push(',');
-                    }
-                    _ => {}
-                }
-
-                if !walker.goto_next_sibling_raw()? {
-                    break;
-                }
-            }
-            new_text.push_str(&line);
-            new_text.push('\n');
-        }
-
-        walker.goto_parent();
-
-        walker.goto_next_sibling_raw()?;
-        if !walker.goto_next_sibling_raw()? {
-            break;
-        }
-        if !matches!(NodeKind::from(walker.node().kind_id()), NodeKind::SlideObj) {
-            break;
-        }
-    }
-    new_text.push_str("}[]");
-    let continue_slide_range = lsp_types::Range {
-        start: Position {
-            line: completion.text_document_position.position.line,
-            character: 0,
-        },
-        end: Position {
-            line: completion.text_document_position.position.line,
-            character: current_rope
-                .line(completion.text_document_position.position.line as usize)
-                .len_chars() as u32,
-        },
-    };
-    let continue_slide_item = CompletionItem {
-        label: "continue".into(),
-        label_details: Some(CompletionItemLabelDetails {
-            description: Some("Copy the previous slide here".to_string()),
-            detail: None,
-        }),
-        kind: Some(CompletionItemKind::SNIPPET),
-        preselect: Some(true),
-        deprecated: Some(false),
-        insert_text_format: Some(InsertTextFormat::SNIPPET),
-        sort_text: Some("ffffffef".to_string()),
-        filter_text: Some("continue".into()),
-        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
-            new_text,
-            insert: continue_slide_range,
-            replace: continue_slide_range,
-        })),
-        additional_text_edits: Some(Vec::new()),
-        ..Default::default()
-    };
-
-    Ok(CompletionResponse::Array(vec![
-        continue_slide_item,
-        new_slide_item,
-    ]))
-}
-
-pub fn references(
-    app: &MyEguiApp,
-    rename_query: &Query,
-    current_rope: &Rope,
-    references: ReferenceParams,
-    currently_open: &Url,
-    query_cursor: &mut QueryCursor,
-) -> Option<Vec<Location>> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-    let point = Point {
-        row: references.text_document_position.position.line as usize,
-        column: references.text_document_position.position.character as usize,
-    };
-
-    let reference_node = tree_info
-        .root_node()
-        .descendant_for_point_range(point, point)
-        .unwrap();
-
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let iter = query_cursor.matches(
-        rename_query,
-        tree_info.root_node(),
-        RopeProvider(current_rope.slice(..)),
-    );
-
-    let mut locations = Vec::new();
-
-    for query_match in iter {
-        if current_rope.byte_slice(query_match.captures[0].node.byte_range())
-            == current_rope.byte_slice(reference_node.byte_range())
-        {
-            let range = query_match.captures[0].node.range();
-            locations.push(Location {
-                uri: currently_open.clone(),
-                range: char_range_from_byte_range(range, current_rope).ok()?,
-            });
-        }
-    }
-
-    Some(locations)
-}
-
-pub fn goto_declaration(
-    app: &MyEguiApp,
-    goto_declaration: GotoDefinitionParams,
-    top_level_search_query: &Query,
-    current_rope: &Rope,
-    currently_open: Url,
-    query_cursor: &mut QueryCursor,
-) -> Option<GotoDefinitionResponse> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-    let point = Point {
-        row: goto_declaration.text_document_position_params.position.line as usize,
-        column: goto_declaration
-            .text_document_position_params
-            .position
-            .character as usize,
-    };
-
-    let usage_node = tree_info
-        .root_node()
-        .descendant_for_point_range(point, point)
-        .unwrap();
-
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let iter = query_cursor.matches(
-        top_level_search_query,
-        tree_info.root_node(),
-        RopeProvider(current_rope.slice(..)),
-    );
-
-    for query_match in iter {
-        if current_rope.byte_slice(query_match.captures[0].node.byte_range())
-            == current_rope.byte_slice(usage_node.byte_range())
-        {
-            let range = query_match.captures[0].node.range();
-            return Some(GotoDefinitionResponse::Scalar(Location {
-                uri: currently_open,
-                range: char_range_from_byte_range(range, current_rope).ok()?,
-            }));
-        }
-    }
-
-    None
-}
-
-#[allow(deprecated)]
-pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<DocumentSymbolResponse> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
-    let mut tree_cursor = GrzCursor::new(tree_info);
-    let mut symbols = Vec::new();
-
-    let _ = tree_cursor.goto_first_child();
-    let mut slide_num = 0;
-    'parserloop: loop {
-        let node = tree_cursor.node();
-        let range = node.range();
-
-        match NodeKind::from(node.kind_id()) {
-            NodeKind::Slide => {
-                slide_num += 1;
-
-                let _ = tree_cursor.goto_first_child();
-                let _ = tree_cursor.goto_first_child();
-                let selection_range = tree_cursor.node().range();
-                tree_cursor.goto_parent();
-                tree_cursor.goto_parent();
-
-                symbols.push(DocumentSymbol {
-                    name: format!("Slide {}", slide_num),
-                    kind: SymbolKind::FUNCTION,
-                    range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: None,
-                    selection_range: char_range_from_byte_range(selection_range, current_rope)
-                        .ok()?,
-                    tags: None,
-                    deprecated: None,
-                    children: None,
-                })
-            }
-            NodeKind::Viewbox => {
-                let _ = tree_cursor.goto_first_child();
-                let selection_range = tree_cursor.node().range();
-                let byte_range = tree_cursor.node().byte_range();
-                let _ = tree_cursor.goto_next_sibling();
-                let name_range = tree_cursor.node().byte_range();
-                let _ = tree_cursor.goto_next_sibling();
-                let index_range = tree_cursor.node().byte_range();
-                tree_cursor.goto_parent();
-
-                symbols.push(DocumentSymbol {
-                    name: current_rope.byte_slice(byte_range).to_string(),
-                    kind: SymbolKind::VARIABLE,
-                    range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: Some(format!(
-                        "{}{}",
-                        current_rope.slice(name_range),
-                        current_rope.slice(index_range)
-                    )),
-                    selection_range: char_range_from_byte_range(selection_range, current_rope)
-                        .ok()?,
-                    tags: None,
-                    deprecated: None,
-                    children: None,
-                })
-            }
-            NodeKind::Obj => {
-                let _ = tree_cursor.goto_first_child();
-                let selection_range = tree_cursor.node().range();
-                let byte_range = tree_cursor.node().byte_range();
-                let _ = tree_cursor.goto_next_sibling();
-                let name_range = tree_cursor.node().byte_range();
-                tree_cursor.goto_parent();
-
-                symbols.push(DocumentSymbol {
-                    name: current_rope.byte_slice(byte_range).to_string(),
-                    kind: SymbolKind::OBJECT,
-                    range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: Some(current_rope.slice(name_range).to_string()),
-                    selection_range: char_range_from_byte_range(selection_range, current_rope)
-                        .ok()?,
-                    tags: None,
-                    deprecated: None,
-                    children: None,
-                })
-            }
-            NodeKind::Register => { /* todo */ }
-            NodeKind::SlideFunctions => {
-                let _ = tree_cursor.goto_first_child();
-                let selection_range = tree_cursor.node().range();
-                tree_cursor.goto_parent();
-
-                symbols.push(DocumentSymbol {
-                    name: "Actions".to_string(),
-                    kind: SymbolKind::ARRAY,
-                    range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: None,
-                    selection_range: char_range_from_byte_range(selection_range, current_rope)
-                        .ok()?,
-                    tags: None,
-                    deprecated: None,
-                    children: None,
-                })
-            }
-            _ => {}
-        }
-
-        loop {
-            match tree_cursor.goto_next_sibling() {
-                Ok(false) => break 'parserloop,
-                Ok(true) => break,
-                Err(_) => {}
-            }
-        }
-    }
-
-    Some(DocumentSymbolResponse::Nested(symbols))
 }
 
 pub fn hover(

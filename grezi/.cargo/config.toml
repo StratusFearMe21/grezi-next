@@ -5,5 +5,5 @@
 [target.wasm32-unknown-unknown]
 rustflags = [
   "--cfg=web_sys_unstable_apis",
-  # "-Ctarget-feature=+simd128,+nontrapping-fptoint,+relaxed-simd,+extended-const,+atomics,+bulk-memory",
+  "-Ctarget-feature=+simd128",
 ]

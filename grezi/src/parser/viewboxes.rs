@@ -1,4 +1,5 @@
 use std::{
+    fmt::Display,
     hash::{BuildHasher, Hasher},
     str::FromStr,
 };
@@ -18,7 +19,7 @@ pub enum ViewboxIn {
     Custom(u64, usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Direction {
     Up,
     Down,
@@ -82,6 +83,18 @@ impl FromStr for Direction {
     }
 }
 
+impl Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Direction::Up => write!(f, "^"),
+            Direction::Down => write!(f, "_"),
+            Direction::Right => write!(f, ">"),
+            Direction::Left => write!(f, "<"),
+            Direction::Center => write!(f, "."),
+        }
+    }
+}
+
 use std::{borrow::Cow, collections::HashMap, hash::BuildHasherDefault};
 
 use super::PassThroughHasher;
@@ -110,47 +123,87 @@ pub fn parse_viewbox_inner(
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<UnresolvedLayout, super::Error> {
+    use super::PointFromRange;
+
     let attached_box = parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?;
     if matches!(attached_box, ViewboxIn::Inherit(_)) {
-        return Err(super::Error::InvalidParameter(
-            tree_cursor.node().range().into(),
-        ));
+        return Err(super::Error::InvalidParameter(PointFromRange::new(
+            tree_cursor.node().range(),
+            source,
+        )));
     }
     tree_cursor.goto_next_sibling()?;
     tree_cursor.goto_first_child()?;
+
     let direction: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-    let direction = Direction::from_str(direction.as_ref())
-        .map_err(|_| super::Error::InvalidParameter(tree_cursor.node().range().into()))?;
+    let direction = Direction::from_str(direction.as_ref()).map_err(|_| {
+        super::Error::InvalidParameter(PointFromRange::new(
+            tree_cursor.node().range().into(),
+            source,
+        ))
+    })?;
     tree_cursor.goto_next_sibling()?;
     let mut constraints = Vec::new();
     while tree_cursor.node().kind_id() == NodeKind::ViewboxObj as u16 {
         tree_cursor.goto_first_child()?;
         let numerator: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-        let numerator: f32 = numerator.parse().unwrap();
-        // We want a char literal here
-        tree_cursor.goto_next_sibling_raw()?;
-        let op: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
-        match op.as_ref() {
-            "%" => constraints.push(Constraint::Percentage(numerator)),
-            "-" => constraints.push(Constraint::Min(numerator)),
-            "+" => constraints.push(Constraint::Max(numerator)),
-            "~" => constraints.push(Constraint::Length(numerator)),
-            ":" => {
-                tree_cursor.goto_next_sibling()?;
-                let denominator: Cow<'_, str> =
-                    source.byte_slice(tree_cursor.node().byte_range()).into();
-                constraints.push(Constraint::Ratio(numerator, denominator.parse().unwrap()));
+        match NodeKind::from(tree_cursor.node().kind_id()) {
+            NodeKind::NumberLiteral => {
+                let numerator: f32 = numerator.parse().unwrap();
+                // We want a char literal here
+                tree_cursor.goto_next_sibling_raw()?;
+                let op: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+                match op.as_ref() {
+                    "%" => constraints.push(Constraint::Percentage(numerator)),
+                    "-" => constraints.push(Constraint::Min(numerator)),
+                    "+" => constraints.push(Constraint::Max(numerator)),
+                    "~" => constraints.push(Constraint::Length(numerator)),
+                    ":" => {
+                        tree_cursor.goto_next_sibling()?;
+                        let denominator: Cow<'_, str> =
+                            source.byte_slice(tree_cursor.node().byte_range()).into();
+                        constraints
+                            .push(Constraint::Ratio(numerator, denominator.parse().unwrap()));
+                    }
+                    _ => {
+                        return Err(super::Error::InvalidParameter(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        )))
+                    }
+                }
             }
-            _ => {
-                return Err(super::Error::InvalidParameter(
-                    tree_cursor.node().range().into(),
+            NodeKind::Auto => {
+                tree_cursor.goto_next_sibling()?;
+                let direction: Cow<'_, str> =
+                    source.byte_slice(tree_cursor.node().byte_range()).into();
+                constraints.push(Constraint::Auto(
+                    Direction::from_str(direction.as_ref()).map_err(|_| {
+                        super::Error::InvalidParameter(PointFromRange::new(
+                            tree_cursor.node().range(),
+                            source,
+                        ))
+                    })?,
+                ));
+            }
+            n => {
+                return Err(super::Error::BadNode(
+                    PointFromRange::new(tree_cursor.node().range(), source),
+                    n,
                 ))
             }
         }
         tree_cursor.goto_parent();
         tree_cursor.goto_next_sibling()?;
     }
+    if constraints.is_empty() {
+        return Err(super::Error::KnownMissing(
+            PointFromRange::new(tree_cursor.node().range(), source),
+            "Viewbox constraints".into(),
+        ));
+    }
     tree_cursor.goto_parent();
+
     Ok(UnresolvedLayout {
         direction: crate::layout::Direction::from(direction),
         margin: 15.0,
@@ -167,6 +220,8 @@ pub fn parse_viewbox_ident(
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
 ) -> Result<ViewboxIn, super::Error> {
+    use super::PointFromRange;
+
     let viewbox = source.byte_slice(tree_cursor.node().byte_range());
     let viewbox_node = NodeKind::from(tree_cursor.node().kind_id());
     let viewbox_range = tree_cursor.node().range();
@@ -201,14 +256,23 @@ pub fn parse_viewbox_ident(
                 tree_cursor.goto_parent();
 
                 if vb.constraints.get(vb_index).is_none() {
-                    return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                    return Err(super::Error::NotFound(PointFromRange::new(
+                        tree_cursor.node().range(),
+                        source,
+                    )));
                 }
 
                 Ok(ViewboxIn::Custom(name, vb_index))
             } else {
-                return Err(super::Error::NotFound(tree_cursor.node().range().into()));
+                return Err(super::Error::NotFound(PointFromRange::new(
+                    tree_cursor.node().range(),
+                    source,
+                )));
             }
         }
-        kind => Err(super::Error::BadNode(viewbox_range.into(), kind)),
+        kind => Err(super::Error::BadNode(
+            PointFromRange::new(viewbox_range, source),
+            kind,
+        )),
     }
 }

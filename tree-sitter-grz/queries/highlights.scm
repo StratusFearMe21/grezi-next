@@ -1,9 +1,11 @@
 (obj
   ty: (identifier) @type.builtin)
 (viewbox_obj
-  operation: (operation) @keyword.operator)
+  operation: (_) @keyword.operator)
 (viewbox_obj
   operation: (":") @keyword.operator)
+(viewbox_obj
+  value: (auto) @constant.numeric.integer)
 (slide_function
   function: (identifier) @function)
 

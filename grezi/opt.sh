@@ -4,7 +4,7 @@ js=dist/grezi-*.js
 if [ -d $1 ]; then
   cp $1/*.slideshow $1/*.pdf dist/
 fi
-wasm-opt -O2 --fast-math $wasm -o $wasm
+wasm-opt -O2 --fast-math --enable-simd $wasm -o $wasm
 find dist/ \
   -name "*.js" -o \
   -name "*.slideshow" -o \
