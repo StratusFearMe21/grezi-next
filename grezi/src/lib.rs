@@ -88,7 +88,7 @@ pub struct MyEguiApp {
     pub resolved: Arc<ArcSwapOption<Resolved>>,
     pub resolved_images:
         Arc<Mutex<HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>>>,
-    pub time: f32,
+    pub time_offset: f32,
     #[cfg(not(target_arch = "wasm32"))]
     pub lsp: bool,
     #[cfg(not(target_arch = "wasm32"))]
@@ -664,7 +664,7 @@ impl Resolved {
                         first_time,
                         scaled_times[0][1],
                     ));
-                    let second_obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
+                    let mut second_obj_pos = Pos2::from(keyframe::ease_with_scaled_time(
                         EaseOutCubic,
                         locations_of_objects[1][0],
                         locations_of_objects[1][1],
@@ -673,13 +673,17 @@ impl Resolved {
                     ));
 
                     let gamma = match state {
-                        ObjectState::Entering => keyframe::ease_with_scaled_time(
-                            EaseOutCubic,
-                            0.0,
-                            1.0,
-                            second_time,
-                            scaled_times[1][1],
-                        ),
+                        ObjectState::Entering => {
+                            let y = keyframe::ease_with_scaled_time(
+                                EaseOutCubic,
+                                0.0,
+                                1.0,
+                                second_time,
+                                scaled_times[1][1],
+                            );
+                            second_obj_pos = first_obj_pos.lerp(second_obj_pos, y);
+                            y
+                        }
                         ObjectState::Exiting => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
                             1.0,
@@ -1622,7 +1626,7 @@ impl MyEguiApp {
                 #[cfg(not(target_arch = "wasm32"))]
                 obj_dbg: Arc::new(0.into()),
                 index: Arc::new(0.into()),
-                time: 0.0,
+                time_offset: 0.0,
                 #[cfg(not(target_arch = "wasm32"))]
                 helix_cell,
                 resolved: Arc::new(ArcSwapOption::new(None)),
@@ -1658,7 +1662,8 @@ impl MyEguiApp {
         //     self.frame_history
         //         .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
         // }
-        self.time += ctx.input(|i| i.stable_dt);
+        let ui_time = ctx.input(|i| i.time) as f32;
+        let time = ui_time - self.time_offset;
         #[cfg(not(target_arch = "wasm32"))]
         let speaker_viewport = ViewportId::from_hash_of("speaker_view");
         #[cfg(not(target_arch = "wasm32"))]
@@ -1719,7 +1724,7 @@ impl MyEguiApp {
             .show(ctx, |ui| {
                 let window_size = ui.max_rect();
                 if self.restart_timer.load(Ordering::Relaxed) {
-                    self.time = 0.0;
+                    self.time_offset = ui_time;
                     self.restart_timer.store(false, Ordering::Relaxed);
                 }
 
@@ -1733,7 +1738,7 @@ impl MyEguiApp {
                         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |idx| {
                             if idx != slide_show.slide_show.len() - 1 {
                                 self.resolved.store(None);
-                                self.time = 0.0;
+                                self.time_offset = ui_time;
                                 index += 1;
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.speaker_view.clear_resolved();
@@ -1754,7 +1759,7 @@ impl MyEguiApp {
                         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |idx| {
                             if idx != 0 {
                                 self.resolved.store(None);
-                                self.time = 1000.0;
+                                self.time_offset = 0.0;
                                 index -= 1;
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.speaker_view.clear_resolved();
@@ -1848,21 +1853,21 @@ impl MyEguiApp {
                         } => {
                             if let Some(b) = b {
                                 let color: Color32 =
-                                    bg.interpolate(b.1, self.time, b.0.as_secs_f32()).into();
+                                    bg.interpolate(b.1, time, b.0.as_secs_f32()).into();
                                 if self.clear_color != color {
                                     ctx.request_repaint();
                                 }
                                 self.clear_color = color;
                             }
-                            resolved.draw_slide(ui, self.time, &mut buffers);
-                            resolved.draw_actions(ui, self.time);
+                            resolved.draw_slide(ui, time, &mut buffers);
+                            resolved.draw_actions(ui, time);
 
-                            if self.time < *max_time {
+                            if time < *max_time {
                                 ctx.request_repaint();
                             } else if *next && self.next.load(Ordering::Relaxed) {
                                 self.index.fetch_add(1, Ordering::Relaxed);
                                 self.resolved.store(None);
-                                self.time = 0.0;
+                                self.time_offset = ui_time;
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.speaker_view.clear_resolved();
                                 #[cfg(not(target_arch = "wasm32"))]
@@ -1880,9 +1885,9 @@ impl MyEguiApp {
                                 }
                                 _ => todo!(),
                             }
-                            resolved.draw_actions(ui, self.time);
+                            resolved.draw_actions(ui, time);
 
-                            if self.time < 0.5 {
+                            if time < 0.5 {
                                 ctx.request_repaint();
                             }
                         }
@@ -1945,7 +1950,7 @@ impl MyEguiApp {
                             |index| {
                                 if index != slide_show.slide_show.len() - 1 {
                                     self.resolved.store(None);
-                                    self.time = 0.0;
+                                    self.time_offset = ui_time;
                                     #[cfg(not(target_arch = "wasm32"))]
                                     self.speaker_view.clear_resolved();
                                     #[cfg(not(target_arch = "wasm32"))]
@@ -1971,7 +1976,7 @@ impl MyEguiApp {
                             |index| {
                                 if index != 0 {
                                     self.resolved.store(None);
-                                    self.time = 1000.0;
+                                    self.time_offset = 0.0;
                                     #[cfg(not(target_arch = "wasm32"))]
                                     self.speaker_view.clear_resolved();
                                     #[cfg(not(target_arch = "wasm32"))]
@@ -1990,7 +1995,7 @@ impl MyEguiApp {
                         pressed: true,
                         ..
                     } => {
-                        self.time = 0.0;
+                        self.time_offset = ui_time;
                         #[cfg(not(target_arch = "wasm32"))]
                         self.vb_dbg.store(0, Ordering::Relaxed);
                         #[cfg(not(target_arch = "wasm32"))]

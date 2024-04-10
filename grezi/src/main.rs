@@ -298,7 +298,7 @@ fn main() -> miette::Result<()> {
 
             let egui_ctx = egui::Context::default();
 
-            app.0.time = f32::MAX;
+            app.0.time_offset = f32::MIN;
             app.0.export = true;
             let mut init_app = app.0.init_app(&egui_ctx, app.1);
             let ft = cairo::freetype::Library::init().unwrap();
