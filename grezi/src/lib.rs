@@ -1652,30 +1652,37 @@ impl MyEguiApp {
         #[cfg(target_arch = "wasm32")]
         {
             egui::TopBottomPanel::bottom("controls")
-            .exact_height(32.0)
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    if ui.add_enabled(self.index.load(Ordering::Relaxed) != 0, egui::Button::new("<")).clicked() {
-                        self.index.fetch_sub(1, Ordering::Relaxed);
-                        index -= 1;
-                        self.next.store(false, Ordering::Relaxed);
-                        self.resolved.store(None);
-                        self.time_offset = 0.0;
-                    } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new(">")).clicked() {
-                        self.index.fetch_add(1, Ordering::Relaxed);
-                        index += 1;
-                        self.resolved.store(None);
-                        self.next.store(true, Ordering::Relaxed);
-                        self.time_offset = ui_time;
-                    }
-                    // ui.label(format!(
-                    //     "FPS: {:.1}",
-                    //     self.frame_history.fps()
-                    // ));
-                    ui.label("This presentation was made using Grezi, created by Isaac Mills, the guy who made this portfolio!");
-                    ui.hyperlink_to("Check out the source code!", "https://github.com/StratusFearMe21/grezi-next");
-                })
-            });
+                .exact_height(32.0)
+                .show(ctx, |ui| {
+                    ui.horizontal_centered(|ui| {
+                        if ui
+                            .add_enabled(
+                                self.index.load(Ordering::Relaxed) != 0,
+                                egui::Button::new("<"),
+                            )
+                            .clicked()
+                        {
+                            self.index.fetch_sub(1, Ordering::Relaxed);
+                            index -= 1;
+                            self.next.store(false, Ordering::Relaxed);
+                            self.resolved.store(None);
+                            self.time_offset = 0.0;
+                        } else if ui
+                            .add_enabled(
+                                self.index.load(Ordering::Relaxed)
+                                    != slide_show.slide_show.len() - 1,
+                                egui::Button::new(">"),
+                            )
+                            .clicked()
+                        {
+                            self.index.fetch_add(1, Ordering::Relaxed);
+                            index += 1;
+                            self.resolved.store(None);
+                            self.next.store(true, Ordering::Relaxed);
+                            self.time_offset = ui_time;
+                        }
+                    })
+                });
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.lsp {
