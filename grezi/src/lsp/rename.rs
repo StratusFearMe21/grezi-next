@@ -1,6 +1,6 @@
 use helix_core::{
     syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor},
+    tree_sitter::{Point, Query, QueryCursor, Tree},
     Rope,
 };
 use lsp_types::{
@@ -8,24 +8,21 @@ use lsp_types::{
     TextEdit,
 };
 
-use crate::{parser::NodeKind, MyEguiApp};
+use crate::parser::NodeKind;
 
 use super::formatter::char_range_from_byte_range;
 
 pub fn prepare_rename(
-    app: &MyEguiApp,
     pos: TextDocumentPositionParams,
     current_rope: &Rope,
+    tree: &Tree,
 ) -> Option<PrepareRenameResponse> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
     let point = Point {
         row: pos.position.line as usize,
         column: pos.position.character as usize,
     };
 
-    tree_info
-        .root_node()
+    tree.root_node()
         .descendant_for_point_range(point, point)
         .and_then(|f| {
             if matches!(NodeKind::from(f.kind_id()), NodeKind::Identifier) {
@@ -40,21 +37,19 @@ pub fn prepare_rename(
 }
 
 pub fn rename(
-    app: &MyEguiApp,
     rename: RenameParams,
     current_rope: &Rope,
     rename_query: &Query,
     query_cursor: &mut QueryCursor,
+    tree: &Tree,
 ) -> Vec<OneOf<TextEdit, AnnotatedTextEdit>> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
     let mut workspace_edit: Vec<OneOf<TextEdit, AnnotatedTextEdit>> = Vec::new();
     let point = Point {
         row: rename.text_document_position.position.line as usize,
         column: rename.text_document_position.position.character as usize,
     };
 
-    let rename_node = tree_info
+    let rename_node = tree
         .root_node()
         .descendant_for_point_range(point, point)
         .unwrap();
@@ -70,7 +65,7 @@ pub fn rename(
     );
     let iter = query_cursor.matches(
         rename_query,
-        tree_info.root_node(),
+        tree.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 

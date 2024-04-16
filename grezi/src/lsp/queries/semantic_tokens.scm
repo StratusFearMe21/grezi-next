@@ -13,7 +13,6 @@
 (edge_parser) @modifier
 (identifier) @variable
 (comment) @comment
-(escape_sequence) @macro
 (number_literal) @number
 (integer_literal) @number
 (string_literal) @string

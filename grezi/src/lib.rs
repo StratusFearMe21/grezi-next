@@ -34,8 +34,6 @@ use egui_glyphon::{
 // use frame_history::FrameHistory;
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
-#[cfg(not(target_arch = "wasm32"))]
-use helix_core::tree_sitter::Tree;
 use image::codecs::{png::PngDecoder, webp::WebPDecoder};
 #[cfg(not(target_arch = "wasm32"))]
 use indexmap::IndexSet;
@@ -66,13 +64,9 @@ pub mod parser;
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct MyEguiApp {
-    pub slide_show: Arc<RwLock<SlideShow>>,
+    pub slide_show: Arc<ArcSwap<RwLock<SlideShow>>>,
     pub next: Arc<AtomicBool>,
     pub restart_timer: Arc<AtomicBool>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub slide_show_file: Arc<Mutex<Rope>>,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub tree_info: Arc<Mutex<Option<Tree>>>,
     #[cfg(not(target_arch = "wasm32"))]
     pub file_name: Arc<str>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -1355,7 +1349,7 @@ impl MyEguiApp {
                         .into_iter()
                         .for_each(|d| fonts.load_font_data(d));
 
-                    *fetch_ss.write() = slide_show.1;
+                    fetch_ss.store(Arc::new(RwLock::new(slide_show.1)));
                     fetch_restart_timer.store(true, Ordering::Relaxed);
                     fetch_resolved.store(None);
                 });
@@ -1436,7 +1430,7 @@ impl MyEguiApp {
                         }
 
                         fetch_ctx.set_fonts(font_defs);
-                        *fetch_ss.write() = slide_show.1;
+                        fetch_ss.store(Arc::new(RwLock::new(slide_show.1)));
                         fetch_restart_timer.store(true, Ordering::Relaxed);
                         fetch_resolved.store(None);
                     });
@@ -1464,8 +1458,6 @@ impl MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))]
         let slide_show_file = Arc::new(Mutex::new(Rope::new()));
         let new_file = Arc::new(AtomicBool::new(true));
-        #[cfg(not(target_arch = "wasm32"))]
-        let tree_info: Arc<Mutex<Option<Tree>>> = Arc::new(Mutex::new(None));
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut helix_cell = None;
@@ -1514,7 +1506,6 @@ impl MyEguiApp {
                         viewboxes,
                         objects,
                     };
-                    let mut tree_info = tree_info.lock();
                     let file = Rope::from_reader(
                         std::fs::File::open(presentation.as_ref().unwrap()).unwrap(),
                     )
@@ -1552,7 +1543,6 @@ impl MyEguiApp {
                     };
                     match ast {
                         Ok(_) => {
-                            *tree_info = Some(tree);
                             *slide_show_file.lock() = file;
                             (slide_show, SlideShowSource::Loaded)
                         }
@@ -1580,14 +1570,10 @@ impl MyEguiApp {
 
         (
             Self {
-                slide_show: Arc::new(RwLock::new(slide_show.0)),
+                slide_show: Arc::new(ArcSwap::new(Arc::new(RwLock::new(slide_show.0)))),
                 next: Arc::new(false.into()),
                 export: false,
                 restart_timer: Arc::new(false.into()),
-                #[cfg(not(target_arch = "wasm32"))]
-                slide_show_file,
-                #[cfg(not(target_arch = "wasm32"))]
-                tree_info,
                 #[cfg(not(target_arch = "wasm32"))]
                 file_name: presentation.unwrap_or_default().into(),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1640,7 +1626,8 @@ impl MyEguiApp {
             return;
         }
         let slide_show_cloned = Arc::clone(&self.slide_show);
-        let slide_show = slide_show_cloned.read();
+        let slide_show = slide_show_cloned.load();
+        let slide_show = slide_show.write();
         let mut index = self.index.load(Ordering::Relaxed);
         if index >= slide_show.slide_show.len() {
             index = slide_show.slide_show.len() - 1;
@@ -2026,7 +2013,7 @@ impl MyEguiApp {
                     speaker_view.ui(
                         ctx,
                         index.load(Ordering::Relaxed),
-                        &*slide_show.read(),
+                        slide_show.load().read().deref(),
                         speaker_notes.clone(),
                         Arc::clone(&font_system),
                         Arc::clone(&resolved_images),

@@ -1,6 +1,6 @@
 use helix_core::{
     syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor},
+    tree_sitter::{Point, Query, QueryCursor, Tree},
     Rope,
 };
 use lsp_types::{
@@ -8,29 +8,23 @@ use lsp_types::{
     ReferenceParams, SymbolKind, Url,
 };
 
-use crate::{
-    parser::{GrzCursor, NodeKind},
-    MyEguiApp,
-};
+use crate::parser::{GrzCursor, NodeKind};
 
 use super::formatter::char_range_from_byte_range;
 
 pub fn references(
-    app: &MyEguiApp,
     rename_query: &Query,
     current_rope: &Rope,
     references: ReferenceParams,
-    currently_open: &Url,
     query_cursor: &mut QueryCursor,
+    tree: &Tree,
 ) -> Option<Vec<Location>> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
     let point = Point {
         row: references.text_document_position.position.line as usize,
         column: references.text_document_position.position.character as usize,
     };
 
-    let reference_node = tree_info
+    let reference_node = tree
         .root_node()
         .descendant_for_point_range(point, point)
         .unwrap();
@@ -43,7 +37,7 @@ pub fn references(
     );
     let iter = query_cursor.matches(
         rename_query,
-        tree_info.root_node(),
+        tree.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 
@@ -55,7 +49,7 @@ pub fn references(
         {
             let range = query_match.captures[0].node.range();
             locations.push(Location {
-                uri: currently_open.clone(),
+                uri: references.text_document_position.text_document.uri.clone(),
                 range: char_range_from_byte_range(range, current_rope).ok()?,
             });
         }
@@ -65,15 +59,13 @@ pub fn references(
 }
 
 pub fn goto_declaration(
-    app: &MyEguiApp,
-    goto_declaration: GotoDefinitionParams,
     top_level_search_query: &Query,
     current_rope: &Rope,
     currently_open: Url,
+    goto_declaration: GotoDefinitionParams,
     query_cursor: &mut QueryCursor,
+    tree: &Tree,
 ) -> Option<GotoDefinitionResponse> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
     let point = Point {
         row: goto_declaration.text_document_position_params.position.line as usize,
         column: goto_declaration
@@ -82,7 +74,7 @@ pub fn goto_declaration(
             .character as usize,
     };
 
-    let usage_node = tree_info
+    let usage_node = tree
         .root_node()
         .descendant_for_point_range(point, point)
         .unwrap();
@@ -95,7 +87,7 @@ pub fn goto_declaration(
     );
     let iter = query_cursor.matches(
         top_level_search_query,
-        tree_info.root_node(),
+        tree.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 
@@ -115,11 +107,8 @@ pub fn goto_declaration(
 }
 
 #[allow(deprecated)]
-pub fn document_symbols(app: &MyEguiApp, current_rope: &Rope) -> Option<DocumentSymbolResponse> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
-    let mut tree_cursor = GrzCursor::new(tree_info, current_rope);
+pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymbolResponse> {
+    let mut tree_cursor = GrzCursor::new(tree, current_rope);
     let mut symbols = Vec::new();
 
     let _ = tree_cursor.goto_first_child();

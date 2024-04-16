@@ -2,17 +2,16 @@ use std::{borrow::Cow, collections::HashMap, hash::BuildHasherDefault};
 
 use helix_core::{
     syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor},
+    tree_sitter::{Point, Query, QueryCursor, Tree},
     Rope, RopeSlice,
 };
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel};
 
-use crate::{parser::NodeKind, MyEguiApp};
+use crate::parser::NodeKind;
 
 use super::{formatter::char_pos_from_byte_pos, you_can};
 
 pub fn inlay_hints(
-    app: &MyEguiApp,
     inlay_edge_query: &Query,
     inlay_edge_map: &mut HashMap<
         RopeSlice<'static>,
@@ -25,12 +24,10 @@ pub fn inlay_hints(
         BuildHasherDefault<ahash::AHasher>,
     >,
     current_rope: &Rope,
+    tree: &Tree,
     last_inlay_len: usize,
     query_cursor: &mut QueryCursor,
 ) -> Vec<InlayHint> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
     let mut hints = Vec::with_capacity(last_inlay_len);
 
     query_cursor.set_point_range(
@@ -44,7 +41,7 @@ pub fn inlay_hints(
 
     let edge_iter = query_cursor.matches(
         inlay_edge_query,
-        tree_info.root_node(),
+        tree.root_node(),
         RopeProvider(current_rope.slice(..)),
     );
 

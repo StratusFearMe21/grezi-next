@@ -1,11 +1,10 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    hash::Hash,
-    hash::{BuildHasher, BuildHasherDefault, Hasher},
+    hash::{BuildHasher, BuildHasherDefault, Hash, Hasher},
+    ops::Deref,
     path::Path,
-    process::Stdio,
-    sync::atomic::Ordering,
+    sync::{atomic::Ordering, Arc},
 };
 
 pub mod completion;
@@ -18,8 +17,9 @@ pub mod you_can;
 
 use crate::{
     parser::{viewboxes::ViewboxIn, AstObject, NodeKind, PointFromRange},
-    MyEguiApp,
+    MyEguiApp, SlideShow,
 };
+use eframe::egui::mutex::RwLock;
 use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Point, Query, QueryCursor, Tree};
@@ -28,8 +28,8 @@ use indexmap::IndexSet;
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
     notification::{
-        DidChangeTextDocument, DidOpenTextDocument, DidSaveTextDocument, Notification,
-        PublishDiagnostics, ShowMessage,
+        DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
+        Notification, PublishDiagnostics, ShowMessage,
     },
     request::{
         ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, ExecuteCommand, Formatting,
@@ -52,6 +52,14 @@ use lsp_types::{
 };
 
 use self::formatter::char_range_from_byte_range;
+
+struct LspFile {
+    rope: Rope,
+    tree: Tree,
+    error_free_tree: Tree,
+    version: i32,
+    slideshow: Arc<RwLock<crate::SlideShow>>,
+}
 
 pub fn start_lsp(
     mut app: crate::MyEguiApp,
@@ -117,7 +125,6 @@ pub fn start_lsp(
         Query::new(&tree_sitter_grz_lang, include_str!("queries/strings.scm")).unwrap();
 
     let mut hunspell = None;
-    let mut error_free_tree: Option<Tree> = None;
     let fonts: IndexSet<String, ahash::RandomState> = app
         .font_system
         .lock()
@@ -141,11 +148,7 @@ pub fn start_lsp(
             },
         )),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec![
-                "tree_to_dot".to_string(),
-                "full_reparse".to_string(),
-                "spell_check".to_string(),
-            ],
+            commands: vec!["full_reparse".to_string(), "spell_check".to_string()],
             ..Default::default()
         }),
         rename_provider: Some(OneOf::Right(RenameOptions {
@@ -227,8 +230,6 @@ pub fn start_lsp(
         (panic_hook)(panic_info)
     }));
 
-    let mut current_rope = helix_core::ropey::Rope::new();
-    let mut current_document_version = 0;
     let mut inlay_edge_map: HashMap<
         RopeSlice<'static>,
         RopeSlice<'static>,
@@ -240,7 +241,7 @@ pub fn start_lsp(
         BuildHasherDefault<ahash::AHasher>,
     > = HashMap::default();
     let mut last_inlay_len = 16;
-    let mut currently_open = Url::parse("file:///dev/null").unwrap();
+    let mut current_state: HashMap<Url, LspFile> = HashMap::new();
     for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {
@@ -250,11 +251,12 @@ pub fn start_lsp(
 
                 match req.method.as_str() {
                     RangeFormatting::METHOD => {
-                        if let Ok((rqid, _)) =
+                        if let Ok((rqid, params)) =
                             req.extract::<DocumentRangeFormattingParams>(RangeFormatting::METHOD)
                         {
+                            let doc = current_state.get(&params.text_document.uri).unwrap();
                             let edits: Option<Vec<TextEdit>> =
-                                formatter::format_code(&app, &current_rope).ok();
+                                formatter::format_code(&doc.rope, &doc.tree).ok();
 
                             connection
                                 .sender
@@ -263,11 +265,12 @@ pub fn start_lsp(
                         }
                     }
                     Formatting::METHOD => {
-                        if let Ok((rqid, _)) =
+                        if let Ok((rqid, params)) =
                             req.extract::<DocumentFormattingParams>(Formatting::METHOD)
                         {
+                            let doc = current_state.get(&params.text_document.uri).unwrap();
                             let edits: Option<Vec<TextEdit>> =
-                                formatter::format_code(&app, &current_rope).ok();
+                                formatter::format_code(&doc.rope, &doc.tree).ok();
 
                             connection
                                 .sender
@@ -279,25 +282,27 @@ pub fn start_lsp(
                         if let Ok((rqid, pos)) =
                             req.extract::<TextDocumentPositionParams>(PrepareRenameRequest::METHOD)
                         {
+                            let doc = current_state.get(&pos.text_document.uri).unwrap();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    rename::prepare_rename(&app, pos, &current_rope),
+                                    rename::prepare_rename(pos, &doc.rope, &doc.tree),
                                 )))
                                 .unwrap();
                         }
                     }
                     InlayHintRequest::METHOD => {
-                        if let Ok((rqid, _)) =
+                        if let Ok((rqid, params)) =
                             req.extract::<InlayHintParams>(InlayHintRequest::METHOD)
                         {
+                            let doc = current_state.get(&params.text_document.uri).unwrap();
                             let hints = inlay_hints::inlay_hints(
-                                &app,
                                 &inlay_edge_query,
                                 &mut inlay_edge_map,
                                 &mut inlay_vb_map,
-                                &current_rope,
+                                &doc.rope,
+                                &doc.tree,
                                 last_inlay_len,
                                 &mut query_cursor,
                             );
@@ -309,18 +314,19 @@ pub fn start_lsp(
                         }
                     }
                     SemanticTokensFullRequest::METHOD => {
-                        if let Ok((rqid, _)) =
+                        if let Ok((rqid, params)) =
                             req.extract::<SemanticTokensParams>(SemanticTokensFullRequest::METHOD)
                         {
+                            let doc = current_state.get(&params.text_document.uri).unwrap();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
                                     Some(semantic_tokens::semantic_tokens(
-                                        &app,
                                         &semantic_token_query,
-                                        &current_rope,
+                                        &doc.rope,
                                         &mut query_cursor,
+                                        &doc.tree,
                                     )),
                                 )))
                                 .unwrap();
@@ -330,6 +336,9 @@ pub fn start_lsp(
                         if let Ok((rqid, rename_params)) =
                             req.extract::<RenameParams>(Rename::METHOD)
                         {
+                            let doc = current_state
+                                .get(&rename_params.text_document_position.text_document.uri)
+                                .unwrap();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
@@ -339,15 +348,19 @@ pub fn start_lsp(
                                             TextDocumentEdit {
                                                 text_document:
                                                     OptionalVersionedTextDocumentIdentifier {
-                                                        uri: currently_open.clone(),
-                                                        version: Some(current_document_version),
+                                                        uri: rename_params
+                                                            .text_document_position
+                                                            .text_document
+                                                            .uri
+                                                            .clone(),
+                                                        version: Some(doc.version),
                                                     },
                                                 edits: rename::rename(
-                                                    &app,
                                                     rename_params,
-                                                    &current_rope,
+                                                    &doc.rope,
                                                     &rename_query,
                                                     &mut query_cursor,
+                                                    &doc.tree,
                                                 ),
                                             },
                                         ])),
@@ -359,14 +372,15 @@ pub fn start_lsp(
                     }
                     DocumentSymbolRequest::METHOD => {
                         #[allow(deprecated)]
-                        if let Ok((rqid, _)) =
+                        if let Ok((rqid, params)) =
                             req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
                         {
+                            let doc = current_state.get(&params.text_document.uri).unwrap();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    symbols::document_symbols(&app, &current_rope),
+                                    symbols::document_symbols(&doc.rope, &doc.tree),
                                 )))
                                 .unwrap();
                         }
@@ -375,15 +389,17 @@ pub fn start_lsp(
                         if let Ok((rqid, completion)) =
                             req.extract::<CompletionParams>(Completion::METHOD)
                         {
-                            let tree_info = app.tree_info.lock();
-                            let tree_info = tree_info.as_ref().unwrap();
+                            let doc = current_state
+                                .get(&completion.text_document_position.text_document.uri)
+                                .unwrap();
                             let completion_point = Point {
                                 row: completion.text_document_position.position.line as usize,
                                 column: (completion.text_document_position.position.character
                                     as usize)
                                     .saturating_sub(1),
                             };
-                            let mut completion_node = tree_info
+                            let mut completion_node = doc
+                                .tree
                                 .root_node()
                                 .descendant_for_point_range(completion_point, completion_point)
                                 .unwrap();
@@ -412,8 +428,8 @@ pub fn start_lsp(
                                                         completion::complete_viewbox(
                                                             &mut query_cursor,
                                                             &viewbox_name_query,
-                                                            tree_info,
-                                                            &current_rope,
+                                                            &doc.tree,
+                                                            &doc.rope,
                                                             completion_point,
                                                             completion_node,
                                                             completion,
@@ -431,8 +447,8 @@ pub fn start_lsp(
                                                         completion::complete_object(
                                                             &mut query_cursor,
                                                             &object_name_query,
-                                                            tree_info,
-                                                            &current_rope,
+                                                            &doc.tree,
+                                                            &doc.rope,
                                                             completion_point,
                                                             completion_node,
                                                             completion,
@@ -450,7 +466,7 @@ pub fn start_lsp(
                                                     rqid,
                                                     Some(CompletionResponse::Array(
                                                         completion::complete_object_type(
-                                                            &current_rope,
+                                                            &doc.rope,
                                                             completion_node,
                                                             completion,
                                                         ),
@@ -465,7 +481,7 @@ pub fn start_lsp(
                                                     rqid,
                                                     Some(CompletionResponse::Array(
                                                         completion::complete_object_params(
-                                                            &current_rope,
+                                                            &doc.rope,
                                                             completion_node,
                                                             completion,
                                                         ),
@@ -480,7 +496,7 @@ pub fn start_lsp(
                                                     rqid,
                                                     Some(CompletionResponse::Array(
                                                         completion::complete_top_level_object(
-                                                            &current_rope,
+                                                            &doc.rope,
                                                             parent_object,
                                                             completion_node,
                                                             completion,
@@ -508,8 +524,8 @@ pub fn start_lsp(
                                             completion::complete_source_file(
                                                 completion,
                                                 &slide_complete_query,
-                                                tree_info,
-                                                &current_rope,
+                                                &doc.tree,
+                                                &doc.rope,
                                                 &mut query_cursor,
                                             )
                                             .ok(),
@@ -525,7 +541,7 @@ pub fn start_lsp(
                                             && parent
                                                 .child(0)
                                                 .map(|c| {
-                                                    &current_rope.byte_slice(c.byte_range())
+                                                    &doc.rope.byte_slice(c.byte_range())
                                                         == "font_family"
                                                 })
                                                 .unwrap_or_default()
@@ -556,7 +572,7 @@ pub fn start_lsp(
                                                                 replace:
                                                                     char_range_from_byte_range(
                                                                         completion_range,
-                                                                        &current_rope,
+                                                                        &doc.rope,
                                                                     )
                                                                     .unwrap(),
                                                             },
@@ -584,17 +600,24 @@ pub fn start_lsp(
                         if let Ok((rqid, goto_params)) =
                             req.extract::<GotoDefinitionParams>(GotoDeclaration::METHOD)
                         {
+                            let doc = current_state
+                                .get(&goto_params.text_document_position_params.text_document.uri)
+                                .unwrap();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
                                     symbols::goto_declaration(
-                                        &app,
-                                        goto_params,
                                         &top_level_search_query,
-                                        &current_rope,
-                                        currently_open.clone(),
+                                        &doc.rope,
+                                        goto_params
+                                            .text_document_position_params
+                                            .text_document
+                                            .uri
+                                            .clone(),
+                                        goto_params,
                                         &mut query_cursor,
+                                        &doc.tree,
                                     ),
                                 )))
                                 .unwrap();
@@ -605,93 +628,63 @@ pub fn start_lsp(
                             req.extract::<ExecuteCommandParams>(ExecuteCommand::METHOD)
                         {
                             match command.command.as_str() {
-                                "treerestaurant_to_dot" => {
-                                    #[cfg(unix)]
-                                    if let Ok(process) = std::process::Command::new("dot")
-                                        .stdout(std::fs::File::create("out.dot").unwrap())
-                                        .stdin(Stdio::piped())
-                                        .spawn()
-                                    {
-                                        let tree_info = app.tree_info.lock();
-                                        let tree_info = tree_info.as_ref().unwrap();
-
-                                        tree_info.print_dot_graph(&process.stdin.unwrap());
-
-                                        connection
-                                            .sender
-                                            .send(Message::Response(Response::new_ok(
-                                                rqid,
-                                                None::<serde_json::Value>,
-                                            )))
-                                            .unwrap();
-                                    } else {
-                                        connection
-                                            .sender
-                                            .send(Message::Response(Response::new_err(
-                                                rqid,
-                                                500,
-                                                "graphviz is not installed".to_string(),
-                                            )))
-                                            .unwrap();
-                                    }
-                                }
                                 "full_reparse" => {
-                                    let mut slide_show = app.slide_show.write();
-                                    current_rope = Rope::from_reader(
-                                        std::fs::File::open(currently_open.path()).unwrap(),
-                                    )
-                                    .unwrap();
-                                    let mut tree_info = app.tree_info.lock();
-                                    let tree = parser
-                                        .parse_with(
-                                            &mut |byte, _| {
-                                                if byte <= current_rope.len_bytes() {
-                                                    let (chunk, start_byte, _, _) =
-                                                        current_rope.chunk_at_byte(byte);
-                                                    &chunk.as_bytes()[byte - start_byte..]
-                                                } else {
-                                                    // out of range
-                                                    &[]
-                                                }
-                                            },
-                                            None,
+                                    for (uri, doc) in current_state.iter_mut() {
+                                        let mut slide_show = doc.slideshow.write();
+                                        doc.rope = Rope::from_reader(
+                                            std::fs::File::open(uri.path()).unwrap(),
                                         )
                                         .unwrap();
-                                    let ast = crate::parser::parse_file(
-                                        &tree,
-                                        None,
-                                        &current_rope,
-                                        &mut app.helix_cell,
-                                        &mut slide_show,
-                                        &lsp_egui_ctx,
-                                        Path::new(currently_open.path()),
-                                    );
-                                    *tree_info = Some(tree.clone());
-                                    *app.slide_show_file.lock() = current_rope.clone();
-                                    match ast {
-                                        Ok(_) => {
-                                            connection
-                                                .sender
-                                                .send(Message::Notification(
-                                                    lsp_server::Notification::new(
-                                                        PublishDiagnostics::METHOD.to_string(),
-                                                        PublishDiagnosticsParams {
-                                                            uri: currently_open.clone(),
-                                                            diagnostics: vec![],
-                                                            version: Some(current_document_version),
-                                                        },
-                                                    ),
-                                                ))
-                                                .unwrap();
-                                            error_free_tree = Some(tree);
-                                        }
-                                        Err(errors) => {
-                                            connection
+
+                                        let tree = parser
+                                            .parse_with(
+                                                &mut |byte, _| {
+                                                    if byte <= doc.rope.len_bytes() {
+                                                        let (chunk, start_byte, _, _) =
+                                                            doc.rope.chunk_at_byte(byte);
+                                                        &chunk.as_bytes()[byte - start_byte..]
+                                                    } else {
+                                                        // out of range
+                                                        &[]
+                                                    }
+                                                },
+                                                None,
+                                            )
+                                            .unwrap();
+                                        let ast = crate::parser::parse_file(
+                                            &tree,
+                                            None,
+                                            &doc.rope,
+                                            &mut app.helix_cell,
+                                            &mut slide_show,
+                                            &lsp_egui_ctx,
+                                            Path::new(uri.path()),
+                                        );
+                                        doc.tree = tree.clone();
+                                        match ast {
+                                            Ok(_) => {
+                                                connection
+                                                    .sender
+                                                    .send(Message::Notification(
+                                                        lsp_server::Notification::new(
+                                                            PublishDiagnostics::METHOD.to_string(),
+                                                            PublishDiagnosticsParams {
+                                                                uri: uri.clone(),
+                                                                diagnostics: vec![],
+                                                                version: Some(doc.version),
+                                                            },
+                                                        ),
+                                                    ))
+                                                    .unwrap();
+                                                doc.error_free_tree = tree;
+                                            }
+                                            Err(errors) => {
+                                                connection
                                             .sender
                                             .send(Message::Notification(lsp_server::Notification::new(
                                                 PublishDiagnostics::METHOD.to_string(),
                                                 PublishDiagnosticsParams {
-                                                    uri: currently_open.clone(),
+                                                    uri: uri.clone(),
                                                     diagnostics: errors
                                                         .into_iter()
                                                         .map(|error| {
@@ -700,16 +693,17 @@ pub fn start_lsp(
                                                             diagnostic
                                                         })
                                                         .collect(),
-                                                    version: Some(current_document_version),
+                                                    version: Some(doc.version),
                                                 },
                                             )))
                                             .unwrap();
+                                            }
                                         }
-                                    }
 
-                                    app.resolved.store(None);
-                                    app.restart_timer.store(true, Ordering::Relaxed);
-                                    lsp_egui_ctx.request_repaint();
+                                        app.resolved.store(None);
+                                        app.restart_timer.store(true, Ordering::Relaxed);
+                                        lsp_egui_ctx.request_repaint();
+                                    }
                                 }
                                 "spell_check" => {
                                     let hunspell = hunspell.get_or_insert_with(|| {
@@ -724,57 +718,61 @@ pub fn start_lsp(
                                             column: usize::MAX,
                                         },
                                     );
-                                    let tree_info = app.tree_info.lock();
-                                    let iter = query_cursor.matches(
-                                        &strings_query,
-                                        tree_info.as_ref().unwrap().root_node(),
-                                        RopeProvider(current_rope.slice(..)),
-                                    );
 
-                                    let mut warnings = Vec::new();
+                                    for (uri, doc) in current_state.iter() {
+                                        let iter = query_cursor.matches(
+                                            &strings_query,
+                                            doc.tree.root_node(),
+                                            RopeProvider(doc.rope.slice(..)),
+                                        );
 
-                                    for query_match in iter {
-                                        let source: Cow<'_, str> = current_rope
-                                            .byte_slice(query_match.captures[0].node.byte_range())
-                                            .into();
-                                        let parser = jotdown::Parser::new(source.as_ref());
+                                        let mut warnings = Vec::new();
 
-                                        for event in parser {
-                                            match event {
-                                                jotdown::Event::Str(t) => {
-                                                    for text in t.split_whitespace() {
-                                                        let text = text.trim_matches(|c: char| {
-                                                            c.is_ascii_punctuation()
-                                                        });
-                                                        if hunspell.check(text)
-                                                            == CheckResult::MissingInDictionary
-                                                        {
-                                                            warnings.push(
+                                        for query_match in iter {
+                                            let source: Cow<'_, str> = doc
+                                                .rope
+                                                .byte_slice(
+                                                    query_match.captures[0].node.byte_range(),
+                                                )
+                                                .into();
+                                            let parser = jotdown::Parser::new(source.as_ref());
+
+                                            for event in parser {
+                                                match event {
+                                                    jotdown::Event::Str(t) => {
+                                                        for text in t.split_whitespace() {
+                                                            let text =
+                                                                text.trim_matches(|c: char| {
+                                                                    c.is_ascii_punctuation()
+                                                                });
+                                                            if hunspell.check(text)
+                                                                == CheckResult::MissingInDictionary
+                                                            {
+                                                                warnings.push(
                                                                 super::parser::Error::SpellCheck(
                                                                     PointFromRange::new(
                                                                         query_match.captures[0]
                                                                             .node
                                                                             .range(),
-                                                                        &current_rope,
+                                                                        &doc.rope,
                                                                     ),
                                                                     hunspell.suggest(text),
                                                                 ),
                                                             );
+                                                            }
                                                         }
                                                     }
+                                                    _ => {}
                                                 }
-                                                _ => {}
                                             }
                                         }
-                                    }
-
-                                    if !warnings.is_empty() {
-                                        connection
+                                        if !warnings.is_empty() {
+                                            connection
                                         .sender
                                         .send(Message::Notification(lsp_server::Notification::new(
                                             PublishDiagnostics::METHOD.to_string(),
                                             PublishDiagnosticsParams {
-                                                uri: currently_open.clone(),
+                                                uri: uri.clone(),
                                                 diagnostics: warnings
                                                     .into_iter()
                                                     .map(|error| {
@@ -783,10 +781,11 @@ pub fn start_lsp(
                                                         diagnostic
                                                     })
                                                     .collect(),
-                                                version: Some(current_document_version),
+                                                version: Some(doc.version),
                                             },
                                         )))
                                         .unwrap();
+                                        }
                                     }
 
                                     connection
@@ -813,17 +812,19 @@ pub fn start_lsp(
                         if let Ok((rqid, reference_params)) =
                             req.extract::<ReferenceParams>(References::METHOD)
                         {
+                            let doc = current_state
+                                .get(&reference_params.text_document_position.text_document.uri)
+                                .unwrap();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
                                     symbols::references(
-                                        &app,
                                         &rename_query,
-                                        &current_rope,
+                                        &doc.rope,
                                         reference_params,
-                                        &currently_open,
                                         &mut query_cursor,
+                                        &doc.tree,
                                     ),
                                 )))
                                 .unwrap();
@@ -840,12 +841,12 @@ pub fn start_lsp(
                     DidOpenTextDocument::METHOD => {
                         let doc: lsp_types::DidOpenTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
-                        currently_open = doc.text_document.uri;
-                        let mut slide_show = app.slide_show.write();
-                        current_rope = helix_core::ropey::Rope::from_str(&doc.text_document.text);
-                        if current_rope.len_lines() < 3 {
+                        let mut slide_show = SlideShow::default();
+                        let mut rope = helix_core::ropey::Rope::from_str(&doc.text_document.text);
+                        let mut version = 0;
+                        if rope.len_lines() < 3 {
                             const HELLO_WORLD: &str = include_str!("hello_world.grz");
-                            current_rope.insert(0, HELLO_WORLD);
+                            rope.insert(0, HELLO_WORLD);
                             connection
                                 .sender
                                 .send(Message::Request(lsp_server::Request::new(
@@ -871,8 +872,8 @@ pub fn start_lsp(
                                                     })],
                                                     text_document:
                                                         OptionalVersionedTextDocumentIdentifier {
-                                                            uri: currently_open.clone(),
-                                                            version: Some(current_document_version),
+                                                            uri: doc.text_document.uri.clone(),
+                                                            version: Some(version),
                                                         },
                                                 },
                                             ])),
@@ -881,15 +882,13 @@ pub fn start_lsp(
                                     },
                                 )))
                                 .unwrap();
-                            current_document_version += 1;
+                            version += 1;
                         }
-                        let mut tree_info = app.tree_info.lock();
                         let tree = parser
                             .parse_with(
                                 &mut |byte, _| {
-                                    if byte <= current_rope.len_bytes() {
-                                        let (chunk, start_byte, _, _) =
-                                            current_rope.chunk_at_byte(byte);
+                                    if byte <= rope.len_bytes() {
+                                        let (chunk, start_byte, _, _) = rope.chunk_at_byte(byte);
                                         &chunk.as_bytes()[byte - start_byte..]
                                     } else {
                                         // out of range
@@ -902,14 +901,13 @@ pub fn start_lsp(
                         let ast = crate::parser::parse_file(
                             &tree,
                             None,
-                            &current_rope,
+                            &rope,
                             &mut app.helix_cell,
                             &mut slide_show,
                             &lsp_egui_ctx,
-                            Path::new(currently_open.path()),
+                            Path::new(doc.text_document.uri.path()),
                         );
-                        *tree_info = Some(tree.clone());
-                        *app.slide_show_file.lock() = current_rope.clone();
+                        let error_free_tree = tree.clone();
                         match ast {
                             Ok(_) => {
                                 connection
@@ -917,14 +915,13 @@ pub fn start_lsp(
                                     .send(Message::Notification(lsp_server::Notification::new(
                                         PublishDiagnostics::METHOD.to_string(),
                                         PublishDiagnosticsParams {
-                                            uri: currently_open.clone(),
+                                            uri: doc.text_document.uri.clone(),
                                             diagnostics: vec![],
-                                            version: Some(current_document_version),
+                                            version: Some(version),
                                         },
                                     )))
                                     .unwrap();
                                 current_thread.unpark();
-                                error_free_tree = Some(tree);
                             }
                             Err(errors) => {
                                 connection
@@ -932,7 +929,7 @@ pub fn start_lsp(
                                     .send(Message::Notification(lsp_server::Notification::new(
                                         PublishDiagnostics::METHOD.to_string(),
                                         PublishDiagnosticsParams {
-                                            uri: currently_open.clone(),
+                                            uri: doc.text_document.uri.clone(),
                                             diagnostics: errors
                                                 .into_iter()
                                                 .map(|error| {
@@ -941,24 +938,44 @@ pub fn start_lsp(
                                                     diagnostic
                                                 })
                                                 .collect(),
-                                            version: Some(current_document_version),
+                                            version: Some(version),
                                         },
                                     )))
                                     .unwrap();
                             }
                         }
 
+                        let slideshow = Arc::new(RwLock::new(slide_show));
+
+                        current_state.insert(
+                            doc.text_document.uri,
+                            LspFile {
+                                rope,
+                                tree,
+                                error_free_tree,
+                                version,
+                                slideshow: Arc::clone(&slideshow),
+                            },
+                        );
+
+                        app.slide_show.store(slideshow);
                         app.resolved.store(None);
+                        lsp_egui_ctx.request_repaint();
+                    }
+                    DidCloseTextDocument::METHOD => {
+                        let doc: lsp_types::DidCloseTextDocumentParams =
+                            serde_json::from_value(not.params).unwrap();
+
+                        current_state.remove(&doc.text_document.uri);
                     }
                     DidChangeTextDocument::METHOD => {
                         let changes: lsp_types::DidChangeTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
 
-                        if current_document_version < changes.text_document.version {
-                            current_document_version = changes.text_document.version;
+                        let doc = current_state.get_mut(&changes.text_document.uri).unwrap();
 
-                            let mut tree_info = app.tree_info.lock();
-                            let tree_info = tree_info.as_mut().unwrap();
+                        if doc.version < changes.text_document.version {
+                            doc.version = changes.text_document.version;
 
                             let changes_len = changes.content_changes.len();
 
@@ -974,20 +991,18 @@ pub fn start_lsp(
                                 };
 
                                 let transaction = helix_lsp::util::generate_transaction_from_edits(
-                                    &current_rope,
+                                    &doc.rope,
                                     vec![edit],
                                     helix_lsp::OffsetEncoding::Utf16,
                                 );
 
                                 let edits =
-                                    generate_edits(current_rope.slice(..), transaction.changes());
-                                if transaction.apply(&mut current_rope) {
-                                    let source = current_rope.slice(..);
+                                    generate_edits(doc.rope.slice(..), transaction.changes());
+                                if transaction.apply(&mut doc.rope) {
+                                    let source = doc.rope.slice(..);
                                     for edit in edits.iter().rev() {
-                                        tree_info.edit(edit);
-                                        if let Some(error_tree) = error_free_tree.as_mut() {
-                                            error_tree.edit(edit);
-                                        }
+                                        doc.tree.edit(edit);
+                                        doc.error_free_tree.edit(edit);
                                     }
 
                                     // unsafe { syntax.parser.set_cancellation_flag(cancellation_flag) };
@@ -1003,19 +1018,19 @@ pub fn start_lsp(
                                                     &[]
                                                 }
                                             },
-                                            Some(error_free_tree.as_ref().unwrap_or(&*tree_info)),
+                                            Some(&doc.error_free_tree),
                                         )
                                         .unwrap();
-                                    let mut slide_show = app.slide_show.write();
+                                    let mut slide_show = doc.slideshow.write();
 
                                     match super::parser::parse_file(
                                         &tree,
-                                        Some(error_free_tree.as_ref().unwrap_or(&*tree_info)),
-                                        &current_rope,
+                                        Some(&doc.error_free_tree),
+                                        &doc.rope,
                                         &mut app.helix_cell,
                                         &mut slide_show,
                                         &lsp_egui_ctx,
-                                        Path::new(currently_open.path()),
+                                        Path::new(changes.text_document.uri.path()),
                                     ) {
                                         Ok(_) => {
                                             connection
@@ -1024,14 +1039,15 @@ pub fn start_lsp(
                                                     lsp_server::Notification::new(
                                                         PublishDiagnostics::METHOD.to_string(),
                                                         PublishDiagnosticsParams {
-                                                            uri: currently_open.clone(),
+                                                            uri: changes.text_document.uri.clone(),
                                                             diagnostics: vec![],
-                                                            version: Some(current_document_version),
+                                                            version: Some(doc.version),
                                                         },
                                                     ),
                                                 ))
                                                 .unwrap();
                                             app.resolved.store(None);
+                                            app.slide_show.store(Arc::clone(&doc.slideshow));
                                             lsp_egui_ctx.request_repaint();
                                         }
                                         Err(errors) => {
@@ -1040,7 +1056,7 @@ pub fn start_lsp(
                                                     .send(Message::Notification(lsp_server::Notification::new(
                                                         PublishDiagnostics::METHOD.to_string(),
                                                         PublishDiagnosticsParams {
-                                                            uri: currently_open.clone(),
+                                                            uri: changes.text_document.uri.clone(),
                                                             diagnostics: errors
                                                                 .into_iter()
                                                                 .map(|error| {
@@ -1049,16 +1065,16 @@ pub fn start_lsp(
                                                                     diagnostic
                                                                 })
                                                                 .collect(),
-                                                            version: Some(current_document_version),
+                                                            version: Some(doc.version),
                                                         },
                                                     )))
                                                     .unwrap();
                                         }
                                     }
                                     if !tree.root_node().has_error() {
-                                        error_free_tree = Some(tree.clone());
+                                        doc.error_free_tree = tree.clone();
                                     }
-                                    *tree_info = tree;
+                                    doc.tree = tree;
                                 } else {
                                     panic!("Transaction could not be applied");
                                 }
@@ -1067,73 +1083,72 @@ pub fn start_lsp(
                             if changes_len == 1 {
                                 hover(
                                     &app,
-                                    &*tree_info,
+                                    &doc.tree,
                                     &mut query_cursor,
-                                    &current_rope,
+                                    &doc.rope,
                                     &slide_index_query,
                                     &vb_in_slide_query,
                                     &obj_in_slide_query,
                                     &lsp_egui_ctx,
                                     point,
+                                    doc.slideshow.read().deref(),
                                 );
                             }
                         }
                     }
                     DidSaveTextDocument::METHOD => {
-                        // let _: lsp_types::DidSaveTextDocumentParams =
-                        //    serde_json::from_value(not.params).unwrap();
-                        let mut tree_info = app.tree_info.lock();
-                        if let Some(info) = tree_info.as_mut() {
-                            let mut slide_show = app.slide_show.write();
+                        let saved_doc: lsp_types::DidSaveTextDocumentParams =
+                            serde_json::from_value(not.params).unwrap();
+                        let doc = current_state.get(&saved_doc.text_document.uri).unwrap();
+                        let mut slide_show = doc.slideshow.write();
 
-                            let ast = super::parser::parse_file(
-                                &*info,
-                                None,
-                                &current_rope,
-                                &mut app.helix_cell,
-                                &mut slide_show,
-                                &lsp_egui_ctx,
-                                Path::new(currently_open.path()),
-                            );
-                            match ast {
-                                Ok(_) => {
-                                    *app.slide_show_file.lock() = current_rope.clone();
-                                    connection
-                                        .sender
-                                        .send(Message::Notification(lsp_server::Notification::new(
-                                            PublishDiagnostics::METHOD.to_string(),
-                                            PublishDiagnosticsParams {
-                                                uri: currently_open.clone(),
-                                                diagnostics: vec![],
-                                                version: Some(current_document_version),
-                                            },
-                                        )))
-                                        .unwrap();
-                                    app.resolved.store(None);
-                                    app.next.store(true, Ordering::Relaxed);
-                                    app.restart_timer.store(true, Ordering::Relaxed);
-                                    current_thread.unpark();
-                                }
-                                Err(errors) => {
-                                    connection
-                                        .sender
-                                        .send(Message::Notification(lsp_server::Notification::new(
-                                            PublishDiagnostics::METHOD.to_string(),
-                                            PublishDiagnosticsParams {
-                                                uri: currently_open.clone(),
-                                                diagnostics: errors
-                                                    .into_iter()
-                                                    .map(|error| {
-                                                        let diagnostic: lsp_types::Diagnostic =
-                                                            error.into();
-                                                        diagnostic
-                                                    })
-                                                    .collect(),
-                                                version: Some(current_document_version),
-                                            },
-                                        )))
-                                        .unwrap();
-                                }
+                        let ast = super::parser::parse_file(
+                            &doc.tree,
+                            None,
+                            &doc.rope,
+                            &mut app.helix_cell,
+                            &mut slide_show,
+                            &lsp_egui_ctx,
+                            Path::new(saved_doc.text_document.uri.path()),
+                        );
+                        match ast {
+                            Ok(_) => {
+                                connection
+                                    .sender
+                                    .send(Message::Notification(lsp_server::Notification::new(
+                                        PublishDiagnostics::METHOD.to_string(),
+                                        PublishDiagnosticsParams {
+                                            uri: saved_doc.text_document.uri.clone(),
+                                            diagnostics: vec![],
+                                            version: Some(doc.version),
+                                        },
+                                    )))
+                                    .unwrap();
+                                app.resolved.store(None);
+                                app.slide_show.store(Arc::clone(&doc.slideshow));
+                                app.next.store(true, Ordering::Relaxed);
+                                app.restart_timer.store(true, Ordering::Relaxed);
+                                current_thread.unpark();
+                            }
+                            Err(errors) => {
+                                connection
+                                    .sender
+                                    .send(Message::Notification(lsp_server::Notification::new(
+                                        PublishDiagnostics::METHOD.to_string(),
+                                        PublishDiagnosticsParams {
+                                            uri: saved_doc.text_document.uri.clone(),
+                                            diagnostics: errors
+                                                .into_iter()
+                                                .map(|error| {
+                                                    let diagnostic: lsp_types::Diagnostic =
+                                                        error.into();
+                                                    diagnostic
+                                                })
+                                                .collect(),
+                                            version: Some(doc.version),
+                                        },
+                                    )))
+                                    .unwrap();
                             }
                         }
 
@@ -1159,6 +1174,7 @@ pub fn hover(
     obj_in_slide_query: &Query,
     lsp_egui_ctx: &eframe::egui::Context,
     point: Point,
+    slideshow: &SlideShow,
 ) -> Option<Hover> {
     let changed_point = tree_info
         .root_node()
@@ -1225,7 +1241,7 @@ pub fn hover(
                     let hashed_vb = hasher.hash_one(vb_name);
                     if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
                         let mut already_on_slide = false;
-                        match &app.slide_show.read().slide_show[app.index.load(Ordering::Relaxed)] {
+                        match &slideshow.slide_show[app.index.load(Ordering::Relaxed)] {
                             AstObject::Slide { objects, .. } => {
                                 already_on_slide = objects
                                     .iter()

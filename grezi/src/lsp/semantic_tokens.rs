@@ -1,22 +1,17 @@
 use helix_core::{
     syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor},
+    tree_sitter::{Point, Query, QueryCursor, Tree},
     Rope,
 };
 use lsp_types::{SemanticToken, SemanticTokens, SemanticTokensResult};
 
-use crate::MyEguiApp;
-
 pub fn semantic_tokens(
-    app: &MyEguiApp,
     semantic_token_query: &Query,
     current_rope: &Rope,
     query_cursor: &mut QueryCursor,
+    tree: &Tree,
 ) -> SemanticTokensResult {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
-    let start_node = tree_info.root_node();
+    let start_node = tree.root_node();
 
     query_cursor.set_point_range(
         Point { row: 0, column: 0 }..Point {
@@ -55,7 +50,7 @@ pub fn semantic_tokens(
                         range.start_point.column as u32
                     },
                     length: if line == range.start_point.row {
-                        if range.end_point.row - range.start_point.row > 0 {
+                        if (range.end_point.row - range.start_point.row) > 0 {
                             current_rope
                                 .line(line)
                                 .slice(range.start_point.column..)

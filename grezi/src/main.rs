@@ -106,8 +106,6 @@ pub struct Args {
     pub export: bool,
     #[clap(long)]
     pub lsp: bool,
-    #[clap(long)]
-    pub fmt: bool,
     #[clap(short, long)]
     pub output: Option<String>,
     #[clap(short, long, value_parser = RangeParser)]
@@ -150,36 +148,14 @@ fn main() -> miette::Result<()> {
     let mut app = MyEguiApp::new(args.lsp, args.presentation, Arc::clone(&font_system));
     let init_app = app.0.clone();
 
-    if args.fmt {
-        let mut file = app.0.slide_show_file.lock();
-        match grezi::lsp::formatter::format_code(&app.0, &file) {
-            Ok(edits) => {
-                let transaction = helix_lsp::util::generate_transaction_from_edits(
-                    &file,
-                    edits,
-                    helix_lsp::OffsetEncoding::Utf16,
-                );
-
-                if transaction.apply(&mut file) {
-                    println!("{}", *file);
-                } else {
-                    panic!("Transaction could not be applied");
-                }
-            }
-            Err(error) => {
-                eprintln!(
-                    "{:?}",
-                    grezi::parser::ErrWithSource {
-                        error,
-                        source_code: file.to_string()
-                    }
-                );
-            }
-        }
-        return Ok(());
-    } else if args.export {
+    if args.export {
         let output = args.output.unwrap_or_else(|| "out.slideshow".to_owned());
-        let used_fonts = app.0.slide_show.read().used_fonts(&mut font_system.lock());
+        let used_fonts = app
+            .0
+            .slide_show
+            .load()
+            .read()
+            .used_fonts(&mut font_system.lock());
         if output.ends_with("slideshow") {
             let mut font_system = font_system.lock();
             let mut fonts = IndexSet::new();
@@ -215,10 +191,9 @@ fn main() -> miette::Result<()> {
                         .into_diagnostic()
                         .with_context(|| format!("Error with creating {}", output))?,
                 ),
-                &(&fonts, &*app.0.slide_show.read()),
+                &(&fonts, app.0.slide_show.load().read().deref()),
             )
-            .into_diagnostic()
-            .with_context(|| format!("Error seriaizing {}", &*init_app.slide_show_file.lock()))?;
+            .into_diagnostic()?;
 
             return Ok(());
         }
@@ -242,7 +217,7 @@ fn main() -> miette::Result<()> {
             }
             .calc_size(size.0, Vec2::new(16.0, 9.0));
 
-            let len = init_app.slide_show.read().slide_show.len();
+            let len = init_app.slide_show.load().read().slide_show.len();
             let range = args.index.map(|r| r.0).unwrap_or(0..len);
             let mut path;
             let mut ctx = if output.ends_with("pdf") {

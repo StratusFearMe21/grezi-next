@@ -4,10 +4,7 @@ use helix_core::{
 };
 use lsp_types::{Position, TextEdit};
 
-use crate::{
-    parser::{Error, NodeKind, PointFromRange},
-    MyEguiApp,
-};
+use crate::parser::{Error, NodeKind, PointFromRange};
 
 pub fn char_range_from_byte_range(
     byte_range: helix_core::tree_sitter::Range,
@@ -37,11 +34,8 @@ pub fn char_pos_from_byte_pos(byte_pos: Point, current_rope: &Rope) -> Result<Po
     })
 }
 
-pub fn format_code(app: &MyEguiApp, current_rope: &Rope) -> Result<Vec<TextEdit>, Error> {
-    let tree_info = app.tree_info.lock();
-    let tree_info = tree_info.as_ref().unwrap();
-
-    let mut formatting_cursor = FormattingCursor::new(tree_info, current_rope);
+pub fn format_code(current_rope: &Rope, tree: &Tree) -> Result<Vec<TextEdit>, Error> {
+    let mut formatting_cursor = FormattingCursor::new(tree, current_rope);
 
     formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
 
