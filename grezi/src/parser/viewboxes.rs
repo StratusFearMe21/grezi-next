@@ -173,19 +173,6 @@ pub fn parse_viewbox_inner(
                     }
                 }
             }
-            NodeKind::Auto => {
-                tree_cursor.goto_next_sibling()?;
-                let direction: Cow<'_, str> =
-                    source.byte_slice(tree_cursor.node().byte_range()).into();
-                constraints.push(Constraint::Auto(
-                    Direction::from_str(direction.as_ref()).map_err(|_| {
-                        super::Error::InvalidParameter(PointFromRange::new(
-                            tree_cursor.node().range(),
-                            source,
-                        ))
-                    })?,
-                ));
-            }
             n => {
                 return Err(super::Error::BadNode(
                     PointFromRange::new(tree_cursor.node().range(), source),

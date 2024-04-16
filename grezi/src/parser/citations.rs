@@ -9,7 +9,12 @@ use crate::{
     SlideShow,
 };
 
-use super::{slides::SlideObj, viewboxes::ViewboxIn, GrzCursor};
+use super::{
+    objects::cosmic_jotdown::{JotdownItem, RichText},
+    slides::SlideObj,
+    viewboxes::ViewboxIn,
+    GrzCursor,
+};
 use num_enum::FromPrimitive;
 
 include!(concat!(env!("OUT_DIR"), "/kinds_ntbib.rs"));
@@ -65,7 +70,7 @@ pub fn parse_citations(
                                 "pre" => {
                                     pre = false;
                                     if !job.is_empty() {
-                                        job.push((
+                                        job.push(RichText(
                                             "\n".to_owned(),
                                             AttrsOwned::new({
                                                 let attrs = Attrs::new()
@@ -79,8 +84,7 @@ pub fn parse_citations(
                                                 } else {
                                                     attrs
                                                 }
-                                            })
-                                            .into(),
+                                            }),
                                         ));
                                         // height += 24.0 * 3.0;
                                     }
@@ -108,7 +112,7 @@ pub fn parse_citations(
                         && pre
                         && !in_header
                     {
-                        job.push((
+                        job.push(RichText(
                             file[tree_cursor.node().byte_range()].to_owned(),
                             AttrsOwned::new({
                                 let attrs = Attrs::new()
@@ -119,8 +123,7 @@ pub fn parse_citations(
                                 } else {
                                     attrs
                                 }
-                            })
-                            .into(),
+                            }),
                         ));
                     } else if in_header && header.is_empty() {
                         header = &file[tree_cursor.node().byte_range()];
@@ -171,10 +174,11 @@ pub fn parse_citations(
                     position: None,
                     viewbox: None,
                     object: super::objects::ObjectType::Text {
-                        job,
+                        job: vec![JotdownItem::new_default(job)],
                         font_size: 24.0,
                         line_height: Some(2.0),
                         align: None,
+                        spacing: super::objects::VerticalSpacing::Normal,
                     },
                 },
             );
@@ -184,18 +188,18 @@ pub fn parse_citations(
                     position: None,
                     viewbox: None,
                     object: super::objects::ObjectType::Text {
-                        job: vec![(
+                        job: vec![JotdownItem::new_default(vec![RichText(
                             header.to_string(),
                             AttrsOwned::new(
                                 Attrs::new()
                                     .family(Family::SansSerif)
                                     .color(Color::rgb(255, 255, 255)),
-                            )
-                            .into(),
-                        )],
+                            ),
+                        )])],
                         font_size: 48.0,
                         line_height: None,
                         align: None,
+                        spacing: super::objects::VerticalSpacing::Normal,
                     },
                 },
             );

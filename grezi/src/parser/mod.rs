@@ -504,8 +504,13 @@ pub fn parse_file(
                             on_screen
                                 .insert(obj.object, (index, obj.state == ObjectState::Exiting));
                             if let Some(object) = slide_show.objects.get_mut(&obj.object) {
-                                object.viewbox = Some(obj.locations[1].1);
-                                object.position = Some(obj.locations[1].0);
+                                if obj.state == ObjectState::Exiting {
+                                    object.viewbox = None;
+                                    object.position = None;
+                                } else {
+                                    object.viewbox = Some(obj.locations[1].1);
+                                    object.position = Some(obj.locations[1].0);
+                                }
                             }
                         }
                         color.0 = bg.0;

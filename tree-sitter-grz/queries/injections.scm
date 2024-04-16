@@ -1,7 +1,7 @@
 ((obj_param
   key: (identifier) @value_key
   value: (string_literal (_) @injection.content))
-  (#set! injection.language "markdown.inline")
+  (#set! injection.language "djot")
   (#eq? @value_key "value"))
 
 ((obj_param

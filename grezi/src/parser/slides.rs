@@ -2,6 +2,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     hash::{BuildHasher, BuildHasherDefault, Hasher},
+    ops::Bound,
 };
 
 use crate::layout::UnresolvedLayout;
@@ -154,6 +155,11 @@ pub fn parse_slide_object(
         ))
     })?;
     tree_cursor.goto_next_sibling()?;
+    let mut range = (Bound::Unbounded, Bound::Unbounded);
+    if tree_cursor.node().kind_id() == NodeKind::Range as u16 {
+        range = parse_range(tree_cursor, source)?;
+        tree_cursor.goto_next_sibling()?;
+    }
     let mut idx_range = None;
     let mut viewbox = if tree_cursor.node().kind_id() == NodeKind::SlideVb as u16 {
         let inline_vb_hash_range = tree_cursor.node().range();
@@ -681,4 +687,39 @@ fn parse_slide_function(
             source,
         ))),
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn parse_range(
+    tree_cursor: &mut GrzCursor<'_>,
+    source: &helix_core::ropey::Rope,
+) -> Result<(Bound<usize>, Bound<usize>), super::Error> {
+    tree_cursor.goto_first_child_raw()?;
+
+    let upper_bound: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+    let upper_bound: Bound<usize> = if upper_bound == ".." {
+        Bound::Unbounded
+    } else {
+        Bound::Included(upper_bound.parse().unwrap())
+    };
+
+    tree_cursor.goto_next_sibling_raw()?;
+
+    let range_type: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+
+    tree_cursor.goto_next_sibling_raw()?;
+
+    let lower_bound: Cow<'_, str> = source.byte_slice(tree_cursor.node().byte_range()).into();
+    let lower_bound: Bound<usize> = if lower_bound == ".." {
+        Bound::Unbounded
+    } else {
+        match range_type.as_ref() {
+            "..=" => Bound::Included(lower_bound.parse().unwrap()),
+            _ => Bound::Excluded(lower_bound.parse().unwrap()),
+        }
+    };
+
+    tree_cursor.goto_parent();
+
+    Ok((upper_bound, lower_bound))
 }

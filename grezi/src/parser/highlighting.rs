@@ -5,7 +5,7 @@ use std::{
 };
 
 use arc_swap::ArcSwap;
-use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Style, Weight};
+use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Metrics, Style, Weight};
 use helix_core::tree_sitter::Node;
 use helix_core::{
     ropey::{Rope, RopeBuilder},
@@ -17,7 +17,10 @@ use helix_core::{
 };
 use helix_view::theme::Modifier;
 
-use super::{objects::serde_suck::AttrsSerde, GrzCursor, NodeKind, PassThroughHasher};
+use super::{
+    objects::cosmic_jotdown::{JotdownItem, RichText},
+    GrzCursor, NodeKind, PassThroughHasher,
+};
 
 #[derive(Clone)]
 pub struct HelixCell {
@@ -38,7 +41,7 @@ pub fn highlight_text(
     helix_cell: &mut Option<HelixCell>,
     source: &Rope,
     hasher: &ahash::RandomState,
-) -> Result<Vec<(String, AttrsSerde)>, super::Error> {
+) -> Result<JotdownItem, super::Error> {
     let mut job = Vec::new();
     let helix = helix_cell.get_or_insert_with(|| {
         let mut theme_parent_dirs = vec![helix_loader::config_dir()];
@@ -146,7 +149,7 @@ pub fn highlight_text(
 
                 for line in slice.lines() {
                     if line.len_bytes() != 0 {
-                        job.push((
+                        job.push(RichText(
                             line.to_string(),
                             AttrsOwned::new({
                                 let mut attrs = font_id.color(Color::rgb(f_r, f_g, f_b));
@@ -157,13 +160,21 @@ pub fn highlight_text(
                                     attrs = attrs.style(Style::Italic);
                                 }
                                 attrs
-                            })
-                            .into(),
+                            }),
                         ));
                     }
                 }
             }
         }
     }
-    Ok(job)
+    Ok(JotdownItem {
+        indent: super::objects::cosmic_jotdown::Indent {
+            modifier: None,
+            indent: 0.0,
+        },
+        buffer: job,
+        metrics: Metrics::new(1.0, 1.0),
+        margin: 0.0,
+        url_map: None,
+    })
 }

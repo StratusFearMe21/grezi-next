@@ -737,11 +737,11 @@ pub fn start_lsp(
                                         let source: Cow<'_, str> = current_rope
                                             .byte_slice(query_match.captures[0].node.byte_range())
                                             .into();
-                                        let parser = pulldown_cmark::Parser::new(source.as_ref());
+                                        let parser = jotdown::Parser::new(source.as_ref());
 
                                         for event in parser {
                                             match event {
-                                                pulldown_cmark::Event::Text(t) => {
+                                                jotdown::Event::Str(t) => {
                                                     for text in t.split_whitespace() {
                                                         let text = text.trim_matches(|c: char| {
                                                             c.is_ascii_punctuation()

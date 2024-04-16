@@ -28,7 +28,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{fontdb::ID, Attrs, Buffer, FontSystem, Metrics},
+    glyphon::{fontdb::ID, FontSystem, Metrics},
     BufferWithTextArea, GlyphonRendererCallback,
 };
 // use frame_history::FrameHistory;
@@ -473,7 +473,7 @@ impl Resolved {
                 )),
             ]);
             match &obj.object {
-                ResolvedObject::Text(buffer, x_translation) => {
+                ResolvedObject::Text(resolved_buffers) => {
                     let gamma_multiply = match obj.state {
                         ObjectState::Entering => keyframe::ease_with_scaled_time(
                             EaseOutCubic,
@@ -492,20 +492,24 @@ impl Resolved {
                         ObjectState::OnScreen => 1.0,
                     };
                     if gamma_multiply > 0.0 {
-                        // ui.painter()
-                        //     .rect(obj_pos, Rounding::default(), Color32::RED, Stroke::NONE);
+                        // ui.painter().debug_rect(obj_pos, Color32::RED, "");
 
-                        let width = obj_pos.width();
-                        let mut obj_pos = obj_pos.translate(Vec2::new(*x_translation, 0.0));
-                        obj_pos.set_width(-*x_translation + width);
+                        for buffer in resolved_buffers {
+                            let text_rect = buffer
+                                .relative_bounds
+                                .translate(obj_pos.min.to_vec2())
+                                .expand(1.0);
 
-                        buffers.push(BufferWithTextArea::new(
-                            Arc::clone(buffer),
-                            obj_pos,
-                            gamma_multiply,
-                            egui_glyphon::glyphon::Color::rgb(255, 255, 255),
-                            ui.ctx(),
-                        ));
+                            // ui.painter().debug_rect(text_rect, Color32::GREEN, "");
+
+                            buffers.push(BufferWithTextArea::new(
+                                Arc::clone(&buffer.buffer),
+                                text_rect,
+                                gamma_multiply,
+                                egui_glyphon::glyphon::Color::rgb(255, 255, 255),
+                                ui.ctx(),
+                            ));
+                        }
                     }
                 }
                 ResolvedObject::Image {
@@ -684,13 +688,17 @@ impl Resolved {
                             second_obj_pos = first_obj_pos.lerp(second_obj_pos, y);
                             y
                         }
-                        ObjectState::Exiting => keyframe::ease_with_scaled_time(
-                            EaseOutCubic,
-                            1.0,
-                            0.0,
-                            second_time,
-                            scaled_times[1][1],
-                        ),
+                        ObjectState::Exiting => {
+                            let y = keyframe::ease_with_scaled_time(
+                                EaseOutCubic,
+                                1.0,
+                                0.0,
+                                second_time,
+                                scaled_times[1][1],
+                            );
+                            second_obj_pos = first_obj_pos.lerp(second_obj_pos, y);
+                            y
+                        }
                         ObjectState::OnScreen => 1.0,
                     };
 
@@ -719,7 +727,6 @@ impl Resolved {
                     ViewboxIn::Size => Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
-                        auto_direction: None,
                     },
                     ViewboxIn::Custom(hash, index) => {
                         self.resolve_layout(hash, index, size, slide_show)
@@ -739,7 +746,6 @@ impl Resolved {
                 let splits = Splits {
                     unadjusted: layout.unadjusted[index],
                     adjusted: layout.adjusted[index],
-                    auto_direction: None,
                 };
                 self.viewboxes.insert(hash, layout);
                 splits
@@ -747,7 +753,6 @@ impl Resolved {
             Some(layout) => Splits {
                 unadjusted: layout.unadjusted[index],
                 adjusted: layout.adjusted[index],
-                auto_direction: None,
             },
         }
     }
@@ -785,7 +790,6 @@ impl Resolved {
                     Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
-                        auto_direction: None,
                     },
                     15.0,
                 )
@@ -803,7 +807,6 @@ impl Resolved {
                     Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
                         adjusted: size,
-                        auto_direction: None,
                     },
                     15.0,
                 )
@@ -865,54 +868,32 @@ impl Resolved {
                     font_size,
                     line_height,
                     align,
+                    spacing,
                 } => {
                     let factor = second_viewbox.adjusted.size() / second_viewbox.unadjusted.size();
                     let font_size = *font_size * factor.x;
-                    let mut buffer = Buffer::new(
+                    let (size, resolved_job) = parser::objects::cosmic_jotdown::resolve_paragraphs(
+                        job.as_slice(),
+                        second_viewbox.adjusted.size(),
                         font_system,
                         Metrics::new(
                             font_size,
                             line_height.map_or(font_size * 1.1, |h| h * font_size),
                         ),
+                        *align,
+                        factor.x,
+                        *spacing,
                     );
-                    buffer.set_size(
-                        font_system,
-                        second_viewbox.adjusted.width(),
-                        // second_viewbox.adjusted.height(),
-                        f32::MAX,
-                    );
-                    buffer.set_rich_text(
-                        font_system,
-                        job.iter().enumerate().map(|(v, j)| {
-                            (
-                                if v == 0 {
-                                    j.0.trim_start()
-                                } else {
-                                    j.0.as_str()
-                                },
-                                j.1.as_attrs(),
-                            )
-                        }),
-                        Attrs::new(),
-                        egui_glyphon::glyphon::Shaping::Advanced,
-                    );
-                    for line in &mut buffer.lines {
-                        line.set_align(*align);
-                    }
-                    buffer.shape_until_scroll(font_system, true);
 
-                    let buffer = Arc::new(RwLock::new(buffer));
-                    let resolved_obj = ResolvedObject::Text(Arc::clone(&buffer), 0.0);
-                    let size = resolved_obj.bounds(second_viewbox.adjusted.size(), ui);
-                    let resolved_obj = ResolvedObject::Text(buffer, -size.min.x);
+                    let resolved_obj = ResolvedObject::Text(resolved_job);
                     let first_pos = object.locations[0]
                         .0
-                        .align_size_within_rect(size.size(), first_viewbox.adjusted);
+                        .align_size_within_rect(size, first_viewbox.adjusted);
 
                     let first_pos = [first_pos.min, first_pos.max];
                     let second_pos = object.locations[1]
                         .0
-                        .align_size_within_rect(size.size(), second_viewbox.adjusted);
+                        .align_size_within_rect(size, second_viewbox.adjusted);
                     let second_pos = [second_pos.min, second_pos.max];
                     resolved.slide.push(ResolvedSlideObj {
                         object: resolved_obj,
@@ -1034,9 +1015,9 @@ impl Resolved {
                     let text_object = resolved.slide.get(*index).unwrap();
                     let locations = if let Some(locations) = locations {
                         let (from_rect, to_rect) = match &text_object.object {
-                            ResolvedObject::Text(buffer, _) => (
+                            ResolvedObject::Text(buffer) => (
                                 {
-                                    let buffer = buffer.read();
+                                    let buffer = buffer[0].buffer.read();
                                     let glyph = buffer.lines.get(locations[0][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
@@ -1057,7 +1038,7 @@ impl Resolved {
                                     )
                                 },
                                 {
-                                    let buffer = buffer.read();
+                                    let buffer = buffer[0].buffer.read();
                                     let glyph = buffer.lines.get(locations[1][0]).unwrap();
                                     let glyph = glyph.layout_opt().as_ref().unwrap();
                                     let glyph = glyph
@@ -1215,27 +1196,24 @@ pub struct SlideShow {
     pub objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
 
+// TODO: Handle all buffer[0].buffer cases
+
 impl SlideShow {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn used_fonts(&self, font_system: &mut FontSystem) -> IndexSet<ID, ahash::RandomState> {
         let mut hashset = IndexSet::default();
         for obj in self.objects.values() {
             if let ObjectType::Text { job, .. } = &obj.object {
-                let mut buffer = Buffer::new(font_system, Metrics::new(12.0, 24.0));
-                buffer.set_size(font_system, f32::MAX, f32::MAX);
-                buffer.set_rich_text(
-                    font_system,
-                    job.iter().map(|j| (j.0.as_str(), j.1.as_attrs())),
-                    Attrs::new(),
-                    egui_glyphon::glyphon::Shaping::Advanced,
-                );
-                buffer.shape_until_scroll(font_system, false);
+                for j in job {
+                    let buffer =
+                        j.make_buffer(font_system, f32::MAX, Metrics::new(18.0, 24.0), None);
 
-                buffer.layout_runs().for_each(|r| {
-                    r.glyphs.iter().for_each(|g| {
-                        hashset.insert(g.font_id);
-                    })
-                });
+                    buffer.layout_runs().for_each(|r| {
+                        r.glyphs.iter().for_each(|g| {
+                            hashset.insert(g.font_id);
+                        })
+                    });
+                }
             }
         }
 
@@ -1302,7 +1280,6 @@ pub enum SlideShowSource {
 pub struct Layouts {
     pub unadjusted: Vec<Rect>,
     pub adjusted: Vec<Rect>,
-    pub auto_direction: Option<(usize, parser::viewboxes::Direction)>,
 }
 
 impl Layouts {
@@ -1310,9 +1287,6 @@ impl Layouts {
         Splits {
             unadjusted: self.unadjusted[idx],
             adjusted: self.adjusted[idx],
-            auto_direction: self
-                .auto_direction
-                .and_then(|d| if d.0 == idx { Some(d.1) } else { None }),
         }
     }
 }
@@ -1320,7 +1294,6 @@ impl Layouts {
 struct Splits {
     unadjusted: Rect,
     adjusted: Rect,
-    auto_direction: Option<parser::viewboxes::Direction>,
 }
 
 fn resolve_layout_raw(
@@ -1348,10 +1321,6 @@ fn resolve_layout_raw(
     Layouts {
         unadjusted,
         adjusted,
-        auto_direction: constraints.iter().enumerate().find_map(|p| match p.1 {
-            Constraint::Auto(d) => Some((p.0, *d)),
-            _ => None,
-        }),
     }
 }
 
@@ -1663,7 +1632,6 @@ impl MyEguiApp {
         //         .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
         // }
         let ui_time = ctx.input(|i| i.time) as f32;
-        let time = ui_time - self.time_offset;
         #[cfg(not(target_arch = "wasm32"))]
         let speaker_viewport = ViewportId::from_hash_of("speaker_view");
         #[cfg(not(target_arch = "wasm32"))]
@@ -1692,13 +1660,13 @@ impl MyEguiApp {
                         index -= 1;
                         self.next.store(false, Ordering::Relaxed);
                         self.resolved.store(None);
-                        self.time = 1000.0;
+                        self.time_offset = 0.0;
                     } else if ui.add_enabled(self.index.load(Ordering::Relaxed) != slide_show.slide_show.len() - 1, egui::Button::new(">")).clicked() {
                         self.index.fetch_add(1, Ordering::Relaxed);
                         index += 1;
                         self.resolved.store(None);
                         self.next.store(true, Ordering::Relaxed);
-                        self.time = 0.0;
+                        self.time_offset = ui_time;
                     }
                     // ui.label(format!(
                     //     "FPS: {:.1}",
@@ -1844,6 +1812,8 @@ impl MyEguiApp {
                 };
                 let mut buffers = Vec::new();
                 if let Some(slide) = slide_show.slide_show.get(index) {
+                    let time = ui_time - self.time_offset;
+
                     match slide {
                         AstObject::Slide {
                             max_time,

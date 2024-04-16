@@ -102,6 +102,8 @@ module.exports = grammar({
       ));
     },
 
+    integer_literal: _ => /[0-9][0-9_]*/,
+
     _text_ident: $ => choice($.string_literal, $.number_literal),
     index_parser: $ => seq('[', $.number_literal, ']'),
 
@@ -135,8 +137,17 @@ module.exports = grammar({
       '~'
     ),
 
+    range: $ => choice(
+      seq($.integer_literal, choice('..', '...', '..='), $.integer_literal),
+      seq($.integer_literal, '..'),
+      seq('..', $.integer_literal),
+      '..',
+    ),
+
+
     slide_obj: $ => seq(
       field('object', $.identifier),
+      optional(seq('[', field('range', $.range), ']')),
       optional($.slide_vb),
       optional($.slide_from),
       optional($.edge_parser),
@@ -173,7 +184,7 @@ module.exports = grammar({
 
     operation: _ => /[%\+~-]/,
 
-    viewbox_obj: $ => choice(
+    viewbox_obj: $ =>
       seq(
         field('value', $.number_literal),
         choice(
@@ -181,8 +192,6 @@ module.exports = grammar({
           seq(field('operation', ':'), field('denominator', $.number_literal))
         )
       ),
-      seq(field('value', alias('a', $.auto)), optional('~'), $.edge_parser)
-    ),
 
     direction: _ => /[\^_<>]/,
 

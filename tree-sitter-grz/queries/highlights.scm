@@ -4,8 +4,6 @@
   operation: (_) @keyword.operator)
 (viewbox_obj
   operation: (":") @keyword.operator)
-(viewbox_obj
-  value: (auto) @constant.numeric.integer)
 (slide_function
   function: (identifier) @function)
 
@@ -15,6 +13,7 @@
 (identifier) @variable
 (comment) @comment
 (number_literal) @constant.numeric.integer
+(integer_literal) @constant.numeric.integer
 (string_literal) @string
 (size) @variable.builtin
 
@@ -26,3 +25,6 @@
 "}" @punctuation.bracket
 "," @punctuation.delimiter
 ":" @punctuation.delimiter
+".." @operator
+"..=" @operator
+

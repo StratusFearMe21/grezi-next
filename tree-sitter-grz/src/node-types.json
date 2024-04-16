@@ -115,6 +115,21 @@
     }
   },
   {
+    "type": "range",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "integer_literal",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "register",
     "named": true,
     "fields": {},
@@ -247,6 +262,16 @@
         "types": [
           {
             "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "range": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "range",
             "named": true
           }
         ]
@@ -501,7 +526,7 @@
       },
       "operation": {
         "multiple": false,
-        "required": false,
+        "required": true,
         "types": [
           {
             "type": ":",
@@ -518,25 +543,11 @@
         "required": true,
         "types": [
           {
-            "type": "auto",
-            "named": true
-          },
-          {
             "type": "number_literal",
             "named": true
           }
         ]
       }
-    },
-    "children": {
-      "multiple": false,
-      "required": false,
-      "types": [
-        {
-          "type": "edge_parser",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -564,6 +575,18 @@
     "named": false
   },
   {
+    "type": "..",
+    "named": false
+  },
+  {
+    "type": "...",
+    "named": false
+  },
+  {
+    "type": "..=",
+    "named": false
+  },
+  {
     "type": ":",
     "named": false
   },
@@ -582,10 +605,6 @@
   {
     "type": "]",
     "named": false
-  },
-  {
-    "type": "auto",
-    "named": true
   },
   {
     "type": "comment",
@@ -609,6 +628,10 @@
   },
   {
     "type": "inherit",
+    "named": true
+  },
+  {
+    "type": "integer_literal",
     "named": true
   },
   {
