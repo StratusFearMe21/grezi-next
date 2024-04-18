@@ -4,7 +4,7 @@ ViewBox: Size[0] ^
 ]
 
 Title: Header(
-    value: "**Hello World**",
+    value: "*Hello World*",
 )
 
 Subtitle: Paragraph(
