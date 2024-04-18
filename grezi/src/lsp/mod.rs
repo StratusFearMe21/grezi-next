@@ -25,7 +25,7 @@ use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Point, Query, QueryCursor, Tree};
 use hunspell_rs::CheckResult;
 use indexmap::IndexSet;
-use lsp_server::{Connection, Message, Response};
+use lsp_server::{Message, Response};
 use lsp_types::{
     notification::{
         DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
@@ -63,14 +63,11 @@ struct LspFile {
 
 pub fn start_lsp(
     mut app: crate::MyEguiApp,
-    current_thread: std::thread::Thread,
     lsp_egui_ctx: eframe::egui::Context,
+    connection: lsp_server::Connection,
 ) {
     // Only the lsp will use the parser in lsp mode
     let mut parser = app.parser.lock();
-    // Create the transport. Includes the stdio (stdin and stdout) versions but this could
-    // also be implemented to use sockets or HTTP.
-    let (connection, io_threads) = Connection::stdio();
 
     let mut query_cursor = QueryCursor::new();
     let tree_sitter_grz_lang = tree_sitter_grz::language();
@@ -246,7 +243,7 @@ pub fn start_lsp(
         match msg {
             Message::Request(req) => {
                 if connection.handle_shutdown(&req).unwrap() {
-                    return;
+                    break;
                 }
 
                 match req.method.as_str() {
@@ -841,7 +838,7 @@ pub fn start_lsp(
                     DidOpenTextDocument::METHOD => {
                         let doc: lsp_types::DidOpenTextDocumentParams =
                             serde_json::from_value(not.params).unwrap();
-                        let mut slide_show = SlideShow::default();
+                        let mut slide_show = SlideShow::loading();
                         let mut rope = helix_core::ropey::Rope::from_str(&doc.text_document.text);
                         let mut version = 0;
                         if rope.len_lines() < 3 {
@@ -921,7 +918,6 @@ pub fn start_lsp(
                                         },
                                     )))
                                     .unwrap();
-                                current_thread.unpark();
                             }
                             Err(errors) => {
                                 connection
@@ -1128,7 +1124,6 @@ pub fn start_lsp(
                                 app.slide_show.store(Arc::clone(&doc.slideshow));
                                 app.next.store(true, Ordering::Relaxed);
                                 app.restart_timer.store(true, Ordering::Relaxed);
-                                current_thread.unpark();
                             }
                             Err(errors) => {
                                 connection
@@ -1159,9 +1154,8 @@ pub fn start_lsp(
             }
         }
     }
-    io_threads.join().unwrap();
 
-    // Shut down gracefully.
+    lsp_egui_ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Close);
 }
 
 pub fn hover(

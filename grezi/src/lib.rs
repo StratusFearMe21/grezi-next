@@ -1183,7 +1183,7 @@ impl Resolved {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SlideShow {
     pub slide_show: Vec<AstObject>,
     pub viewboxes: HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
@@ -1499,7 +1499,7 @@ impl MyEguiApp {
                 }
             } else {
                 if lsp {
-                    (SlideShow::default(), SlideShowSource::Loaded)
+                    (SlideShow::loading(), SlideShowSource::Loaded)
                 } else {
                     let mut slide_show = SlideShow {
                         slide_show: Vec::new(),

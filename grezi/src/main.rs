@@ -123,12 +123,15 @@ pub struct Args {
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> miette::Result<()> {
-    use std::hash::Hash;
+    use std::cell::OnceCell;
     use std::io::BufWriter;
     use std::ops::Deref;
+    use std::{hash::Hash, rc::Rc};
 
     use eframe::egui::ViewportBuilder;
     use indexmap::IndexSet;
+    use lsp_server::IoThreads;
+    use lsp_types::notification::Notification;
     use miette::{Context, IntoDiagnostic};
 
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -373,6 +376,9 @@ fn main() -> miette::Result<()> {
         }
     }
 
+    let mut io_threads: Rc<OnceCell<(IoThreads, _)>> = Rc::new(OnceCell::new());
+
+    let io_threads_run = Rc::clone(&io_threads);
     eframe::run_native(
         "Grezi",
         native_options,
@@ -386,16 +392,28 @@ fn main() -> miette::Result<()> {
                 if !lsp_egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
                     lsp_egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
                 }
-                let current_thread = std::thread::current();
-                std::thread::spawn(move || {
-                    grezi::lsp::start_lsp(app.0, current_thread, lsp_egui_ctx)
-                });
-                std::thread::park();
+                // Create the transport. Includes the stdio (stdin and stdout) versions but this could
+                // also be implemented to use sockets or HTTP.
+                let (connection, iot) = lsp_server::Connection::stdio();
+                let _ = io_threads_run.set((iot, connection.sender.clone()));
+                std::thread::spawn(move || grezi::lsp::start_lsp(app.0, lsp_egui_ctx, connection));
             }
             Box::new(init_app.init_app(&cc.egui_ctx, app.1))
         }),
     )
     .into_diagnostic()?;
+
+    if let Some(iot) = Rc::get_mut(&mut io_threads).unwrap().take() {
+        iot.1
+            .send(lsp_server::Message::Notification(
+                lsp_server::Notification {
+                    method: lsp_types::notification::Exit::METHOD.to_owned(),
+                    params: serde_json::to_value(()).unwrap(),
+                },
+            ))
+            .unwrap();
+        iot.0.join().unwrap();
+    }
 
     Ok(())
 }
