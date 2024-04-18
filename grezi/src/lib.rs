@@ -18,7 +18,9 @@ use atomic_float::AtomicF32;
 #[cfg(not(target_arch = "wasm32"))]
 use crossbeam_queue::SegQueue;
 use eframe::{
-    egui::{self, Image, ImageSize, Rect, Sense, SizeHint, Ui, ViewportBuilder, ViewportId},
+    egui::{
+        self, Image, ImageSize, OpenUrl, Rect, Sense, SizeHint, Ui, ViewportBuilder, ViewportId,
+    },
     egui_wgpu,
     emath::Align2,
     epaint::{
@@ -28,7 +30,7 @@ use eframe::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{fontdb::ID, FontSystem, Metrics},
+    glyphon::{cosmic_text::BufferRef, fontdb::ID, Edit, Editor, FontSystem, Metrics},
     BufferWithTextArea, GlyphonRendererCallback,
 };
 // use frame_history::FrameHistory;
@@ -333,7 +335,12 @@ impl SpeakerView {
             }
             let mut buffers = Vec::new();
             {
-                next_resolved.draw_slide(ui, f32::MAX, &mut buffers);
+                next_resolved.draw_slide(
+                    ui,
+                    f32::MAX,
+                    &mut buffers,
+                    font_system.lock().deref_mut(),
+                );
                 next_resolved.draw_actions(ui, f32::MAX);
             }
             if let Some(slide) = slide_show.slide_show.get(c_index) {
@@ -380,7 +387,12 @@ impl SpeakerView {
                 );
             }
             {
-                current_resolved.draw_slide(ui, f32::MAX, &mut buffers);
+                current_resolved.draw_slide(
+                    ui,
+                    f32::MAX,
+                    &mut buffers,
+                    font_system.lock().deref_mut(),
+                );
                 current_resolved.draw_actions(ui, f32::MAX);
             }
             ui.painter().add(egui_wgpu::Callback::new_paint_callback(
@@ -441,7 +453,13 @@ impl Resolved {
             ..Default::default()
         }
     }
-    fn draw_slide(&self, ui: &mut Ui, time: f32, buffers: &mut Vec<BufferWithTextArea>) {
+    fn draw_slide(
+        &self,
+        ui: &mut Ui,
+        time: f32,
+        buffers: &mut Vec<BufferWithTextArea>,
+        font_system: &mut FontSystem,
+    ) {
         let current_clip = ui.clip_rect();
         ui.set_clip_rect(self.window_size);
         for obj in self.slide.iter() {
@@ -503,6 +521,63 @@ impl Resolved {
                                 egui_glyphon::glyphon::Color::rgb(255, 255, 255),
                                 ui.ctx(),
                             ));
+
+                            use egui_glyphon::glyphon;
+
+                            if let Some(url_map) = &buffer.url_map {
+                                let text_response = ui.allocate_rect(text_rect, Sense::click());
+                                let mut buffer = buffer.buffer.write();
+                                let mut editor =
+                                    Editor::new(BufferRef::Borrowed(buffer.deref_mut()));
+                                if text_response.hovered()
+                                    && ui.input(|i| i.raw_scroll_delta == Vec2::ZERO)
+                                {
+                                    let mouse_pos = ui
+                                        .input(|i| i.pointer.latest_pos().unwrap_or_default())
+                                        - text_rect.min.to_vec2();
+
+                                    editor.action(
+                                        font_system,
+                                        glyphon::Action::Click {
+                                            x: mouse_pos.x as i32,
+                                            y: mouse_pos.y as i32 - 3,
+                                        },
+                                    );
+
+                                    let mut location = editor.cursor();
+                                    match location.affinity {
+                                        glyphon::Affinity::After => location.index += 1,
+                                        glyphon::Affinity::Before => {}
+                                    }
+
+                                    if url_map.get(&location.index).is_some() {
+                                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    }
+                                }
+                                if text_response.clicked() {
+                                    let mouse_click = ui
+                                        .input(|i| i.pointer.interact_pos().unwrap_or_default())
+                                        - text_rect.min.to_vec2();
+
+                                    editor.action(
+                                        font_system,
+                                        glyphon::Action::Click {
+                                            x: mouse_click.x as i32,
+                                            y: mouse_click.y as i32,
+                                        },
+                                    );
+
+                                    let mut location = editor.cursor();
+                                    match location.affinity {
+                                        glyphon::Affinity::After => location.index += 1,
+                                        glyphon::Affinity::Before => {}
+                                    }
+                                    if let Some(url) = url_map.get(&location.index) {
+                                        ui.ctx().open_url(OpenUrl::new_tab(url));
+                                        // clicked = false;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1823,7 +1898,12 @@ impl MyEguiApp {
                                 }
                                 self.clear_color = color;
                             }
-                            resolved.draw_slide(ui, time, &mut buffers);
+                            resolved.draw_slide(
+                                ui,
+                                time,
+                                &mut buffers,
+                                self.font_system.lock().deref_mut(),
+                            );
                             resolved.draw_actions(ui, time);
 
                             if time < *max_time {
@@ -1845,7 +1925,12 @@ impl MyEguiApp {
                             let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
                             match slide {
                                 AstObject::Slide { max_time, .. } => {
-                                    resolved.draw_slide(ui, *max_time, &mut buffers);
+                                    resolved.draw_slide(
+                                        ui,
+                                        *max_time,
+                                        &mut buffers,
+                                        self.font_system.lock().deref_mut(),
+                                    );
                                 }
                                 _ => todo!(),
                             }

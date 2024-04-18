@@ -403,7 +403,7 @@ impl<'a, T: Iterator<Item = Event<'a>>> Iterator for JotdownBufferIter<'a, T> {
                     let mut map = RangeMap::new();
                     map.extend(
                         urls.into_iter()
-                            .map(|(range, url)| (range, url.into_owned())),
+                            .map(|(range, url)| (range.start..range.end + 1, url.into_owned())),
                     );
                     Some(map)
                 },
