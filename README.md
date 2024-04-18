@@ -18,6 +18,7 @@ Grezi is designed to be used with an IDE ([Helix](https://github.com/helix-edito
 - Errors and diagnostics support
 - Hot reloading as you type
 - Snippet for copying down the previous slide and removing exited objects
+- Folding Ranges
 - Automatic "Hello World" boilerplate for empty files
 
 You can use the LSP by runing grezi with the `--lsp` argument

@@ -8,6 +8,7 @@ use std::{
 };
 
 pub mod completion;
+pub mod folding_range;
 pub mod formatter;
 pub mod inlay_hints;
 pub mod rename;
@@ -32,17 +33,17 @@ use lsp_types::{
         Notification, PublishDiagnostics, ShowMessage,
     },
     request::{
-        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, ExecuteCommand, Formatting,
-        GotoDeclaration, InlayHintRequest, PrepareRenameRequest, RangeFormatting, References,
-        Rename, Request, SemanticTokensFullRequest,
+        ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, ExecuteCommand, FoldingRangeRequest,
+        Formatting, GotoDeclaration, InlayHintRequest, PrepareRenameRequest, RangeFormatting,
+        References, Rename, Request, SemanticTokensFullRequest,
     },
     ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind, CompletionOptions,
     CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
     DeclarationCapability, DocumentChanges, DocumentFormattingParams,
     DocumentRangeFormattingParams, DocumentSymbolParams, ExecuteCommandOptions,
-    ExecuteCommandParams, GotoDefinitionParams, Hover, InlayHintOptions, InlayHintParams,
-    InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, MessageType, OneOf,
-    OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind,
+    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, Hover, InlayHintOptions,
+    InlayHintParams, InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, MessageType,
+    OneOf, OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind,
     PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
     SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend,
     SemanticTokensOptions, SemanticTokensParams, SemanticTokensServerCapabilities,
@@ -120,6 +121,11 @@ pub fn start_lsp(
     .unwrap();
     let strings_query =
         Query::new(&tree_sitter_grz_lang, include_str!("queries/strings.scm")).unwrap();
+    let folding_range_query = Query::new(
+        &tree_sitter_grz_lang,
+        include_str!("queries/folding_range.scm"),
+    )
+    .unwrap();
 
     let mut hunspell = None;
     let fonts: IndexSet<String, ahash::RandomState> = app
@@ -205,6 +211,7 @@ pub fn start_lsp(
                 resolve_provider: Some(false),
             },
         ))),
+        folding_range_provider: Some(lsp_types::FoldingRangeProviderCapability::Simple(true)),
         position_encoding: Some(PositionEncodingKind::UTF16),
         ..Default::default()
     })
@@ -368,7 +375,6 @@ pub fn start_lsp(
                         }
                     }
                     DocumentSymbolRequest::METHOD => {
-                        #[allow(deprecated)]
                         if let Ok((rqid, params)) =
                             req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
                         {
@@ -378,6 +384,25 @@ pub fn start_lsp(
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
                                     symbols::document_symbols(&doc.rope, &doc.tree),
+                                )))
+                                .unwrap();
+                        }
+                    }
+                    FoldingRangeRequest::METHOD => {
+                        if let Ok((rqid, params)) =
+                            req.extract::<FoldingRangeParams>(FoldingRangeRequest::METHOD)
+                        {
+                            let doc = current_state.get(&params.text_document.uri).unwrap();
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(
+                                    rqid,
+                                    folding_range::folding_ranges(
+                                        &doc.rope,
+                                        &doc.tree,
+                                        &mut query_cursor,
+                                        &folding_range_query,
+                                    ),
                                 )))
                                 .unwrap();
                         }
