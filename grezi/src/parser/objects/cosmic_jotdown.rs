@@ -182,7 +182,6 @@ pub fn resolve_paragraphs(
     align: Option<Align>,
     factor: f32,
     spacing: VerticalSpacing,
-    attrs: &Attrs<'_>,
 ) -> (Vec2, Vec<ResolvedJotdownItem>) {
     let mut size = Vec2::new(0.0, 0.0);
     let mut last_margin = 99999.0;
@@ -195,7 +194,7 @@ pub fn resolve_paragraphs(
             let mut buffer =
                 jbuffer
                     .clone()
-                    .resolve(font_system, viewbox.x, metrics, align, factor, attrs);
+                    .resolve(font_system, viewbox.x, metrics, align, factor);
             let margin = jbuffer.margin * buffer.metrics.line_height;
 
             let margin_top = (margin - last_margin).max(0.0);
@@ -222,7 +221,7 @@ pub fn resolve_paragraphs(
                 list_buffer.set_text(
                     font_system,
                     make_list_number(list_kind).as_ref(),
-                    *attrs,
+                    Attrs::new().family(Family::SansSerif),
                     Shaping::Advanced,
                 );
 
@@ -304,11 +303,10 @@ impl JotdownItem {
         metrics: Metrics,
         align: Option<Align>,
         factor: f32,
-        attrs: &Attrs<'_>,
     ) -> ResolvedJotdownItem {
         self.indent.indent *= factor;
 
-        let buffer = self.make_buffer(font_system, width, metrics, align, attrs);
+        let buffer = self.make_buffer(font_system, width, metrics, align);
 
         ResolvedJotdownItem {
             indent: self.indent,
@@ -343,7 +341,6 @@ impl JotdownItem {
         width: f32,
         metrics: Metrics,
         align: Option<Align>,
-        attrs: &Attrs<'_>,
     ) -> Buffer {
         let mut buffer = Buffer::new(
             font_system,
@@ -355,7 +352,8 @@ impl JotdownItem {
         buffer.set_rich_text(
             font_system,
             self.buffer.iter().map(|r| (r.0.as_ref(), r.1.as_attrs())),
-            *attrs,
+            // Default attrs are not used
+            Attrs::new().family(Family::SansSerif),
             Shaping::Advanced,
         );
 
