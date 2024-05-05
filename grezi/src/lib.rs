@@ -934,6 +934,7 @@ impl Resolved {
                 }
                 parser::objects::ObjectType::Text {
                     job,
+                    attrs,
                     font_size,
                     line_height,
                     align,
@@ -952,6 +953,7 @@ impl Resolved {
                         *align,
                         factor.x,
                         *spacing,
+                        &attrs.as_attrs(),
                     );
 
                     let resolved_obj = ResolvedObject::Text(resolved_job);
@@ -1272,10 +1274,15 @@ impl SlideShow {
     pub fn used_fonts(&self, font_system: &mut FontSystem) -> IndexSet<ID, ahash::RandomState> {
         let mut hashset = IndexSet::default();
         for obj in self.objects.values() {
-            if let ObjectType::Text { job, .. } = &obj.object {
+            if let ObjectType::Text { job, attrs, .. } = &obj.object {
                 for j in job {
-                    let buffer =
-                        j.make_buffer(font_system, f32::MAX, Metrics::new(18.0, 24.0), None);
+                    let buffer = j.make_buffer(
+                        font_system,
+                        f32::MAX,
+                        Metrics::new(18.0, 24.0),
+                        None,
+                        &attrs.as_attrs(),
+                    );
 
                     buffer.layout_runs().for_each(|r| {
                         r.glyphs.iter().for_each(|g| {

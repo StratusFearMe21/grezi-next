@@ -9,7 +9,7 @@ use eframe::{
     emath::Align2,
     epaint::{Color32, Pos2, Rect, Vec2},
 };
-use egui_glyphon::glyphon::{cosmic_text::Align, Attrs, Buffer, Family, Style, Weight};
+use egui_glyphon::glyphon::{cosmic_text::Align, Attrs, AttrsOwned, Buffer, Family, Style, Weight};
 use serde::{Deserialize, Serialize};
 
 use self::cosmic_jotdown::ResolvedJotdownItem;
@@ -43,6 +43,8 @@ pub enum VerticalSpacing {
 pub enum ObjectType {
     Text {
         job: Vec<JotdownItem>,
+        #[serde(with = "AttrsSerde")]
+        attrs: AttrsOwned,
         font_size: f32,
         line_height: Option<f32>,
         #[serde(with = "AlignSerde")]
@@ -519,12 +521,16 @@ pub fn parse_objects(
                         walker.goto_next_sibling()?;
                     }
 
-                    cosmic_jotdown::jotdown_into_buffers(jotdown::Parser::new(&string_content))
-                        .collect()
+                    cosmic_jotdown::jotdown_into_buffers(
+                        jotdown::Parser::new(&string_content),
+                        &font.1,
+                    )
+                    .collect()
                 }
             };
             ObjectType::Text {
                 job,
+                attrs: AttrsOwned::new(font.1),
                 font_size,
                 line_height,
                 align,

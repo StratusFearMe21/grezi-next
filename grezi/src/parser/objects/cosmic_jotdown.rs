@@ -17,12 +17,13 @@ use serde::{Deserialize, Serialize};
 
 pub struct JotdownBufferIter<'a, T: Iterator<Item = Event<'a>>> {
     pub djot: T,
+    pub attrs: Attrs<'a>,
     pub indent: Vec<Indent>,
 }
 
 struct JotdownIntoBuffer<'a, 'b, T: Iterator<Item = Event<'a>>> {
     pub djot: &'b mut T,
-    pub attrs: Attrs<'static>,
+    pub attrs: Attrs<'a>,
     pub metrics: Metrics,
     pub indent: &'b mut Vec<Indent>,
     pub link_start: usize,
@@ -42,7 +43,7 @@ pub struct Indent {
 pub const INDENT_AMOUNT: f32 = 64.0;
 
 impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, 'b, T> {
-    type Item = (&'a str, Attrs<'static>);
+    type Item = (&'a str, Attrs<'a>);
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(event) = self.djot.next() {
@@ -181,6 +182,7 @@ pub fn resolve_paragraphs(
     align: Option<Align>,
     factor: f32,
     spacing: VerticalSpacing,
+    attrs: &Attrs<'_>,
 ) -> (Vec2, Vec<ResolvedJotdownItem>) {
     let mut size = Vec2::new(0.0, 0.0);
     let mut last_margin = 99999.0;
@@ -193,7 +195,7 @@ pub fn resolve_paragraphs(
             let mut buffer =
                 jbuffer
                     .clone()
-                    .resolve(font_system, viewbox.x, metrics, align, factor);
+                    .resolve(font_system, viewbox.x, metrics, align, factor, attrs);
             let margin = jbuffer.margin * buffer.metrics.line_height;
 
             let margin_top = (margin - last_margin).max(0.0);
@@ -220,7 +222,7 @@ pub fn resolve_paragraphs(
                 list_buffer.set_text(
                     font_system,
                     make_list_number(list_kind).as_ref(),
-                    Attrs::new().family(Family::SansSerif),
+                    *attrs,
                     Shaping::Advanced,
                 );
 
@@ -302,10 +304,11 @@ impl JotdownItem {
         metrics: Metrics,
         align: Option<Align>,
         factor: f32,
+        attrs: &Attrs<'_>,
     ) -> ResolvedJotdownItem {
         self.indent.indent *= factor;
 
-        let buffer = self.make_buffer(font_system, width, metrics, align);
+        let buffer = self.make_buffer(font_system, width, metrics, align, attrs);
 
         ResolvedJotdownItem {
             indent: self.indent,
@@ -340,6 +343,7 @@ impl JotdownItem {
         width: f32,
         metrics: Metrics,
         align: Option<Align>,
+        attrs: &Attrs<'_>,
     ) -> Buffer {
         let mut buffer = Buffer::new(
             font_system,
@@ -351,7 +355,7 @@ impl JotdownItem {
         buffer.set_rich_text(
             font_system,
             self.buffer.iter().map(|r| (r.0.as_ref(), r.1.as_attrs())),
-            Attrs::new().family(Family::SansSerif),
+            *attrs,
             Shaping::Advanced,
         );
 
@@ -373,7 +377,7 @@ impl<'a, T: Iterator<Item = Event<'a>>> Iterator for JotdownBufferIter<'a, T> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut jot = JotdownIntoBuffer {
             djot: &mut self.djot,
-            attrs: Attrs::new().family(Family::SansSerif),
+            attrs: self.attrs.clone(),
             indent: &mut self.indent,
             metrics: Metrics::new(1.0, 1.1),
             added: false,
@@ -429,9 +433,11 @@ impl<'a, T: Iterator<Item = Event<'a>>> Iterator for JotdownBufferIter<'a, T> {
 
 pub fn jotdown_into_buffers<'a, T: Iterator<Item = Event<'a>>>(
     djot: T,
+    attrs: &Attrs<'a>,
 ) -> JotdownBufferIter<'a, T> {
     JotdownBufferIter {
         djot,
+        attrs: *attrs,
         indent: Vec::new(),
     }
 }
