@@ -1,15 +1,38 @@
 #!/bin/sh
-wasm=dist/grezi-*_bg.wasm
-js=dist/grezi-*.js
-if [ -d $1 ]; then
-  cp $1/*.slideshow $1/*.pdf dist/
+file=""
+copy="nil"
+
+if [ -n "$1" ]; then
+  copy="$1"
 fi
-wasm-opt -O2 --fast-math --enable-simd $wasm -o $wasm
-find dist/ \
-  -name "*.js" -o \
-  -name "*.slideshow" -o \
-  -name "*.pdf" -o \
-  -name "*.ico" -o \
-  -name "*.wasm" -o \
-  -name "*.html" -o \
-  -name "*.json" | parallel brotli -f
+
+if [ -n "$2" ]; then
+  file="$2"
+else
+  file="dist/"
+fi
+
+echo "$file"
+if [ -d "$file" ]; then
+  if [ -d "$copy" ]; then
+    cp "$copy"/*.slideshow "$copy"/*.pdf dist/
+  fi
+
+  find "$file" -type f -print0 \
+    -name "*.js" -o \
+    -name "*.slideshow" -o \
+    -name "*.pdf" -o \
+    -name "*.ico" -o \
+    -name "*.wasm" -o \
+    -name "*.html" -o \
+    -name "*.json" | parallel --null sh opt.sh "$copy" '{}'
+else
+  case `basename "$file"` in
+  *.wasm)
+      wasm-opt -O2 --fast-math --enable-simd "$file" -o "$file"
+      ;;
+  *)
+  esac
+  
+  brotli -f "$file"
+fi
