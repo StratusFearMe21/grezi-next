@@ -18,14 +18,14 @@ if [ -d "$file" ]; then
     cp "$copy"/*.slideshow "$copy"/*.pdf dist/
   fi
 
-  find "$file" -type f -print0 \
+  find "$file" \
     -name "*.js" -o \
     -name "*.slideshow" -o \
     -name "*.pdf" -o \
     -name "*.ico" -o \
     -name "*.wasm" -o \
     -name "*.html" -o \
-    -name "*.json" | parallel --null sh opt.sh "$copy" '{}'
+    -name "*.json" | parallel sh opt.sh "$copy" '{}'
 else
   case `basename "$file"` in
   *.wasm)
