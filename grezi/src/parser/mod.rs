@@ -399,6 +399,10 @@ pub fn parse_file(
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
 ) -> Result<(), Vec<Error>> {
+    use std::{ops::Deref, sync::Arc};
+
+    use indexmap::IndexMap;
+
     use self::objects::ObjectState;
 
     let mut bg = (Color::default(), None);
@@ -407,68 +411,36 @@ pub fn parse_file(
     let mut on_screen: HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>> =
         HashMap::default();
     let mut last_slide: usize = 0;
-    let mut is_new = old_tree.is_none();
+    let is_new = old_tree.is_none();
 
-    if !is_new {
-        let old_tree = old_tree.unwrap();
-        for range in old_tree.changed_ranges(tree) {
-            let node = tree
-                .root_node()
-                .descendant_for_point_range(range.start_point, range.end_point);
+    let mut tree_cursor = GrzCursor::new(tree, source);
 
-            if let Some(mut n) = node {
-                if n.is_extra()
-                    && n.parent().map(|n| n.kind_id()) == Some(NodeKind::SourceFile as u16)
-                {
-                    continue;
-                }
-
-                while n.is_extra() {
-                    if let Some(parent) = n.parent() {
-                        n = parent;
-                    } else {
-                        break;
-                    }
-                }
-
-                if matches!(
-                    NodeKind::from(n.kind_id()),
-                    NodeKind::Slide | NodeKind::SlideFunctions | NodeKind::Register
-                ) {
-                    is_new = true;
-                }
-            }
-        }
-    }
-
-    let mut old_tree_cursor = GrzCursor::new(if let Some(t) = old_tree { t } else { tree }, source);
-    let mut new_tree_cursor = GrzCursor::new(tree, source);
-
-    match (
-        old_tree_cursor.goto_first_child(),
-        new_tree_cursor.goto_first_child(),
-    ) {
-        (Ok(_), Ok(_)) => {}
-        (Err(e), _) | (_, Err(e)) => return Err(vec![e]),
+    match tree_cursor.goto_first_child() {
+        Ok(_) => {}
+        Err(e) => return Err(vec![e]),
     }
 
     if is_new {
-        slide_show.slide_show.clear();
         slide_show.viewboxes.clear();
         slide_show.objects.clear();
     }
 
-    let mut ast_object_at = 0;
+    let mut slides = IndexMap::with_capacity_and_hasher(
+        slide_show.slide_show.capacity(),
+        ahash::RandomState::default(),
+    );
     let mut last_slide_changed = false;
     let mut last_bg_changed = false;
     'parserloop: loop {
-        let node = old_tree_cursor.node();
-        match NodeKind::from(new_tree_cursor.node().kind_id()) {
+        let node = tree_cursor.node();
+        match NodeKind::from(node.kind_id()) {
             NodeKind::Slide => {
-                last_slide = ast_object_at;
+                last_slide = node.id();
 
-                if node.has_changes() || is_new || last_slide_changed {
-                    new_tree_cursor.fork(|cursor| {
+                let slide_on = slide_show.slide_show.get(&node.id());
+
+                if node.has_changes() || slide_on.is_none() || is_new || last_slide_changed {
+                    tree_cursor.fork(|cursor| {
                         match slides::parse_slides(
                             cursor,
                             &hasher,
@@ -480,11 +452,7 @@ pub fn parse_file(
                             &mut slide_show.viewboxes,
                         ) {
                             Ok((slide, color)) => {
-                                if is_new {
-                                    slide_show.slide_show.push(slide)
-                                } else {
-                                    slide_show.slide_show[ast_object_at] = slide;
-                                }
+                                slides.insert(node.id(), Arc::new(slide));
 
                                 if let Some(color) = color {
                                     bg.0 = color.1;
@@ -493,14 +461,16 @@ pub fn parse_file(
                             Err(e) => errors_present.push(e),
                         }
                     });
-                    last_slide_changed = node.has_changes();
+                    last_slide_changed = node.has_changes() || slide_on.is_none();
                 } else {
                     on_screen.clear();
                     if let Some(AstObject::Slide {
                         objects, bg: color, ..
-                    }) = slide_show.slide_show.get_mut(ast_object_at)
-                    {
-                        for (index, obj) in objects.iter_mut().enumerate() {
+                    }) = slide_on.map(|s| {
+                        slides.insert(node.id(), Arc::clone(s));
+                        s.deref()
+                    }) {
+                        for (index, obj) in objects.iter().enumerate() {
                             on_screen
                                 .insert(obj.object, (index, obj.state == ObjectState::Exiting));
                             if let Some(object) = slide_show.objects.get_mut(&obj.object) {
@@ -513,17 +483,15 @@ pub fn parse_file(
                                 }
                             }
                         }
-                        color.0 = bg.0;
                         if let Some(color) = color.1 {
                             bg.0 = color.1;
                         }
                     }
                 }
-                ast_object_at += 1;
             }
             NodeKind::Viewbox => {
                 if node.has_changes() || is_new {
-                    new_tree_cursor.fork(|cursor| {
+                    tree_cursor.fork(|cursor| {
                         match viewboxes::parse_viewbox(
                             cursor,
                             source,
@@ -540,7 +508,7 @@ pub fn parse_file(
             }
             NodeKind::Obj => {
                 if node.has_changes() || is_new {
-                    new_tree_cursor.fork(|cursor| {
+                    tree_cursor.fork(|cursor| {
                         match objects::parse_objects(
                             cursor,
                             source,
@@ -561,7 +529,7 @@ pub fn parse_file(
             }
             NodeKind::Register => {
                 if node.has_changes() || is_new || last_bg_changed {
-                    match parse_register(&mut new_tree_cursor, source) {
+                    match parse_register(&mut tree_cursor, source) {
                         Ok((key, value)) => {
                             let value: std::borrow::Cow<'_, str> = value.into();
                             if key == "BACKGROUND" {
@@ -586,8 +554,10 @@ pub fn parse_file(
                 }
             }
             NodeKind::SlideFunctions => {
-                if node.has_changes() || is_new || last_slide_changed {
-                    new_tree_cursor.fork(|cursor| {
+                let slide_on = slide_show.slide_show.get(&node.id());
+
+                if slide_on.is_none() || node.has_changes() || is_new || last_slide_changed {
+                    tree_cursor.fork(|cursor| {
                         match actions::parse_actions(
                             cursor,
                             source,
@@ -597,40 +567,35 @@ pub fn parse_file(
                             &mut errors_present,
                         ) {
                             Ok(action) => {
-                                if is_new {
-                                    slide_show.slide_show.push(action)
-                                } else {
-                                    slide_show.slide_show[ast_object_at] = action;
-                                }
+                                slides.insert(node.id(), Arc::new(action));
                             }
                             Err(e) => errors_present.push(e),
                         }
                     });
+                } else {
+                    slides.insert(node.id(), slide_on.cloned().unwrap());
                 }
-                ast_object_at += 1;
             }
             kind => errors_present.push(Error::BadNode(
-                PointFromRange::new(new_tree_cursor.node().range(), source),
+                PointFromRange::new(tree_cursor.node().range(), source),
                 kind,
             )),
         }
 
         loop {
-            let _ = old_tree_cursor.goto_next_sibling();
-            match new_tree_cursor.goto_next_sibling() {
+            match tree_cursor.goto_next_sibling() {
                 Ok(false) => break 'parserloop,
                 Ok(true) => break,
                 Err(e) => errors_present.push(e),
             }
         }
     }
+    slide_show.slide_show = slides;
     if is_new {
         slide_show.viewboxes.shrink_to_fit();
         slide_show.objects.shrink_to_fit();
         citations::parse_citations(file_path, &hasher, slide_show).unwrap();
     }
-    drop(old_tree_cursor);
-    drop(new_tree_cursor);
 
     if errors_present.is_empty() {
         Ok(())

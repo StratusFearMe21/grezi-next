@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use eframe::emath::Align2;
 use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Family};
@@ -203,32 +203,35 @@ pub fn parse_citations(
                     },
                 },
             );
-            slideshow.slide_show.push(super::AstObject::Slide {
-                objects: vec![
-                    SlideObj {
-                        object: text_object,
-                        locations: [
-                            (Align2::LEFT_BOTTOM, ViewboxIn::Size),
-                            (Align2::LEFT_TOP, ViewboxIn::Custom(vb, 1)),
-                        ],
-                        scaled_time: [0.0, 0.5],
-                        state: super::objects::ObjectState::Entering,
-                    },
-                    SlideObj {
-                        object: text_object_header,
-                        locations: [
-                            (Align2::CENTER_CENTER, ViewboxIn::Size),
-                            (Align2::CENTER_CENTER, ViewboxIn::Custom(vb, 0)),
-                        ],
-                        scaled_time: [0.0, 0.5],
-                        state: super::objects::ObjectState::Entering,
-                    },
-                ],
-                actions: Vec::new(),
-                bg: (super::color::Color::default(), None),
-                max_time: 0.5,
-                next: false,
-            });
+            slideshow.slide_show.insert(
+                u32::MAX as usize,
+                Arc::new(super::AstObject::Slide {
+                    objects: vec![
+                        SlideObj {
+                            object: text_object,
+                            locations: [
+                                (Align2::LEFT_BOTTOM, ViewboxIn::Size),
+                                (Align2::LEFT_TOP, ViewboxIn::Custom(vb, 1)),
+                            ],
+                            scaled_time: [0.0, 0.5],
+                            state: super::objects::ObjectState::Entering,
+                        },
+                        SlideObj {
+                            object: text_object_header,
+                            locations: [
+                                (Align2::CENTER_CENTER, ViewboxIn::Size),
+                                (Align2::CENTER_CENTER, ViewboxIn::Custom(vb, 0)),
+                            ],
+                            scaled_time: [0.0, 0.5],
+                            state: super::objects::ObjectState::Entering,
+                        },
+                    ],
+                    actions: Vec::new(),
+                    bg: (super::color::Color::default(), None),
+                    max_time: 0.5,
+                    next: false,
+                }),
+            );
             Ok(())
         } else {
             Ok(())

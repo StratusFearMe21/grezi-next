@@ -1260,8 +1260,8 @@ pub fn hover(
                     let hashed_vb = hasher.hash_one(vb_name);
                     if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
                         let mut already_on_slide = false;
-                        match &slideshow.slide_show[app.index.load(Ordering::Relaxed)] {
-                            AstObject::Slide { objects, .. } => {
+                        match slideshow.slide_show.get_index(app.index.load(Ordering::Relaxed)).map(|s| s.1.deref()) {
+                            Some(AstObject::Slide { objects, .. }) => {
                                 already_on_slide = objects
                                     .iter()
                                     .flat_map(|o| &o.locations)

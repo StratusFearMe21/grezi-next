@@ -37,6 +37,7 @@ use egui_glyphon::{
 #[cfg(not(target_arch = "wasm32"))]
 use helix_core::ropey::Rope;
 use image::codecs::{png::PngDecoder, webp::WebPDecoder};
+use indexmap::IndexMap;
 #[cfg(not(target_arch = "wasm32"))]
 use indexmap::IndexSet;
 use keyframe::functions::{EaseOutCubic, EaseOutQuint, Linear};
@@ -185,9 +186,9 @@ impl SpeakerView {
                     self.line[2].store(line_cb.y, Ordering::Relaxed);
                     let current_resolved;
                     let next_resolved;
-                    if let Some(slide) = slide_show.slide_show.get(index) {
+                    if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                         ctx.request_repaint();
-                        match slide {
+                        match slide.deref() {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -211,8 +212,8 @@ impl SpeakerView {
                                 actions,
                                 slide_in_ast,
                             } => {
-                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                                match slide {
+                                let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
+                                match slide.deref() {
                                     AstObject::Slide { objects: slide, .. } => {
                                         let mut font_system = font_system.lock();
                                         let res = Arc::new(Resolved::resolve(
@@ -236,9 +237,9 @@ impl SpeakerView {
                         next_resolved = Arc::new(Resolved::slideshow_end(layout[2]));
                         self.next_resolved.store(Some(Arc::clone(&next_resolved)));
                     }
-                    if let Some(slide) = slide_show.slide_show.get(c_index) {
+                    if let Some((_, slide)) = slide_show.slide_show.get_index(c_index) {
                         ctx.request_repaint();
-                        match slide {
+                        match slide.deref() {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -262,8 +263,8 @@ impl SpeakerView {
                                 actions,
                                 slide_in_ast,
                             } => {
-                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                                match slide {
+                                let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
+                                match slide.deref() {
                                     AstObject::Slide { objects: slide, .. } => {
                                         let mut font_system = font_system.lock();
                                         let res = Arc::new(Resolved::resolve(
@@ -290,8 +291,8 @@ impl SpeakerView {
                     }
                     (current_resolved, next_resolved)
                 };
-            if let Some(slide) = slide_show.slide_show.get(index) {
-                match slide {
+            if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
+                match slide.deref() {
                     AstObject::Slide { bg: (bg, b), .. } => {
                         let color: Color32 = if let Some(b) = b {
                             bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -306,8 +307,8 @@ impl SpeakerView {
                         );
                     }
                     AstObject::Action { slide_in_ast, .. } => {
-                        let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                        match slide {
+                        let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
+                        match slide.deref() {
                             AstObject::Slide { bg: (bg, b), .. } => {
                                 let color: Color32 = if let Some(b) = b {
                                     bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -343,8 +344,8 @@ impl SpeakerView {
                 );
                 next_resolved.draw_actions(ui, f32::MAX);
             }
-            if let Some(slide) = slide_show.slide_show.get(c_index) {
-                match slide {
+            if let Some((_, slide)) = slide_show.slide_show.get_index(c_index) {
+                match slide.deref() {
                     AstObject::Slide { bg: (bg, b), .. } => {
                         let color: Color32 = if let Some(b) = b {
                             bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -359,8 +360,8 @@ impl SpeakerView {
                         );
                     }
                     AstObject::Action { slide_in_ast, .. } => {
-                        let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                        match slide {
+                        let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
+                        match slide.deref() {
                             AstObject::Slide { bg: (bg, b), .. } => {
                                 let color: Color32 = if let Some(b) = b {
                                     bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -1260,7 +1261,7 @@ impl Resolved {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SlideShow {
-    pub slide_show: Vec<AstObject>,
+    pub slide_show: IndexMap<usize, Arc<AstObject>, ahash::RandomState>,
     pub viewboxes: HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     pub objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
@@ -1296,21 +1297,26 @@ impl SlideShow {
         let spinner_hash = hasher.hash_one("spinner");
         let halves_hash = hasher.hash_one("halves");
         SlideShow {
-            slide_show: vec![AstObject::Slide {
-                objects: vec![SlideObj {
-                    object: spinner_hash,
-                    locations: [
-                        (Align2::CENTER_TOP, ViewboxIn::Custom(halves_hash, 0)),
-                        (Align2::CENTER_CENTER, ViewboxIn::Custom(halves_hash, 0)),
-                    ],
-                    scaled_time: [0.0, 0.5],
-                    state: ObjectState::Entering,
-                }],
-                actions: vec![],
-                bg: (Color::default(), None),
-                max_time: 0.5,
-                next: false,
-            }],
+            slide_show: {
+                let slide = Arc::new(AstObject::Slide {
+                    objects: vec![SlideObj {
+                        object: spinner_hash,
+                        locations: [
+                            (Align2::CENTER_TOP, ViewboxIn::Custom(halves_hash, 0)),
+                            (Align2::CENTER_CENTER, ViewboxIn::Custom(halves_hash, 0)),
+                        ],
+                        scaled_time: [0.0, 0.5],
+                        state: ObjectState::Entering,
+                    }],
+                    actions: vec![],
+                    bg: (Color::default(), None),
+                    max_time: 0.5,
+                    next: false,
+                });
+                let mut map = IndexMap::default();
+                map.insert(0, slide);
+                map
+            },
             viewboxes: {
                 let mut map = HashMap::default();
                 map.insert(
@@ -1577,7 +1583,7 @@ impl MyEguiApp {
                     (SlideShow::loading(), SlideShowSource::Loaded)
                 } else {
                     let mut slide_show = SlideShow {
-                        slide_show: Vec::new(),
+                        slide_show: IndexMap::default(),
                         viewboxes,
                         objects,
                     };
@@ -1822,10 +1828,10 @@ impl MyEguiApp {
                 }) {
                     resolved
                 } else {
-                    if let Some(slide) = slide_show.slide_show.get(index) {
+                    if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                         #[cfg(not(target_arch = "wasm32"))]
                         ctx.request_repaint_of(speaker_viewport);
-                        match slide {
+                        match slide.deref() {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -1851,8 +1857,8 @@ impl MyEguiApp {
                                 actions,
                                 slide_in_ast,
                             } => {
-                                let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                                match slide {
+                                let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
+                                match slide.deref() {
                                     AstObject::Slide {
                                         objects: slide, bg, ..
                                     } => {
@@ -1880,10 +1886,10 @@ impl MyEguiApp {
                     }
                 };
                 let mut buffers = Vec::new();
-                if let Some(slide) = slide_show.slide_show.get(index) {
+                if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                     let time = ui_time - self.time_offset;
 
-                    match slide {
+                    match slide.deref() {
                         AstObject::Slide {
                             max_time,
                             next,
@@ -1922,8 +1928,8 @@ impl MyEguiApp {
                             }
                         }
                         AstObject::Action { slide_in_ast, .. } => {
-                            let slide = slide_show.slide_show.get(*slide_in_ast).unwrap();
-                            match slide {
+                            let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
+                            match slide.deref() {
                                 AstObject::Slide { max_time, .. } => {
                                     resolved.draw_slide(
                                         ui,
