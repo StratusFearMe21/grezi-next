@@ -53,24 +53,27 @@ pub fn parse_actions(
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
-    slide_in_ast: usize,
+    slide_in_ast: u64,
     errors_present: &mut Vec<super::Error>,
 ) -> Result<AstObject, super::Error> {
     tree_cursor.goto_first_child()?;
     let mut actions = Vec::new();
+    let mut next = false;
     while tree_cursor.node().kind_id() == NodeKind::SlideFunction as u16 {
-        tree_cursor.fork(
-            |cursor| match parse_single_action(cursor, source, hasher, on_screen) {
-                Ok(action) => actions.push(action),
+        tree_cursor.fork(|cursor| {
+            match parse_single_action(cursor, source, hasher, on_screen, &mut next) {
+                Ok(Some(action)) => actions.push(action),
                 Err(e) => errors_present.push(e),
-            },
-        );
+                _ => {}
+            }
+        });
         tree_cursor.goto_next_sibling()?;
     }
     tree_cursor.goto_parent();
     Ok(AstObject::Action {
         actions,
         slide_in_ast,
+        next,
     })
 }
 
@@ -90,7 +93,8 @@ fn parse_single_action(
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     on_screen: &HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>>,
-) -> Result<Actions, super::Error> {
+    next: &mut bool,
+) -> Result<Option<Actions>, super::Error> {
     use std::borrow::Cow;
 
     use cssparser::ParserInput;
@@ -184,20 +188,23 @@ fn parse_single_action(
             _ => HIGHLIGHT_COLOR_DEFAULT,
         };
 
-        Ok(Actions::Highlight {
+        Ok(Some(Actions::Highlight {
             locations,
             index: object.0,
             persist: false,
             color,
-        })
+        }))
     } else if function_name == "speaker_notes" {
         action_walker.goto_next_sibling()?;
-        Ok(Actions::SpeakerNotes(
+        Ok(Some(Actions::SpeakerNotes(
             source
                 .byte_slice(action_walker.node().byte_range())
                 .to_string()
                 .into(),
-        ))
+        )))
+    } else if function_name == "next" {
+        *next = true;
+        Ok(None)
     } else {
         return Err(super::Error::ActionNotFound(PointFromRange::new(
             action_walker.node().range().into(),
@@ -223,4 +230,12 @@ pub fn parse_highlight_location(
     } else {
         Ok(None)
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn id(walker: &mut GrzCursor<'_>) -> Result<u64, super::Error> {
+    walker.goto_first_child()?;
+    let id = walker.node().id() as u64;
+    walker.goto_parent();
+    Ok(id)
 }

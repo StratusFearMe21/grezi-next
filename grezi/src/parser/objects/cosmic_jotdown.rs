@@ -103,7 +103,7 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                             5 => 0.83,
                             _ => 0.67,
                         };
-                        self.metrics = Metrics::new(l, l * 1.1);
+                        self.metrics = Metrics::new(l, l * 1.2);
                         self.top_level_container.get_or_insert(container);
                     }
                     Container::Emphasis => self.attrs = self.attrs.style(Style::Italic),
@@ -327,7 +327,7 @@ impl JotdownItem {
                 indent: 0.0,
             },
             buffer: text,
-            metrics: Metrics::new(1.0, 1.1),
+            metrics: Metrics::new(1.0, 1.2),
             url_map: None,
             margin: 0.0,
         }
@@ -377,7 +377,7 @@ impl<'a, T: Iterator<Item = Event<'a>>> Iterator for JotdownBufferIter<'a, T> {
             djot: &mut self.djot,
             attrs: self.attrs.clone(),
             indent: &mut self.indent,
-            metrics: Metrics::new(1.0, 1.1),
+            metrics: Metrics::new(1.0, 1.2),
             added: false,
             link_start: 0,
             location: 0,

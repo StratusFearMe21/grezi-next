@@ -8,7 +8,7 @@ use std::{
     io::Cursor,
     ops::{Deref, DerefMut},
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI8, AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -19,7 +19,8 @@ use atomic_float::AtomicF32;
 use crossbeam_queue::SegQueue;
 use eframe::{
     egui::{
-        self, Image, ImageSize, OpenUrl, Rect, Sense, SizeHint, Ui, ViewportBuilder, ViewportId,
+        self, Image, ImageSize, Modifiers, OpenUrl, Rect, Sense, SizeHint, Ui, ViewportBuilder,
+        ViewportId,
     },
     egui_wgpu,
     emath::Align2,
@@ -69,7 +70,7 @@ pub mod parser;
 pub struct MyEguiApp {
     pub slide_show: Arc<ArcSwap<RwLock<SlideShow>>>,
     pub next: Arc<AtomicBool>,
-    pub restart_timer: Arc<AtomicBool>,
+    pub restart_timer: Arc<AtomicI8>,
     #[cfg(not(target_arch = "wasm32"))]
     pub file_name: Arc<str>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -197,7 +198,7 @@ impl SpeakerView {
                                 let mut font_system = font_system.lock();
                                 let res = Arc::new(Resolved::resolve(
                                     slide,
-                                    actions,
+                                    (actions, None),
                                     ui,
                                     layout[2],
                                     &slide_show,
@@ -211,14 +212,19 @@ impl SpeakerView {
                             AstObject::Action {
                                 actions,
                                 slide_in_ast,
+                                ..
                             } => {
                                 let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
                                 match slide.deref() {
-                                    AstObject::Slide { objects: slide, .. } => {
+                                    AstObject::Slide {
+                                        objects: slide,
+                                        actions: slide_actions,
+                                        ..
+                                    } => {
                                         let mut font_system = font_system.lock();
                                         let res = Arc::new(Resolved::resolve(
                                             slide,
-                                            actions,
+                                            (slide_actions, Some(actions)),
                                             ui,
                                             layout[2],
                                             &slide_show,
@@ -248,7 +254,7 @@ impl SpeakerView {
                                 let mut font_system = font_system.lock();
                                 let res = Arc::new(Resolved::resolve(
                                     slide,
-                                    actions,
+                                    (actions, None),
                                     ui,
                                     layout[0],
                                     &slide_show,
@@ -262,14 +268,19 @@ impl SpeakerView {
                             AstObject::Action {
                                 actions,
                                 slide_in_ast,
+                                ..
                             } => {
                                 let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
                                 match slide.deref() {
-                                    AstObject::Slide { objects: slide, .. } => {
+                                    AstObject::Slide {
+                                        objects: slide,
+                                        actions: slide_actions,
+                                        ..
+                                    } => {
                                         let mut font_system = font_system.lock();
                                         let res = Arc::new(Resolved::resolve(
                                             slide,
-                                            actions,
+                                            (slide_actions, Some(actions)),
                                             ui,
                                             layout[0],
                                             &slide_show,
@@ -342,7 +353,7 @@ impl SpeakerView {
                     &mut buffers,
                     font_system.lock().deref_mut(),
                 );
-                next_resolved.draw_actions(ui, f32::MAX);
+                next_resolved.draw_actions(ui, f32::MAX, false);
             }
             if let Some((_, slide)) = slide_show.slide_show.get_index(c_index) {
                 match slide.deref() {
@@ -394,7 +405,7 @@ impl SpeakerView {
                     &mut buffers,
                     font_system.lock().deref_mut(),
                 );
-                current_resolved.draw_actions(ui, f32::MAX);
+                current_resolved.draw_actions(ui, f32::MAX, false);
             }
             ui.painter().add(egui_wgpu::Callback::new_paint_callback(
                 ws,
@@ -433,6 +444,7 @@ pub struct Resolved {
     pub slide: Vec<ResolvedSlideObj>,
     pub speaker_notes: Option<Arc<str>>,
     pub window_size: Rect,
+    pub draw_size: Rect,
 }
 
 impl Default for Resolved {
@@ -443,6 +455,7 @@ impl Default for Resolved {
             slide: Default::default(),
             speaker_notes: None,
             window_size: Rect::ZERO,
+            draw_size: Rect::ZERO,
         }
     }
 }
@@ -659,7 +672,7 @@ impl Resolved {
         ui.set_clip_rect(current_clip);
     }
 
-    fn draw_actions(&self, ui: &mut Ui, time: f32) {
+    fn draw_actions(&self, ui: &mut Ui, time: f32, export: bool) {
         for action in &self.actions {
             match action {
                 parser::actions::ResolvedActions::Highlight {
@@ -678,13 +691,17 @@ impl Resolved {
                         EaseOutCubic,
                         locations_of_object[0],
                         locations_of_object[1],
-                        if !*persist { scaled_time[1] } else { time },
+                        if !(*persist || export) {
+                            scaled_time[1]
+                        } else {
+                            time
+                        },
                         scaled_time[1],
                     ));
                     ui.ctx().debug_painter().rect_filled(
                         Rect {
                             min: Pos2::new(
-                                if *persist {
+                                if *persist || export {
                                     locations.min.x
                                 } else {
                                     keyframe::ease_with_scaled_time(
@@ -829,7 +846,7 @@ impl Resolved {
 
     fn resolve(
         slide: &[SlideObj],
-        actions: &[Actions],
+        actions: (&[Actions], Option<&[Actions]>),
         ui: &mut Ui,
         size_raw: Rect,
         slide_show: &SlideShow,
@@ -840,8 +857,7 @@ impl Resolved {
         export: bool,
     ) -> Self {
         let mut resolved = Resolved::default();
-        resolved.window_size = size_raw;
-        let size = {
+        resolved.draw_size = {
             let size = size_raw.size();
             let size = ImageSize {
                 max_size: size,
@@ -850,39 +866,40 @@ impl Resolved {
             .calc_size(size, Vec2::new(16.0, 9.0));
             Align2::CENTER_CENTER.align_size_within_rect(size, size_raw)
         };
+        resolved.window_size = size_raw;
         let mut images = Vec::with_capacity(3);
         for object in slide {
             let first_viewbox = match object.locations[0].1 {
                 ViewboxIn::Size => resolve_layout_raw(
-                    size,
+                    resolved.draw_size,
                     Direction::Horizontal,
                     vec![Constraint::Min(0.0)],
                     Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
-                        adjusted: size,
+                        adjusted: resolved.draw_size,
                     },
                     15.0,
                 )
                 .get_splits(0),
                 ViewboxIn::Custom(hash, index) => {
-                    resolved.resolve_layout(hash, index, size, slide_show)
+                    resolved.resolve_layout(hash, index, resolved.draw_size, slide_show)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
             let second_viewbox = match object.locations[1].1 {
                 ViewboxIn::Size => resolve_layout_raw(
-                    size,
+                    resolved.draw_size,
                     Direction::Horizontal,
                     vec![Constraint::Min(0.0)],
                     Splits {
                         unadjusted: Rect::from_min_size(Pos2::ZERO, Vec2::new(1920.0, 1080.0)),
-                        adjusted: size,
+                        adjusted: resolved.draw_size,
                     },
                     15.0,
                 )
                 .get_splits(0),
                 ViewboxIn::Custom(hash, index) => {
-                    resolved.resolve_layout(hash, index, size, slide_show)
+                    resolved.resolve_layout(hash, index, resolved.draw_size, slide_show)
                 }
                 ViewboxIn::Inherit(_) => unreachable!(),
             };
@@ -911,7 +928,7 @@ impl Resolved {
                         -second_viewbox.adjusted.min.x,
                         -second_viewbox.adjusted.min.y,
                     ));
-                    rect.max.y = *height * (size.height() / 1080.0);
+                    rect.max.y = *height * (resolved.draw_size.height() / 1080.0);
                     let resolved_obj = ResolvedObject::Rect {
                         color: *color,
                         rect,
@@ -948,7 +965,7 @@ impl Resolved {
                         font_system,
                         Metrics::new(
                             font_size,
-                            line_height.map_or(font_size * 1.1, |h| h * font_size),
+                            line_height.map_or(font_size * 1.2, |h| h * font_size),
                         ),
                         *align,
                         factor.x,
@@ -1074,7 +1091,7 @@ impl Resolved {
                 }
             }
         }
-        for action in actions {
+        for action in actions.0.into_iter().chain(actions.1.into_iter().flatten()) {
             match action {
                 Actions::Highlight {
                     locations,
@@ -1250,7 +1267,7 @@ impl Resolved {
                         scaled_times: [object_one.scaled_time, object_two.scaled_time],
                         color: *color,
                         state: object_two.state,
-                        scale: (size.width() / 1920.0),
+                        scale: (resolved.draw_size.width() / 1920.0),
                     });
                 }
             }
@@ -1261,7 +1278,7 @@ impl Resolved {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SlideShow {
-    pub slide_show: IndexMap<usize, Arc<AstObject>, ahash::RandomState>,
+    pub slide_show: IndexMap<u64, Arc<AstObject>, BuildHasherDefault<PassThroughHasher>>,
     pub viewboxes: HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     pub objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
@@ -1431,7 +1448,7 @@ impl MyEguiApp {
                         .for_each(|d| fonts.load_font_data(d));
 
                     fetch_ss.store(Arc::new(RwLock::new(slide_show.1)));
-                    fetch_restart_timer.store(true, Ordering::Relaxed);
+                    fetch_restart_timer.store(1, Ordering::Relaxed);
                     fetch_resolved.store(None);
                 });
 
@@ -1512,7 +1529,7 @@ impl MyEguiApp {
 
                         fetch_ctx.set_fonts(font_defs);
                         fetch_ss.store(Arc::new(RwLock::new(slide_show.1)));
-                        fetch_restart_timer.store(true, Ordering::Relaxed);
+                        fetch_restart_timer.store(1, Ordering::Relaxed);
                         fetch_resolved.store(None);
                     });
                 }
@@ -1654,7 +1671,7 @@ impl MyEguiApp {
                 slide_show: Arc::new(ArcSwap::new(Arc::new(RwLock::new(slide_show.0)))),
                 next: Arc::new(false.into()),
                 export: false,
-                restart_timer: Arc::new(false.into()),
+                restart_timer: Arc::new(1.into()),
                 #[cfg(not(target_arch = "wasm32"))]
                 file_name: presentation.unwrap_or_default().into(),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1766,11 +1783,6 @@ impl MyEguiApp {
             .frame(egui::Frame::default().fill(self.clear_color))
             .show(ctx, |ui| {
                 let window_size = ui.max_rect();
-                if self.restart_timer.load(Ordering::Relaxed) {
-                    self.time_offset = ui_time;
-                    self.restart_timer.store(false, Ordering::Relaxed);
-                }
-
                 let response = ui.allocate_rect(window_size, Sense::click_and_drag());
 
                 let drag_delta = response.drag_delta().x;
@@ -1804,6 +1816,15 @@ impl MyEguiApp {
                                 self.resolved.store(None);
                                 self.time_offset = 0.0;
                                 index -= 1;
+                                while matches!(
+                                    slide_show.slide_show.get_index(index).map(|o| o.1.deref()),
+                                    Some(
+                                        AstObject::Action { next: true, .. }
+                                            | AstObject::Slide { next: true, .. }
+                                    )
+                                ) {
+                                    index -= 1;
+                                }
                                 #[cfg(not(target_arch = "wasm32"))]
                                 self.speaker_view.clear_resolved();
                                 #[cfg(not(target_arch = "wasm32"))]
@@ -1817,6 +1838,14 @@ impl MyEguiApp {
                         });
                 } else if drag_delta == 0.0 {
                     self.in_drag = false;
+                }
+
+                let restart_timer = self.restart_timer.fetch_sub(1, Ordering::Relaxed);
+
+                if !self.export && restart_timer >= 0 {
+                    self.time_offset = ui_time;
+                } else {
+                    self.restart_timer.store(-1, Ordering::Relaxed);
                 }
 
                 let resolved = if let Some(resolved) = self.resolved.load_full().and_then(|r| {
@@ -1842,7 +1871,7 @@ impl MyEguiApp {
                                 let mut font_system = self.font_system.lock();
                                 let resolved = Arc::new(Resolved::resolve(
                                     slide,
-                                    actions,
+                                    (actions, None),
                                     ui,
                                     window_size,
                                     &slide_show,
@@ -1856,17 +1885,21 @@ impl MyEguiApp {
                             AstObject::Action {
                                 actions,
                                 slide_in_ast,
+                                ..
                             } => {
                                 let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
                                 match slide.deref() {
                                     AstObject::Slide {
-                                        objects: slide, bg, ..
+                                        objects: slide,
+                                        bg,
+                                        actions: slide_actions,
+                                        ..
                                     } => {
                                         self.clear_color = bg.0.into();
                                         let mut font_system = self.font_system.lock();
                                         let resolved = Arc::new(Resolved::resolve(
                                             slide,
-                                            actions,
+                                            (slide_actions, Some(actions)),
                                             ui,
                                             window_size,
                                             &slide_show,
@@ -1885,6 +1918,15 @@ impl MyEguiApp {
                         Arc::new(Resolved::slideshow_end(window_size))
                     }
                 };
+
+                if self.lsp {
+                    ui.painter().rect_stroke(
+                        resolved.draw_size,
+                        Rounding::default(),
+                        ui.style().visuals.widgets.noninteractive.bg_stroke,
+                    );
+                }
+
                 let mut buffers = Vec::new();
                 if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                     let time = ui_time - self.time_offset;
@@ -1910,7 +1952,7 @@ impl MyEguiApp {
                                 &mut buffers,
                                 self.font_system.lock().deref_mut(),
                             );
-                            resolved.draw_actions(ui, time);
+                            resolved.draw_actions(ui, time, self.export);
 
                             if time < *max_time {
                                 ctx.request_repaint();
@@ -1927,7 +1969,9 @@ impl MyEguiApp {
                                 ctx.request_repaint();
                             }
                         }
-                        AstObject::Action { slide_in_ast, .. } => {
+                        AstObject::Action {
+                            slide_in_ast, next, ..
+                        } => {
                             let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
                             match slide.deref() {
                                 AstObject::Slide { max_time, .. } => {
@@ -1940,9 +1984,20 @@ impl MyEguiApp {
                                 }
                                 _ => todo!(),
                             }
-                            resolved.draw_actions(ui, time);
+                            resolved.draw_actions(ui, time, self.export);
 
                             if time < 0.5 {
+                                ctx.request_repaint();
+                            } else if *next && self.next.load(Ordering::Relaxed) {
+                                self.index.fetch_add(1, Ordering::Relaxed);
+                                self.resolved.store(None);
+                                self.time_offset = ui_time;
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.speaker_view.clear_resolved();
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.vb_dbg.store(0, Ordering::Relaxed);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                self.obj_dbg.store(0, Ordering::Relaxed);
                                 ctx.request_repaint();
                             }
                         }
@@ -2028,7 +2083,7 @@ impl MyEguiApp {
                         let _ = self.index.fetch_update(
                             Ordering::Relaxed,
                             Ordering::Relaxed,
-                            |index| {
+                            |mut index| {
                                 if index != 0 {
                                     self.resolved.store(None);
                                     self.time_offset = 0.0;
@@ -2039,11 +2094,38 @@ impl MyEguiApp {
                                     #[cfg(not(target_arch = "wasm32"))]
                                     self.obj_dbg.store(0, Ordering::Relaxed);
                                     self.next.store(false, Ordering::Relaxed);
-                                    return Some(index - 1);
+                                    index -= 1;
+                                    while matches!(
+                                        slide_show.slide_show.get_index(index).map(|o| o.1.deref()),
+                                        Some(
+                                            AstObject::Action { next: true, .. }
+                                                | AstObject::Slide { next: true, .. }
+                                        )
+                                    ) {
+                                        index -= 1;
+                                    }
+                                    return Some(index);
                                 }
                                 None
                             },
                         );
+                    }
+                    egui::Event::Key {
+                        key: egui::Key::G,
+                        modifiers: Modifiers::SHIFT,
+                        pressed: true,
+                        ..
+                    } => {
+                        self.index
+                            .store(slide_show.slide_show.len() - 1, Ordering::Relaxed);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.vb_dbg.store(0, Ordering::Relaxed);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.obj_dbg.store(0, Ordering::Relaxed);
+                        self.next.store(false, Ordering::Relaxed);
+                        self.resolved.store(None);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        self.speaker_view.clear_resolved();
                     }
                     egui::Event::Key {
                         key: egui::Key::R,

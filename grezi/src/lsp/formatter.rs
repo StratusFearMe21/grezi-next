@@ -246,7 +246,7 @@ pub fn format_code(current_rope: &Rope, tree: &Tree) -> Result<Vec<TextEdit>, Er
                 formatting_cursor.goto_next_sibling(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor.goto_parent();
             }
-            NodeKind::SlideFunction => {
+            NodeKind::SlideFunctions => {
                 formatting_cursor.goto_first_child(WhitespaceEdit::Delete, current_rope)?;
                 formatting_cursor
                     .goto_next_sibling(WhitespaceEdit::Assert("\n    "), current_rope)?;

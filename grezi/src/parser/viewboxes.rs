@@ -263,3 +263,11 @@ pub fn parse_viewbox_ident(
         )),
     }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn id(walker: &mut GrzCursor<'_>) -> Result<u64, super::Error> {
+    walker.goto_first_child()?;
+    let id = walker.node().id() as u64;
+    walker.goto_parent();
+    Ok(id)
+}

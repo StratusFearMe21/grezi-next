@@ -723,7 +723,7 @@ pub fn start_lsp(
                                         }
 
                                         app.resolved.store(None);
-                                        app.restart_timer.store(true, Ordering::Relaxed);
+                                        app.restart_timer.store(1, Ordering::Relaxed);
                                         lsp_egui_ctx.request_repaint();
                                     }
                                 }
@@ -1148,7 +1148,7 @@ pub fn start_lsp(
                                 app.resolved.store(None);
                                 app.slide_show.store(Arc::clone(&doc.slideshow));
                                 app.next.store(true, Ordering::Relaxed);
-                                app.restart_timer.store(true, Ordering::Relaxed);
+                                app.restart_timer.store(1, Ordering::Relaxed);
                             }
                             Err(errors) => {
                                 connection
@@ -1201,7 +1201,7 @@ pub fn hover(
 
     if let Some(mut node) = changed_point {
         if node.kind_id() == NodeKind::EdgeParser as u16 {
-            app.restart_timer.store(true, Ordering::Relaxed);
+            app.restart_timer.store(1, Ordering::Relaxed);
         }
 
         while node.kind_id() != NodeKind::Slide as u16
@@ -1248,7 +1248,7 @@ pub fn hover(
                     lsp_egui_ctx.request_repaint();
                 }
                 if matches!(nk, NodeKind::SlideFunctions) {
-                    app.restart_timer.store(true, Ordering::Relaxed);
+                    app.restart_timer.store(1, Ordering::Relaxed);
                     lsp_egui_ctx.request_repaint();
                 }
             }

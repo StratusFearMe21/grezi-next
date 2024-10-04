@@ -33,11 +33,11 @@ clap = { version = "4.4.6", features = ["derive"] }
 miette = { version = "7.2.0", features = ["fancy", "backtrace"] }
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
 tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
-helix-core = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
-helix-loader = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
-helix-term = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
-helix-view = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
-helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "2cadec0" }
+helix-core = { git = "https://github.com/helix-editor/helix", rev = "079f544" }
+helix-loader = { git = "https://github.com/helix-editor/helix", rev = "079f544" }
+helix-term = { git = "https://github.com/helix-editor/helix", rev = "079f544" }
+helix-view = { git = "https://github.com/helix-editor/helix", rev = "079f544" }
+helix-lsp = { git = "https://github.com/helix-editor/helix", rev = "079f544" }
 eframe = { workspace = true, features = [
     "default_fonts",
     "wgpu",
@@ -69,7 +69,7 @@ wasm-bindgen-futures = "0.4.38"
 jotdown = { git = "https://git.nations.lol/fnmain/jotdown", version = "0.3.2", default-features = false }
 
 [build-dependencies]
-tree-sitter = ">=0.22.2"
+tree-sitter = "0.22"
 tree-sitter-grz = { version = "0.0.1", path = "../tree-sitter-grz" }
 tree-sitter-ntbib = { version = "0.0.1", path = "../tree-sitter-ntbib" }
 case = "1.0.0"

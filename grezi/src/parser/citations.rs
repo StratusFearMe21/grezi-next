@@ -204,7 +204,7 @@ pub fn parse_citations(
                 },
             );
             slideshow.slide_show.insert(
-                u32::MAX as usize,
+                u64::MAX,
                 Arc::new(super::AstObject::Slide {
                     objects: vec![
                         SlideObj {

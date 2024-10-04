@@ -723,3 +723,13 @@ pub fn parse_range(
 
     Ok((upper_bound, lower_bound))
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn id(walker: &mut GrzCursor<'_>) -> Result<u64, super::Error> {
+    walker.goto_first_child()?;
+    let id = walker.node().id() as u64;
+    walker.goto_next_sibling()?;
+    let id_two = walker.node().id() as u64;
+    walker.goto_parent();
+    Ok(id.wrapping_add(id_two))
+}
