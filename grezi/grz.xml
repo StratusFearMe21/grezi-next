@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type xmlns="http://www.freedesktop.org/standards/shared-mime-info" type="application/grz">
+    <!--Created automatically by update-mime-database. DO NOT EDIT!-->
+    <comment>Grezi Presentation</comment>
+    <acronym>GRZ</acronym>
+    <expanded-acronym>Grezi Presentation</expanded-acronym>
+    <generic-icon name="x-office-presentation"/>
+    <glob pattern="*.grz"/>
+    <glob pattern="*.slideshow"/>
+  </mime-type>
+</mime-info>

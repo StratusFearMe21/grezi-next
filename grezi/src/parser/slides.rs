@@ -44,6 +44,7 @@ pub fn parse_slides(
     errors_present: &mut Vec<super::Error>,
     bg: (super::Color, Option<(std::time::Duration, super::Color)>),
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+    margin: f32,
 ) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
     use std::num::NonZeroU16;
 
@@ -74,6 +75,7 @@ pub fn parse_slides(
                     );
                     slide_objects.push(object);
                 },
+                margin,
             ) {
                 Ok(()) => {}
                 Err(e) => errors_present.push(e),
@@ -136,6 +138,7 @@ pub fn parse_slide_object(
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     last_obj: Option<&SlideObj>,
     mut insert_fn: impl FnMut(SlideObj),
+    margin: f32,
 ) -> Result<(), super::Error> {
     use crate::parser::{viewboxes::align_from_str, PointFromRange};
 
@@ -170,8 +173,13 @@ pub fn parse_slide_object(
             super::viewboxes::parse_viewbox_ident(source, tree_cursor, hasher, viewboxes)?
         } else if current_char == "|" {
             let vb_range = tree_cursor.node().range();
-            let mut vb =
-                super::viewboxes::parse_viewbox_inner(tree_cursor, source, hasher, viewboxes)?;
+            let mut vb = super::viewboxes::parse_viewbox_inner(
+                tree_cursor,
+                source,
+                hasher,
+                viewboxes,
+                margin,
+            )?;
             let name = {
                 let mut hasher = hasher.build_hasher();
                 std::hash::Hash::hash(&name, &mut hasher);

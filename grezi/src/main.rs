@@ -385,7 +385,9 @@ fn main() -> miette::Result<()> {
         native_options,
         Box::new(move |cc| {
             if let Some(ref render_state) = cc.wgpu_render_state {
-                GlyphonRenderer::insert(render_state, Arc::clone(&font_system));
+                let cache = egui_glyphon::glyphon::Cache::new(&render_state.device);
+                let viewport = egui_glyphon::glyphon::Viewport::new(&render_state.device, &cache);
+                GlyphonRenderer::insert(render_state, Arc::clone(&font_system), &cache, viewport);
             }
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();
@@ -399,7 +401,7 @@ fn main() -> miette::Result<()> {
                 let _ = io_threads_run.set((iot, connection.sender.clone()));
                 std::thread::spawn(move || grezi::lsp::start_lsp(app.0, lsp_egui_ctx, connection));
             }
-            Box::new(init_app.init_app(&cc.egui_ctx, app.1))
+            Ok(Box::new(init_app.init_app(&cc.egui_ctx, app.1)))
         }),
     )
     .into_diagnostic()?;
@@ -422,12 +424,13 @@ fn main() -> miette::Result<()> {
 // When compiling to web using trunk:
 #[cfg(target_arch = "wasm32")]
 fn main() {
+    use eframe::wasm_bindgen::JsCast;
     // Redirect `log` message to `console.log` and friends:
 
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
 
     let web_options = eframe::WebOptions {
-        follow_system_theme: false,
+        // follow_system_theme: false,
         ..Default::default()
     };
 
@@ -436,20 +439,34 @@ fn main() {
     wasm_bindgen_futures::spawn_local(async {
         eframe::WebRunner::new()
             .start(
-                "the_canvas_id", // hardcode it
+                web_sys::window()
+                    .unwrap()
+                    .document()
+                    .unwrap()
+                    .get_element_by_id("the_canvas_id")
+                    .unwrap()
+                    .unchecked_into(), // hardcode it
                 web_options,
-                Box::new(move |cc| {
+                Box::new(move |cc: &eframe::CreationContext| {
                     if let Some(ref render_state) = cc.wgpu_render_state {
-                        GlyphonRenderer::insert(render_state, Arc::clone(&font_system));
+                        let cache = egui_glyphon::glyphon::Cache::new(&render_state.device);
+                        let viewport =
+                            egui_glyphon::glyphon::Viewport::new(&render_state.device, &cache);
+                        GlyphonRenderer::insert(
+                            render_state,
+                            Arc::clone(&font_system),
+                            &cache,
+                            viewport,
+                        );
                     }
-                    Box::new({
+                    Ok(Box::new({
                         let app = MyEguiApp::new(font_system);
                         app.0.init_app(
                             &cc.egui_ctx,
                             app.1,
                             &cc.integration_info.web_info.location.hash[1..],
                         )
-                    })
+                    }))
                 }),
             )
             .await

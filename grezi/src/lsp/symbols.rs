@@ -4,11 +4,14 @@ use helix_core::{
     Rope,
 };
 use lsp_types::{
-    DocumentSymbol, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Location,
-    ReferenceParams, SymbolKind, Url,
+    DocumentSymbol, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover,
+    HoverParams, Location, ReferenceParams, SymbolKind, Url,
 };
 
-use crate::parser::{GrzCursor, NodeKind};
+use crate::{
+    parser::{GrzCursor, NodeKind},
+    MyEguiApp, SlideShow,
+};
 
 use super::formatter::char_range_from_byte_range;
 
@@ -92,10 +95,10 @@ pub fn goto_declaration(
     );
 
     for query_match in iter {
-        if current_rope.byte_slice(query_match.captures[0].node.byte_range())
+        if current_rope.byte_slice(query_match.captures[1].node.byte_range())
             == current_rope.byte_slice(usage_node.byte_range())
         {
-            let range = query_match.captures[0].node.range();
+            let range = query_match.captures[1].node.range();
             return Some(GotoDefinitionResponse::Scalar(Location {
                 uri: currently_open,
                 range: char_range_from_byte_range(range, current_rope).ok()?,
@@ -212,4 +215,86 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
     }
 
     Some(DocumentSymbolResponse::Nested(symbols))
+}
+
+pub fn hover(
+    app: &MyEguiApp,
+    top_level_search_query: &Query,
+    slide_index_query: &Query,
+    vb_in_slide_query: &Query,
+    obj_in_slide_query: &Query,
+    lsp_egui_ctx: &eframe::egui::Context,
+    hover: HoverParams,
+    current_rope: &Rope,
+    query_cursor: &mut QueryCursor,
+    tree: &Tree,
+    slideshow: &SlideShow,
+) -> Option<Hover> {
+    let point = Point {
+        row: hover.text_document_position_params.position.line as usize,
+        column: hover.text_document_position_params.position.character as usize,
+    };
+
+    let usage_node = tree
+        .root_node()
+        .descendant_for_point_range(point, point)
+        .unwrap();
+
+    query_cursor.set_point_range(
+        Point { row: 0, column: 0 }..Point {
+            row: usize::MAX,
+            column: usize::MAX,
+        },
+    );
+    let iter = query_cursor.matches(
+        top_level_search_query,
+        tree.root_node(),
+        RopeProvider(current_rope.slice(..)),
+    );
+
+    for query_match in iter {
+        if current_rope.byte_slice(query_match.captures[1].node.byte_range())
+            == current_rope.byte_slice(usage_node.byte_range())
+        {
+            let captured_node = query_match.captures[0].node;
+            let start_point = captured_node.range().start_point;
+            let byte_range = captured_node.byte_range();
+            super::hover(
+                app,
+                tree,
+                query_cursor,
+                current_rope,
+                slide_index_query,
+                vb_in_slide_query,
+                obj_in_slide_query,
+                lsp_egui_ctx,
+                usage_node.range().start_point,
+                usage_node,
+                slideshow,
+            );
+            super::hover(
+                app,
+                tree,
+                query_cursor,
+                current_rope,
+                slide_index_query,
+                vb_in_slide_query,
+                obj_in_slide_query,
+                lsp_egui_ctx,
+                start_point,
+                captured_node,
+                slideshow,
+            );
+            lsp_egui_ctx.request_repaint();
+            return Some(Hover {
+                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: format!("```grz\n{}\n```", current_rope.byte_slice(byte_range)),
+                }),
+                range: char_range_from_byte_range(usage_node.range(), current_rope).ok(),
+            });
+        }
+    }
+
+    None
 }

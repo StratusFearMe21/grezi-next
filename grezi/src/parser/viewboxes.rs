@@ -104,6 +104,7 @@ pub fn parse_viewbox(
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+    margin: f32,
 ) -> Result<(u64, UnresolvedLayout), super::Error> {
     tree_cursor.goto_first_child()?;
     let name = source.byte_slice(tree_cursor.node().byte_range());
@@ -111,7 +112,7 @@ pub fn parse_viewbox(
     let mut name_hash = hasher.build_hasher();
     std::hash::Hash::hash(&name, &mut name_hash);
     let name_hash = name_hash.finish();
-    let vb = parse_viewbox_inner(tree_cursor, source, hasher, viewboxes)?;
+    let vb = parse_viewbox_inner(tree_cursor, source, hasher, viewboxes, margin)?;
     tree_cursor.goto_parent();
     Ok((name_hash, vb))
 }
@@ -122,6 +123,7 @@ pub fn parse_viewbox_inner(
     source: &helix_core::ropey::Rope,
     hasher: &ahash::RandomState,
     viewboxes: &HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
+    margin: f32,
 ) -> Result<UnresolvedLayout, super::Error> {
     use super::PointFromRange;
 
@@ -193,7 +195,7 @@ pub fn parse_viewbox_inner(
 
     Ok(UnresolvedLayout {
         direction: crate::layout::Direction::from(direction),
-        margin: 15.0,
+        margin,
         constraints,
         expand_to_fill: true,
         split_on: attached_box,

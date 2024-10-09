@@ -22,7 +22,6 @@ use palette::{
 };
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
-use std::str::FromStr;
 
 /// Return the named color with the given name.
 ///
@@ -461,13 +460,7 @@ fn parse_color_with_color_space<'i>(
     color_parser: &mut DefaultColorParser<'_>,
     arguments: &mut Parser<'i, '_>,
 ) -> Result<Color, ParseError<'i, super::Error>> {
-    let color_space = {
-        let location = arguments.current_source_location();
-
-        let ident = arguments.expect_ident()?;
-        PredefinedColorSpace::from_str(ident)
-            .map_err(|_| location.new_unexpected_token_error(Token::Ident(ident.clone())))?
-    };
+    let color_space = PredefinedColorSpace::parse(arguments)?;
 
     match color_space {
         PredefinedColorSpace::Srgb | PredefinedColorSpace::SrgbLinear => {

@@ -69,6 +69,8 @@ pub mod parser;
 #[derive(Clone)]
 pub struct MyEguiApp {
     pub slide_show: Arc<ArcSwap<RwLock<SlideShow>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub viewbox_nodes: Arc<ArcSwap<HashMap<u64, u64, BuildHasherDefault<PassThroughHasher>>>>,
     pub next: Arc<AtomicBool>,
     pub restart_timer: Arc<AtomicI8>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -189,7 +191,7 @@ impl SpeakerView {
                     let next_resolved;
                     if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                         ctx.request_repaint();
-                        match slide.deref() {
+                        match slide {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -215,7 +217,7 @@ impl SpeakerView {
                                 ..
                             } => {
                                 let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
-                                match slide.deref() {
+                                match slide {
                                     AstObject::Slide {
                                         objects: slide,
                                         actions: slide_actions,
@@ -245,7 +247,7 @@ impl SpeakerView {
                     }
                     if let Some((_, slide)) = slide_show.slide_show.get_index(c_index) {
                         ctx.request_repaint();
-                        match slide.deref() {
+                        match slide {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -271,7 +273,7 @@ impl SpeakerView {
                                 ..
                             } => {
                                 let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
-                                match slide.deref() {
+                                match slide {
                                     AstObject::Slide {
                                         objects: slide,
                                         actions: slide_actions,
@@ -303,7 +305,7 @@ impl SpeakerView {
                     (current_resolved, next_resolved)
                 };
             if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
-                match slide.deref() {
+                match slide {
                     AstObject::Slide { bg: (bg, b), .. } => {
                         let color: Color32 = if let Some(b) = b {
                             bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -319,7 +321,7 @@ impl SpeakerView {
                     }
                     AstObject::Action { slide_in_ast, .. } => {
                         let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
-                        match slide.deref() {
+                        match slide {
                             AstObject::Slide { bg: (bg, b), .. } => {
                                 let color: Color32 = if let Some(b) = b {
                                     bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -356,7 +358,7 @@ impl SpeakerView {
                 next_resolved.draw_actions(ui, f32::MAX, false);
             }
             if let Some((_, slide)) = slide_show.slide_show.get_index(c_index) {
-                match slide.deref() {
+                match slide {
                     AstObject::Slide { bg: (bg, b), .. } => {
                         let color: Color32 = if let Some(b) = b {
                             bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -372,7 +374,7 @@ impl SpeakerView {
                     }
                     AstObject::Action { slide_in_ast, .. } => {
                         let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
-                        match slide.deref() {
+                        match slide {
                             AstObject::Slide { bg: (bg, b), .. } => {
                                 let color: Color32 = if let Some(b) = b {
                                     bg.interpolate(b.1, f32::MAX, b.0.as_secs_f32()).into()
@@ -1032,7 +1034,7 @@ impl Resolved {
                                         ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
                                         let decoder =
                                             PngDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
-                                        if decoder.is_apng() {
+                                        if decoder.is_apng().unwrap_or_default() {
                                             return ResolvedObject::Anim {
                                                 anim: Anim::new(
                                                     ui.ctx(),
@@ -1278,7 +1280,7 @@ impl Resolved {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SlideShow {
-    pub slide_show: IndexMap<u64, Arc<AstObject>, BuildHasherDefault<PassThroughHasher>>,
+    pub slide_show: IndexMap<u64, AstObject, BuildHasherDefault<PassThroughHasher>>,
     pub viewboxes: HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     pub objects: HashMap<u64, Object, BuildHasherDefault<PassThroughHasher>>,
 }
@@ -1315,7 +1317,7 @@ impl SlideShow {
         let halves_hash = hasher.hash_one("halves");
         SlideShow {
             slide_show: {
-                let slide = Arc::new(AstObject::Slide {
+                let slide = AstObject::Slide {
                     objects: vec![SlideObj {
                         object: spinner_hash,
                         locations: [
@@ -1329,7 +1331,7 @@ impl SlideShow {
                     bg: (Color::default(), None),
                     max_time: 0.5,
                     next: false,
-                });
+                };
                 let mut map = IndexMap::default();
                 map.insert(0, slide);
                 map
@@ -1567,6 +1569,8 @@ impl MyEguiApp {
             parser
         };
         #[cfg(not(target_arch = "wasm32"))]
+        let viewbox_nodes = Arc::new(ArcSwap::new(Arc::new(HashMap::default())));
+        #[cfg(not(target_arch = "wasm32"))]
         let slide_show: (SlideShow, SlideShowSource) = {
             let viewboxes = HashMap::default();
             let objects = HashMap::default();
@@ -1637,6 +1641,7 @@ impl MyEguiApp {
                             &mut slide_show,
                             &ctx,
                             &std::fs::canonicalize(presentation.as_ref().unwrap()).unwrap(),
+                            Arc::clone(&viewbox_nodes),
                         )
                     };
                     match ast {
@@ -1669,6 +1674,8 @@ impl MyEguiApp {
         (
             Self {
                 slide_show: Arc::new(ArcSwap::new(Arc::new(RwLock::new(slide_show.0)))),
+                #[cfg(not(target_arch = "wasm32"))]
+                viewbox_nodes,
                 next: Arc::new(false.into()),
                 export: false,
                 restart_timer: Arc::new(1.into()),
@@ -1719,7 +1726,9 @@ impl MyEguiApp {
         #[cfg(not(target_arch = "wasm32"))]
         let speaker_viewport = ViewportId::from_hash_of("speaker_view");
         #[cfg(not(target_arch = "wasm32"))]
-        if ctx.input(|input| input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape)) {
+        if ctx.input(|input| input.key_down(egui::Key::Q) || input.key_down(egui::Key::Escape))
+            && !self.lsp
+        {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -1817,7 +1826,7 @@ impl MyEguiApp {
                                 self.time_offset = 0.0;
                                 index -= 1;
                                 while matches!(
-                                    slide_show.slide_show.get_index(index).map(|o| o.1.deref()),
+                                    slide_show.slide_show.get_index(index).map(|o| o.1),
                                     Some(
                                         AstObject::Action { next: true, .. }
                                             | AstObject::Slide { next: true, .. }
@@ -1860,7 +1869,7 @@ impl MyEguiApp {
                     if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                         #[cfg(not(target_arch = "wasm32"))]
                         ctx.request_repaint_of(speaker_viewport);
-                        match slide.deref() {
+                        match slide {
                             AstObject::Slide {
                                 objects: slide,
                                 actions,
@@ -1888,7 +1897,7 @@ impl MyEguiApp {
                                 ..
                             } => {
                                 let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
-                                match slide.deref() {
+                                match slide {
                                     AstObject::Slide {
                                         objects: slide,
                                         bg,
@@ -1919,6 +1928,7 @@ impl MyEguiApp {
                     }
                 };
 
+                #[cfg(not(target_arch = "wasm32"))]
                 if self.lsp {
                     ui.painter().rect_stroke(
                         resolved.draw_size,
@@ -1931,7 +1941,7 @@ impl MyEguiApp {
                 if let Some((_, slide)) = slide_show.slide_show.get_index(index) {
                     let time = ui_time - self.time_offset;
 
-                    match slide.deref() {
+                    match slide {
                         AstObject::Slide {
                             max_time,
                             next,
@@ -1973,7 +1983,7 @@ impl MyEguiApp {
                             slide_in_ast, next, ..
                         } => {
                             let slide = slide_show.slide_show.get(slide_in_ast).unwrap();
-                            match slide.deref() {
+                            match slide {
                                 AstObject::Slide { max_time, .. } => {
                                     resolved.draw_slide(
                                         ui,
@@ -2096,7 +2106,7 @@ impl MyEguiApp {
                                     self.next.store(false, Ordering::Relaxed);
                                     index -= 1;
                                     while matches!(
-                                        slide_show.slide_show.get_index(index).map(|o| o.1.deref()),
+                                        slide_show.slide_show.get_index(index).map(|o| o.1),
                                         Some(
                                             AstObject::Action { next: true, .. }
                                                 | AstObject::Slide { next: true, .. }

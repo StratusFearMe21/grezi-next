@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=grezi
+Exec=grezi %i -eo %o -s %s -i 1
+MimeType=application/grz

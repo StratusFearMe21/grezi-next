@@ -1,7 +1,7 @@
 (viewbox
-    name: (identifier) @obj)
+    name: (identifier) @obj) @outer
 (obj
-    name: (identifier) @obj)
+    name: (identifier) @obj) @outer
 (register
     (obj_param
-        key: (identifier) @obj))
+        key: (identifier) @obj)) @outer

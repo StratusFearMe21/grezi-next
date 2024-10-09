@@ -399,14 +399,21 @@ pub fn parse_file(
     slide_show: &mut crate::SlideShow,
     egui_ctx: &eframe::egui::Context,
     file_path: &std::path::Path,
+    viewbox_nodes: std::sync::Arc<
+        arc_swap::ArcSwap<HashMap<u64, u64, BuildHasherDefault<PassThroughHasher>>>,
+    >,
 ) -> Result<(), Vec<Error>> {
-    use std::{collections::HashSet, ops::Deref, sync::Arc};
+    use std::{collections::HashSet, sync::Arc, time::Instant};
 
     use indexmap::IndexMap;
 
+    use crate::layout::UnresolvedLayout;
+
     use self::objects::ObjectState;
 
+    // let instant = Instant::now();
     let mut bg = (Color::default(), None);
+    let mut margin_register = 15.0;
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
     let mut on_screen: HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>> =
@@ -511,8 +518,10 @@ pub fn parse_file(
         slide_show.slide_show.capacity(),
         BuildHasherDefault::default(),
     );
+    let vb_nodes = viewbox_nodes.load();
+    let mut viewboxes =
+        HashMap::with_capacity_and_hasher(vb_nodes.capacity(), BuildHasherDefault::default());
     let mut last_slide_changed = false;
-    let mut last_bg_changed = false;
     'parserloop: loop {
         let node = tree_cursor.node();
         match NodeKind::from(node.kind_id()) {
@@ -521,7 +530,7 @@ pub fn parse_file(
                     let has_changes = !old_nodes.contains(&node_id);
                     last_slide = node_id;
 
-                    let slide_on = slide_show.slide_show.get(&node_id);
+                    let mut slide_on = slide_show.slide_show.swap_remove(&node_id);
 
                     if has_changes || slide_on.is_none() || is_new || last_slide_changed {
                         tree_cursor.fork(|cursor| {
@@ -534,9 +543,10 @@ pub fn parse_file(
                                 &mut errors_present,
                                 (bg.0, bg.1.take()),
                                 &mut slide_show.viewboxes,
+                                margin_register,
                             ) {
                                 Ok((slide, color)) => {
-                                    slides.insert(node_id, Arc::new(slide));
+                                    slides.insert(node_id, slide);
 
                                     if let Some(color) = color {
                                         bg.0 = color.1;
@@ -549,11 +559,11 @@ pub fn parse_file(
                     } else {
                         on_screen.clear();
                         if let Some(AstObject::Slide {
-                            objects, bg: color, ..
-                        }) = slide_on.map(|s| {
-                            slides.insert(node_id, Arc::clone(s));
-                            s.deref()
-                        }) {
+                            ref mut objects,
+                            bg: ref mut color,
+                            ..
+                        }) = slide_on
+                        {
                             for (index, obj) in objects.iter().enumerate() {
                                 on_screen
                                     .insert(obj.object, (index, obj.state == ObjectState::Exiting));
@@ -567,9 +577,14 @@ pub fn parse_file(
                                     }
                                 }
                             }
-                            if let Some(color) = color.1 {
-                                bg.0 = color.1;
+                            color.0 = bg.0;
+                            if let Some(c) = bg.1.take() {
+                                bg.0 = c.1;
+                                color.1 = Some(c);
                             }
+                        }
+                        if let Some(s) = slide_on {
+                            slides.insert(node_id, s);
                         }
                     }
                 }
@@ -578,20 +593,31 @@ pub fn parse_file(
             NodeKind::Viewbox => match viewboxes::id(&mut tree_cursor) {
                 Ok(node_id) => {
                     let has_changes = !old_nodes.contains(&node_id);
-                    if has_changes || is_new {
+                    let viewbox_node = vb_nodes.get(&node_id).copied();
+                    let viewbox_on = viewbox_node.and_then(|v| slide_show.viewboxes.get_mut(&v));
+                    if has_changes || is_new || viewbox_on.is_none() {
                         tree_cursor.fork(|cursor| {
                             match viewboxes::parse_viewbox(
                                 cursor,
                                 source,
                                 &hasher,
                                 &slide_show.viewboxes,
+                                margin_register,
                             ) {
                                 Ok(layout) => {
+                                    viewboxes.insert(node_id, layout.0);
                                     slide_show.viewboxes.insert(layout.0, layout.1);
                                 }
                                 Err(e) => errors_present.push(e),
                             }
                         })
+                    } else {
+                        if let Some(UnresolvedLayout { margin, .. }) = viewbox_on.map(|v| {
+                            viewboxes.insert(node_id, viewbox_node.unwrap());
+                            v
+                        }) {
+                            *margin = margin_register;
+                        }
                     }
                 }
                 Err(e) => errors_present.push(e),
@@ -621,32 +647,28 @@ pub fn parse_file(
                 }
                 Err(e) => errors_present.push(e),
             },
-            NodeKind::Register => match register_id(&mut tree_cursor) {
-                Ok(node_id) => {
-                    let has_changes = !old_nodes.contains(&node_id);
-                    if has_changes || is_new || last_bg_changed {
-                        match parse_register(&mut tree_cursor, source) {
-                            Ok((key, value)) => {
-                                let value: std::borrow::Cow<'_, str> = value.into();
-                                if key == "BACKGROUND" {
-                                    match color::parse_color_with(
-                                        &mut color::DefaultColorParser::new(Some(&mut bg.0)),
-                                        &mut cssparser::Parser::new(
-                                            &mut cssparser::ParserInput::new(value.as_ref()),
-                                        ),
-                                    ) {
-                                        Ok(c) => bg.1 = Some(c),
-                                        Err(e) => errors_present.push(Error::ColorError(
-                                            PointFromRange::new(node.range(), source),
-                                            format!("{:?}", e),
-                                        )),
-                                    }
-                                }
-                            }
-                            Err(e) => errors_present.push(e),
+            NodeKind::Register => match parse_register(&mut tree_cursor, source) {
+                Ok((key, value)) => {
+                    let value: std::borrow::Cow<'_, str> = value.into();
+                    if key == "BACKGROUND" {
+                        match color::parse_color_with(
+                            &mut color::DefaultColorParser::new(Some(&mut bg.0)),
+                            &mut cssparser::Parser::new(&mut cssparser::ParserInput::new(
+                                value.as_ref(),
+                            )),
+                        ) {
+                            Ok(c) => bg.1 = Some(c),
+                            Err(e) => errors_present.push(Error::ColorError(
+                                PointFromRange::new(node.range(), source),
+                                format!("{:?}", e),
+                            )),
                         }
-                        last_slide_changed = has_changes || last_bg_changed;
-                        last_bg_changed = has_changes;
+                    } else if key == "MARGIN" {
+                        match value.parse() {
+                            Ok(value) => margin_register = value,
+                            Err(_) => errors_present
+                                .push(Error::Syntax(PointFromRange::new(node.range(), source))),
+                        }
                     }
                 }
                 Err(e) => errors_present.push(e),
@@ -654,7 +676,7 @@ pub fn parse_file(
             NodeKind::SlideFunctions => match actions::id(&mut tree_cursor) {
                 Ok(node_id) => {
                     let has_changes = !old_nodes.contains(&node_id);
-                    let slide_on = slide_show.slide_show.get(&node_id);
+                    let slide_on = slide_show.slide_show.swap_remove(&node_id);
 
                     if slide_on.is_none() || has_changes || is_new || last_slide_changed {
                         tree_cursor.fork(|cursor| {
@@ -667,13 +689,13 @@ pub fn parse_file(
                                 &mut errors_present,
                             ) {
                                 Ok(action) => {
-                                    slides.insert(node_id, Arc::new(action));
+                                    slides.insert(node_id, action);
                                 }
                                 Err(e) => errors_present.push(e),
                             }
                         });
                     } else {
-                        slides.insert(node_id, slide_on.cloned().unwrap());
+                        slides.insert(node_id, slide_on.unwrap());
                     }
                 }
                 Err(e) => errors_present.push(e),
@@ -693,11 +715,14 @@ pub fn parse_file(
         }
     }
     slide_show.slide_show = slides;
+    viewbox_nodes.store(Arc::new(viewboxes));
     if is_new {
         slide_show.viewboxes.shrink_to_fit();
         slide_show.objects.shrink_to_fit();
         citations::parse_citations(file_path, &hasher, slide_show).unwrap();
     }
+
+    // dbg!(instant.elapsed());
 
     if errors_present.is_empty() {
         Ok(())

@@ -4,6 +4,7 @@ use cairo::ImageSurface;
 use cairo::TextClusterFlags;
 use eframe::egui;
 use eframe::epaint::mutex::Mutex;
+use eframe::epaint::ColorMode;
 use eframe::epaint::TextureId;
 use egui_glyphon::glyphon::fontdb::ID;
 use egui_glyphon::glyphon::FontSystem;
@@ -118,8 +119,11 @@ pub fn cairo_draw_shape(
             }
         }
         egui::Shape::LineSegment { points, stroke } => {
+            let ColorMode::Solid(stroke_color) = stroke.color else {
+                panic!("Stroke color was UV?")
+            };
             let color: palette::Srgba<u8> =
-                palette::cast::from_array(stroke.color.to_srgba_unmultiplied());
+                palette::cast::from_array(stroke_color.to_srgba_unmultiplied());
             let color: palette::Srgba<f64> = color.into_format();
             // let color: palette::LinSrgba<f64> = color.into_linear();
             ctx.set_source_rgba(color.red, color.green, color.blue, color.alpha);

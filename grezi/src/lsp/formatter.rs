@@ -495,7 +495,11 @@ impl<'a> FormattingCursor<'a> {
             }
         }
 
-        Ok(true)
+        if self.node().kind_id() == NodeKind::Comment as u16 && self.goto_next_impl()? {
+            self.navigate_and_format(whitespace_rule, current_rope)
+        } else {
+            Ok(true)
+        }
     }
 
     pub fn revisit(

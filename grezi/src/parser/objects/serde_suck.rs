@@ -1,4 +1,4 @@
-use egui_glyphon::glyphon::cosmic_text;
+use egui_glyphon::glyphon::cosmic_text::{self, CacheMetrics};
 
 use cosmic_text::{
     Align, AttrsOwned, CacheKeyFlags, Color, FamilyOwned, Metrics, Stretch, Style, Weight,
@@ -49,6 +49,50 @@ pub enum OrderedListStyleSerde {
 pub struct MetricsSerde {
     pub font_size: f32,
     pub line_height: f32,
+}
+
+mod cache_metrics {
+    use egui_glyphon::glyphon::{cosmic_text::CacheMetrics, Metrics};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    pub struct MetricsSerde {
+        pub font_size: f32,
+        pub line_height: f32,
+    }
+
+    pub fn serialize<S>(metrics: &CacheMetrics, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let metrics: Metrics = (*metrics).into();
+        serde::Serialize::serialize(
+            &MetricsSerde {
+                font_size: metrics.font_size,
+                line_height: metrics.line_height,
+            },
+            serializer,
+        )
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<CacheMetrics, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let metrics: MetricsSerde = MetricsSerde::deserialize(deserializer)?;
+        Ok(Metrics {
+            font_size: metrics.font_size,
+            line_height: metrics.line_height,
+        }
+        .into())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(remote = "Option<CacheMetrics>")]
+pub enum CacheMetricsOpt {
+    Some(#[serde(with = "cache_metrics")] CacheMetrics),
+    None,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -133,6 +177,8 @@ pub struct AttrsSerde {
     #[serde(with = "WeightSerde")]
     pub weight: Weight,
     pub metadata: usize,
+    #[serde(with = "CacheMetricsOpt")]
+    pub metrics_opt: Option<CacheMetrics>,
     #[serde(with = "cache_key_flags")]
     pub cache_key_flags: CacheKeyFlags,
 }

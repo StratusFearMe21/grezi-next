@@ -5,7 +5,8 @@ use helix_core::{
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionParams,
-    CompletionResponse, CompletionTextEdit, InsertReplaceEdit, InsertTextFormat, Position,
+    CompletionResponse, CompletionTextEdit, Documentation, InsertTextFormat, MarkupContent,
+    MarkupKind, Position, TextEdit,
 };
 
 use crate::parser::{GrzCursor, NodeKind};
@@ -41,10 +42,9 @@ pub fn complete_source_file(
         filter_text: Some("new".into()),
         kind: Some(CompletionItemKind::SNIPPET),
         preselect: Some(true),
-        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             new_text: "{$0}[]".to_string(),
-            insert: new_slide_range,
-            replace: new_slide_range,
+            range: new_slide_range,
         })),
         additional_text_edits: Some(Vec::new()),
         ..Default::default()
@@ -150,10 +150,9 @@ pub fn complete_source_file(
         insert_text_format: Some(InsertTextFormat::SNIPPET),
         sort_text: Some("ffffffef".to_string()),
         filter_text: Some("continue".into()),
-        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             new_text,
-            insert: continue_slide_range,
-            replace: continue_slide_range,
+            range: continue_slide_range,
         })),
         additional_text_edits: Some(Vec::new()),
         ..Default::default()
@@ -172,7 +171,6 @@ pub fn complete_viewbox(
     current_rope: &Rope,
     completion_point: Point,
     completion_node: Node<'_>,
-    completion: CompletionParams,
 ) -> Vec<CompletionItem> {
     query_cursor.set_point_range(Point { row: 0, column: 0 }..completion_point);
     let iter = query_cursor.matches(
@@ -190,19 +188,16 @@ pub fn complete_viewbox(
         preselect: Some(true),
         insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
         insert_text_mode: None,
-        text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+        text_edit: Some(CompletionTextEdit::Edit(TextEdit {
             new_text: "Size".to_string(),
-            insert: lsp_types::Range {
-                start: completion.text_document_position.position,
-                end: completion.text_document_position.position,
-            },
-            replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+            range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
         })),
         additional_text_edits: Some(Vec::new()),
         ..Default::default()
     }];
     completions.extend(iter.map(|query_match| {
-        let byte_range = query_match.captures[0].node.byte_range();
+        let vb_byte_range = query_match.captures[0].node.byte_range();
+        let byte_range = query_match.captures[1].node.byte_range();
         let label = current_rope.byte_slice(byte_range).to_string();
 
         CompletionItem {
@@ -212,15 +207,15 @@ pub fn complete_viewbox(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: label,
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("```grz\n{}\n```", current_rope.byte_slice(vb_byte_range)),
+            })),
             ..Default::default()
         }
     }));
@@ -235,7 +230,6 @@ pub fn complete_object(
     current_rope: &Rope,
     completion_point: Point,
     completion_node: Node<'_>,
-    completion: CompletionParams,
 ) -> Vec<CompletionItem> {
     query_cursor.set_point_range(Point { row: 0, column: 0 }..completion_point);
     let iter = query_cursor.matches(
@@ -254,13 +248,17 @@ pub fn complete_object(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
-                new_text: format!("{}$0,", label),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                new_text: if current_rope
+                    .line(completion_range.end_point.row)
+                    .char(completion_range.end_point.column)
+                    == ':'
+                {
+                    format!("{}$0", label)
+                } else {
+                    format!("{}$0,", label)
                 },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             label,
             additional_text_edits: Some(Vec::new()),
@@ -270,11 +268,7 @@ pub fn complete_object(
     .collect()
 }
 
-pub fn complete_object_type(
-    current_rope: &Rope,
-    completion_node: Node<'_>,
-    completion: CompletionParams,
-) -> Vec<CompletionItem> {
+pub fn complete_object_type(current_rope: &Rope, completion_node: Node<'_>) -> Vec<CompletionItem> {
     let completion_range = completion_node.range();
 
     vec![
@@ -285,13 +279,9 @@ pub fn complete_object_type(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "Paragraph".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -303,13 +293,9 @@ pub fn complete_object_type(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "Header".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -321,13 +307,9 @@ pub fn complete_object_type(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "Rect".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -339,13 +321,9 @@ pub fn complete_object_type(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::PLAIN_TEXT),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "Image".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -356,7 +334,6 @@ pub fn complete_object_type(
 pub fn complete_object_params(
     current_rope: &Rope,
     completion_node: Node<'_>,
-    completion: CompletionParams,
 ) -> Vec<CompletionItem> {
     let completion_range = completion_node.range();
 
@@ -368,13 +345,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "value: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -386,13 +359,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "height: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -404,13 +373,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "code: r#\"$0\"#,".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -422,13 +387,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "tint: $0,".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -440,13 +401,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "color: $0,".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -458,13 +415,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "background: $0,".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -476,13 +429,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "scale: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -494,13 +443,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "font_family: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -512,13 +457,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "line_height: $0,".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -530,13 +471,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "source: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -548,13 +485,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "font_size: $0,".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -566,13 +499,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "language: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -584,13 +513,9 @@ pub fn complete_object_params(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: "align: \"$0\",".to_string(),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -602,7 +527,6 @@ pub fn complete_top_level_object(
     current_rope: &Rope,
     parent_object: Node<'_>,
     completion_node: Node<'_>,
-    completion: CompletionParams,
 ) -> Vec<CompletionItem> {
     let completion_range = parent_object.range();
 
@@ -614,17 +538,13 @@ pub fn complete_top_level_object(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: format!(
                     "{}: ${{1:Size}}[0] >$0]",
                     current_rope
                         .byte_slice(completion_node.prev_named_sibling().unwrap().byte_range())
                 ),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()
@@ -636,17 +556,13 @@ pub fn complete_top_level_object(
             preselect: Some(true),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             insert_text_mode: None,
-            text_edit: Some(CompletionTextEdit::InsertAndReplace(InsertReplaceEdit {
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 new_text: format!(
                     "{}: ${{1:Paragraph}}($0)",
                     current_rope
                         .byte_slice(completion_node.prev_named_sibling().unwrap().byte_range())
                 ),
-                insert: lsp_types::Range {
-                    start: completion.text_document_position.position,
-                    end: completion.text_document_position.position,
-                },
-                replace: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
+                range: char_range_from_byte_range(completion_range, &current_rope).unwrap(),
             })),
             additional_text_edits: Some(Vec::new()),
             ..Default::default()

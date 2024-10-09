@@ -88,6 +88,11 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                     self.location += " ".len();
                     return Some((" ", self.attrs.clone()));
                 }
+                Event::Hardbreak | Event::ThematicBreak(_) => {
+                    self.added = true;
+                    self.location += "\n".len();
+                    return Some(("\n", self.attrs.clone()));
+                }
                 Event::Str(Cow::Borrowed(s)) | Event::Symbol(Cow::Borrowed(s)) => {
                     self.added = true;
                     self.location += s.len();
@@ -142,7 +147,6 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                     }
                     _ => {}
                 },
-                Event::Hardbreak | Event::ThematicBreak(_) => {}
                 Event::Blankline | Event::Escape | Event::FootnoteReference(_) => {}
                 Event::Str(Cow::Owned(_)) | Event::Symbol(Cow::Owned(_)) => panic!(),
             }
@@ -226,7 +230,7 @@ pub fn resolve_paragraphs(
                 );
 
                 list_buffer.set_wrap(font_system, cosmic_text::Wrap::WordOrGlyph);
-                list_buffer.set_size(font_system, f32::MAX, f32::MAX);
+                list_buffer.set_size(font_system, Some(f32::MAX), Some(f32::MAX));
 
                 list_buffer.shape_until_scroll(font_system, false);
 
@@ -271,7 +275,11 @@ pub fn resolve_paragraphs(
             .relative_bounds
             .set_width(size.x - paragraph.indent.indent);
         let mut buffer = paragraph.buffer.write();
-        buffer.set_size(font_system, size.x - paragraph.indent.indent, f32::MAX);
+        buffer.set_size(
+            font_system,
+            Some(size.x - paragraph.indent.indent),
+            Some(f32::MAX),
+        );
         buffer.shape_until_scroll(font_system, false);
     });
 
@@ -358,7 +366,11 @@ impl JotdownItem {
         );
 
         buffer.set_wrap(font_system, cosmic_text::Wrap::WordOrGlyph);
-        buffer.set_size(font_system, width - self.indent.indent, f32::MAX);
+        buffer.set_size(
+            font_system,
+            Some(width - self.indent.indent),
+            Some(f32::MAX),
+        );
 
         for line in &mut buffer.lines {
             line.set_align(align);

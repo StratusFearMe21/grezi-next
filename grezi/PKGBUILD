@@ -1,0 +1,16 @@
+pkgname=grezi
+pkgver=1.0.5
+pkgrel=1
+pkgdesc='Presentation as code'
+arch=('any')
+license=('gpl')
+depends=(
+  helix
+)
+
+
+package() {
+  install -Dm755 ../../target/release/grezi "$pkgdir/usr/bin/grezi"
+  install -Dm644 ../grz.xml "$pkgdir/usr/share/mime/packages/grz.xml"
+  install -Dm644 ../grezi.thumbnailer "$pkgdir/usr/share/thumbnailers/grezi.thumbnailer"
+}

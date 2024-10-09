@@ -97,8 +97,12 @@ pub fn measure_buffer(buffer: &Buffer, vb: Vec2) -> Rect {
     let (max_width, max_height) = buffer.size();
 
     let size = Vec2::new(
-        if rtl { vb.x } else { width.min(max_width) },
-        (total_lines as f32 * buffer.metrics().line_height).min(max_height),
+        if rtl {
+            vb.x
+        } else {
+            width.min(max_width.unwrap_or(width))
+        },
+        (total_lines as f32 * buffer.metrics().line_height).min(max_height.unwrap_or(f32::MAX)),
     );
 
     Rect::from_min_size(Pos2::ZERO, size)
@@ -512,7 +516,15 @@ pub fn parse_objects(
                                             ..walker.node().byte_range().end,
                                     )
                                     .chunks()
-                                    .for_each(|chunk| string_content.push_str(chunk));
+                                    .for_each(|chunk| {
+                                        if chunk == "\n" {
+                                            string_content.push_str("\\\n")
+                                        } else if chunk == "\r\n" {
+                                            string_content.push_str("\\\r\n")
+                                        } else {
+                                            string_content.push_str(chunk)
+                                        }
+                                    });
                             }
                             _ => break,
                         }

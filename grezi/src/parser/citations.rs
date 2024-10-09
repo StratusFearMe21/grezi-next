@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path};
 
 use eframe::emath::Align2;
 use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Family};
@@ -30,6 +30,9 @@ pub fn parse_citations(
         .ok_or(())
         .and_then(|p| std::fs::read_to_string(p).map_err(|_| ()))
     {
+        let text_object_header = hasher.hash_one("__citation__text__object__header__");
+        let vb = hasher.hash_one("__citation__vb__");
+
         if path.exists() {
             let mut parser = Parser::new();
             parser.set_language(&tree_sitter_ntbib::language()).unwrap();
@@ -38,8 +41,9 @@ pub fn parse_citations(
             let mut italics = false;
             let mut pre = false;
             let mut job = Vec::new();
-            let mut header = "";
+            let mut header = Cow::Borrowed("");
             let mut in_header = false;
+            let mut lines = 0;
             if let Some(tree) = parser.parse(file, None) {
                 let t_r = Rope::new();
                 let mut tree_cursor = GrzCursor::new(&tree, &t_r);
@@ -59,7 +63,7 @@ pub fn parse_citations(
                             match &file[tree_cursor.node().byte_range()] {
                                 "pre" => pre = true,
                                 "i" => italics = true,
-                                "p style='text-align:center;'" => in_header = true,
+                                p if p.starts_with("p style=") => in_header = true,
                                 _ => {}
                             }
                             tree_cursor.goto_parent();
@@ -70,6 +74,7 @@ pub fn parse_citations(
                                 "pre" => {
                                     pre = false;
                                     if !job.is_empty() {
+                                        lines += 1;
                                         job.push(RichText(
                                             "\n".to_owned(),
                                             AttrsOwned::new({
@@ -86,6 +91,20 @@ pub fn parse_citations(
                                                 }
                                             }),
                                         ));
+                                        if lines % 16 == 0 {
+                                            let text_object = hasher
+                                                .hash_one(("__citation__text__object__", lines));
+                                            let mut finished_job = Vec::new();
+                                            std::mem::swap(&mut job, &mut finished_job);
+
+                                            add_to_slideshow(
+                                                slideshow,
+                                                text_object,
+                                                text_object_header,
+                                                vb,
+                                                finished_job,
+                                            );
+                                        }
                                         // height += 24.0 * 3.0;
                                     }
                                 }
@@ -113,7 +132,10 @@ pub fn parse_citations(
                         && !in_header
                     {
                         job.push(RichText(
-                            file[tree_cursor.node().byte_range()].to_owned(),
+                            html_escape::decode_html_entities(
+                                &file[tree_cursor.node().byte_range()],
+                            )
+                            .into_owned(),
                             AttrsOwned::new({
                                 let attrs = Attrs::new()
                                     .color(Color::rgb(255, 255, 255))
@@ -126,7 +148,9 @@ pub fn parse_citations(
                             }),
                         ));
                     } else if in_header && header.is_empty() {
-                        header = &file[tree_cursor.node().byte_range()];
+                        header = html_escape::decode_html_entities(
+                            &file[tree_cursor.node().byte_range()],
+                        );
                     }
 
                     tree_cursor.goto_parent();
@@ -141,23 +165,8 @@ pub fn parse_citations(
                 }
             }
 
-            let mut pops = 0;
-            let mut iter = job.iter().rev();
-            loop {
-                if iter.next().unwrap().0 == "\n" {
-                    pops += 1;
-                } else {
-                    break;
-                }
-            }
-
-            for _ in 0..pops {
-                job.pop();
-            }
-
-            let text_object = hasher.hash_one("__citation__text__object__");
-            let text_object_header = hasher.hash_one("__citation__text__object__header__");
-            let vb = hasher.hash_one("__citation__vb__");
+            let text_object = hasher.hash_one(("__citation__text__object__", lines));
+            add_to_slideshow(slideshow, text_object, text_object_header, vb, job);
             slideshow.viewboxes.insert(
                 vb,
                 UnresolvedLayout {
@@ -166,20 +175,6 @@ pub fn parse_citations(
                     constraints: vec![Constraint::Length(148.0), Constraint::Min(0.0)],
                     expand_to_fill: true,
                     split_on: super::viewboxes::ViewboxIn::Size,
-                },
-            );
-            slideshow.objects.insert(
-                text_object,
-                super::objects::Object {
-                    position: None,
-                    viewbox: None,
-                    object: super::objects::ObjectType::Text {
-                        job: vec![JotdownItem::new_default(job)],
-                        font_size: 24.0,
-                        line_height: Some(2.0),
-                        align: None,
-                        spacing: super::objects::VerticalSpacing::Normal,
-                    },
                 },
             );
             slideshow.objects.insert(
@@ -203,35 +198,6 @@ pub fn parse_citations(
                     },
                 },
             );
-            slideshow.slide_show.insert(
-                u64::MAX,
-                Arc::new(super::AstObject::Slide {
-                    objects: vec![
-                        SlideObj {
-                            object: text_object,
-                            locations: [
-                                (Align2::LEFT_BOTTOM, ViewboxIn::Size),
-                                (Align2::LEFT_TOP, ViewboxIn::Custom(vb, 1)),
-                            ],
-                            scaled_time: [0.0, 0.5],
-                            state: super::objects::ObjectState::Entering,
-                        },
-                        SlideObj {
-                            object: text_object_header,
-                            locations: [
-                                (Align2::CENTER_CENTER, ViewboxIn::Size),
-                                (Align2::CENTER_CENTER, ViewboxIn::Custom(vb, 0)),
-                            ],
-                            scaled_time: [0.0, 0.5],
-                            state: super::objects::ObjectState::Entering,
-                        },
-                    ],
-                    actions: Vec::new(),
-                    bg: (super::color::Color::default(), None),
-                    max_time: 0.5,
-                    next: false,
-                }),
-            );
             Ok(())
         } else {
             Ok(())
@@ -239,4 +205,80 @@ pub fn parse_citations(
     } else {
         Ok(())
     }
+}
+
+fn add_to_slideshow(
+    slideshow: &mut SlideShow,
+    text_object: u64,
+    text_object_header: u64,
+    vb: u64,
+    mut job: Vec<RichText>,
+) {
+    if job.is_empty() {
+        return;
+    }
+    let mut pops = 0;
+    let mut iter = job.iter().rev();
+    loop {
+        if iter.next().unwrap().0 == "\n" {
+            pops += 1;
+        } else {
+            break;
+        }
+    }
+
+    for _ in 0..pops {
+        job.pop();
+    }
+
+    slideshow.objects.insert(
+        text_object,
+        super::objects::Object {
+            position: None,
+            viewbox: None,
+            object: super::objects::ObjectType::Text {
+                job: vec![JotdownItem::new_default(job)],
+                font_size: 24.0,
+                line_height: Some(2.0),
+                align: None,
+                spacing: super::objects::VerticalSpacing::Normal,
+            },
+        },
+    );
+
+    let mut key = u64::MAX;
+
+    while slideshow.slide_show.contains_key(&key) {
+        key -= 1;
+    }
+
+    slideshow.slide_show.insert(
+        key,
+        super::AstObject::Slide {
+            objects: vec![
+                SlideObj {
+                    object: text_object,
+                    locations: [
+                        (Align2::LEFT_BOTTOM, ViewboxIn::Size),
+                        (Align2::LEFT_TOP, ViewboxIn::Custom(vb, 1)),
+                    ],
+                    scaled_time: [0.0, 0.5],
+                    state: super::objects::ObjectState::Entering,
+                },
+                SlideObj {
+                    object: text_object_header,
+                    locations: [
+                        (Align2::CENTER_CENTER, ViewboxIn::Size),
+                        (Align2::CENTER_CENTER, ViewboxIn::Custom(vb, 0)),
+                    ],
+                    scaled_time: [0.0, 0.5],
+                    state: super::objects::ObjectState::Entering,
+                },
+            ],
+            actions: Vec::new(),
+            bg: (super::color::Color::default(), None),
+            max_time: 0.5,
+            next: false,
+        },
+    );
 }

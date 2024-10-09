@@ -1,2 +1,2 @@
 (viewbox
-    name: (identifier) @name)
+    name: (identifier) @name) @vb

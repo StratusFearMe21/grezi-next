@@ -21,9 +21,12 @@ use crate::{
     MyEguiApp, SlideShow,
 };
 use eframe::egui::mutex::RwLock;
-use helix_core::ropey::{Rope, RopeSlice};
 use helix_core::syntax::RopeProvider;
 use helix_core::tree_sitter::{Point, Query, QueryCursor, Tree};
+use helix_core::{
+    ropey::{Rope, RopeSlice},
+    tree_sitter::Node,
+};
 use hunspell_rs::CheckResult;
 use indexmap::IndexSet;
 use lsp_server::{Message, Response};
@@ -34,22 +37,23 @@ use lsp_types::{
     },
     request::{
         ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, ExecuteCommand, FoldingRangeRequest,
-        Formatting, GotoDeclaration, InlayHintRequest, PrepareRenameRequest, RangeFormatting,
-        References, Rename, Request, SemanticTokensFullRequest,
+        Formatting, GotoDeclaration, HoverRequest, InlayHintRequest, PrepareRenameRequest,
+        RangeFormatting, References, Rename, Request, SemanticTokensFullRequest,
     },
     ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind, CompletionOptions,
     CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
     DeclarationCapability, DocumentChanges, DocumentFormattingParams,
     DocumentRangeFormattingParams, DocumentSymbolParams, ExecuteCommandOptions,
-    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, Hover, InlayHintOptions,
-    InlayHintParams, InlayHintServerCapabilities, InsertReplaceEdit, InsertTextFormat, MessageType,
-    OneOf, OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind,
-    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, SaveOptions,
-    SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend,
-    SemanticTokensOptions, SemanticTokensParams, SemanticTokensServerCapabilities,
-    ServerCapabilities, ShowMessageParams, TextDocumentEdit, TextDocumentPositionParams,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions, WorkspaceEdit,
+    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, HoverParams,
+    HoverProviderCapability, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities,
+    InsertTextFormat, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
+    PositionEncodingKind, PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams,
+    SaveOptions, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams, TextDocumentEdit,
+    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
+    WorkspaceEdit,
 };
 
 use self::formatter::char_range_from_byte_range;
@@ -170,6 +174,7 @@ pub fn start_lsp(
         }),
         declaration_provider: Some(DeclarationCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
@@ -254,6 +259,34 @@ pub fn start_lsp(
                 }
 
                 match req.method.as_str() {
+                    HoverRequest::METHOD => {
+                        if let Ok((rqid, params)) = req.extract::<HoverParams>(HoverRequest::METHOD)
+                        {
+                            let doc = current_state
+                                .get(&params.text_document_position_params.text_document.uri)
+                                .unwrap();
+
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(
+                                    rqid,
+                                    symbols::hover(
+                                        &app,
+                                        &top_level_search_query,
+                                        &slide_index_query,
+                                        &vb_in_slide_query,
+                                        &obj_in_slide_query,
+                                        &lsp_egui_ctx,
+                                        params,
+                                        &doc.rope,
+                                        &mut query_cursor,
+                                        &doc.tree,
+                                        doc.slideshow.read().deref(),
+                                    ),
+                                )))
+                                .unwrap();
+                        }
+                    }
                     RangeFormatting::METHOD => {
                         if let Ok((rqid, params)) =
                             req.extract::<DocumentRangeFormattingParams>(RangeFormatting::METHOD)
@@ -440,6 +473,7 @@ pub fn start_lsp(
                                         NodeKind::Viewbox
                                         | NodeKind::SlideObj
                                         | NodeKind::SlideObjects
+                                        | NodeKind::SlideVb
                                             if completion_node.prev_named_sibling().is_some() =>
                                         {
                                             connection
@@ -454,7 +488,6 @@ pub fn start_lsp(
                                                             &doc.rope,
                                                             completion_point,
                                                             completion_node,
-                                                            completion,
                                                         ),
                                                     )),
                                                 )))
@@ -473,7 +506,6 @@ pub fn start_lsp(
                                                             &doc.rope,
                                                             completion_point,
                                                             completion_node,
-                                                            completion,
                                                         ),
                                                     )),
                                                 )))
@@ -490,7 +522,6 @@ pub fn start_lsp(
                                                         completion::complete_object_type(
                                                             &doc.rope,
                                                             completion_node,
-                                                            completion,
                                                         ),
                                                     )),
                                                 )))
@@ -505,7 +536,6 @@ pub fn start_lsp(
                                                         completion::complete_object_params(
                                                             &doc.rope,
                                                             completion_node,
-                                                            completion,
                                                         ),
                                                     )),
                                                 )))
@@ -521,7 +551,6 @@ pub fn start_lsp(
                                                             &doc.rope,
                                                             parent_object,
                                                             completion_node,
-                                                            completion,
                                                         ),
                                                     )),
                                                 )))
@@ -579,27 +608,16 @@ pub fn start_lsp(
                                                         InsertTextFormat::PLAIN_TEXT,
                                                     ),
                                                     insert_text_mode: None,
-                                                    text_edit: Some(
-                                                        CompletionTextEdit::InsertAndReplace(
-                                                            InsertReplaceEdit {
-                                                                new_text: f.clone(),
-                                                                insert: lsp_types::Range {
-                                                                    start: completion
-                                                                        .text_document_position
-                                                                        .position,
-                                                                    end: completion
-                                                                        .text_document_position
-                                                                        .position,
-                                                                },
-                                                                replace:
-                                                                    char_range_from_byte_range(
-                                                                        completion_range,
-                                                                        &doc.rope,
-                                                                    )
-                                                                    .unwrap(),
-                                                            },
-                                                        ),
-                                                    ),
+                                                    text_edit: Some(CompletionTextEdit::Edit(
+                                                        TextEdit {
+                                                            range: char_range_from_byte_range(
+                                                                completion_range,
+                                                                &doc.rope,
+                                                            )
+                                                            .unwrap(),
+                                                            new_text: f.clone(),
+                                                        },
+                                                    )),
                                                     additional_text_edits: Some(Vec::new()),
                                                     ..Default::default()
                                                 })
@@ -681,6 +699,7 @@ pub fn start_lsp(
                                             &mut slide_show,
                                             &lsp_egui_ctx,
                                             Path::new(uri.path()),
+                                            Arc::clone(&app.viewbox_nodes),
                                         );
                                         doc.tree = tree.clone();
                                         match ast {
@@ -928,6 +947,7 @@ pub fn start_lsp(
                             &mut slide_show,
                             &lsp_egui_ctx,
                             Path::new(doc.text_document.uri.path()),
+                            Arc::clone(&app.viewbox_nodes),
                         );
                         let error_free_tree = tree.clone();
                         match ast {
@@ -1052,6 +1072,7 @@ pub fn start_lsp(
                                         &mut slide_show,
                                         &lsp_egui_ctx,
                                         Path::new(changes.text_document.uri.path()),
+                                        Arc::clone(&app.viewbox_nodes),
                                     ) {
                                         Ok(_) => {
                                             connection
@@ -1102,18 +1123,26 @@ pub fn start_lsp(
                             }
 
                             if changes_len == 1 {
-                                hover(
-                                    &app,
-                                    &doc.tree,
-                                    &mut query_cursor,
-                                    &doc.rope,
-                                    &slide_index_query,
-                                    &vb_in_slide_query,
-                                    &obj_in_slide_query,
-                                    &lsp_egui_ctx,
-                                    point,
-                                    doc.slideshow.read().deref(),
-                                );
+                                let changed_point = doc
+                                    .tree
+                                    .root_node()
+                                    .descendant_for_point_range(point, point);
+
+                                if let Some(node) = changed_point {
+                                    hover(
+                                        &app,
+                                        &doc.tree,
+                                        &mut query_cursor,
+                                        &doc.rope,
+                                        &slide_index_query,
+                                        &vb_in_slide_query,
+                                        &obj_in_slide_query,
+                                        &lsp_egui_ctx,
+                                        point,
+                                        node,
+                                        doc.slideshow.read().deref(),
+                                    );
+                                }
                             }
                         }
                     }
@@ -1131,6 +1160,7 @@ pub fn start_lsp(
                             &mut slide_show,
                             &lsp_egui_ctx,
                             Path::new(saved_doc.text_document.uri.path()),
+                            Arc::clone(&app.viewbox_nodes),
                         );
                         match ast {
                             Ok(_) => {
@@ -1193,74 +1223,45 @@ pub fn hover(
     obj_in_slide_query: &Query,
     lsp_egui_ctx: &eframe::egui::Context,
     point: Point,
+    mut node: Node<'_>,
     slideshow: &SlideShow,
-) -> Option<Hover> {
-    let changed_point = tree_info
-        .root_node()
-        .descendant_for_point_range(point, point);
+) {
+    if node.kind_id() == NodeKind::EdgeParser as u16 {
+        app.restart_timer.store(1, Ordering::Relaxed);
+    }
 
-    if let Some(mut node) = changed_point {
-        if node.kind_id() == NodeKind::EdgeParser as u16 {
-            app.restart_timer.store(1, Ordering::Relaxed);
-        }
-
-        while node.kind_id() != NodeKind::Slide as u16
-            && node.kind_id() != NodeKind::Viewbox as u16
-            && node.kind_id() != NodeKind::Obj as u16
-            && node.kind_id() != NodeKind::SlideVb as u16
-        {
-            if let Some(parent) = node.parent() {
-                node = parent;
-            } else {
-                if app.vb_dbg.swap(0, Ordering::Relaxed) != 0
-                    || app.obj_dbg.swap(0, Ordering::Relaxed) != 0
-                {
-                    lsp_egui_ctx.request_repaint();
-                }
-                return None;
+    while node.kind_id() != NodeKind::Slide as u16
+        && node.kind_id() != NodeKind::Viewbox as u16
+        && node.kind_id() != NodeKind::Obj as u16
+        && node.kind_id() != NodeKind::SlideVb as u16
+        && node.kind_id() != NodeKind::Register as u16
+    {
+        if let Some(parent) = node.parent() {
+            node = parent;
+        } else {
+            if app.vb_dbg.swap(0, Ordering::Relaxed) != 0
+                || app.obj_dbg.swap(0, Ordering::Relaxed) != 0
+            {
+                lsp_egui_ctx.request_repaint();
             }
+            return;
         }
+    }
 
-        if node.parent().map(|n| NodeKind::from(n.kind_id()) as u16) == Some(NodeKind::Slide as u16)
-        {
-            node = node.parent().unwrap();
-        }
+    if node.parent().map(|n| NodeKind::from(n.kind_id()) as u16) == Some(NodeKind::Slide as u16) {
+        node = node.parent().unwrap();
+    }
 
-        match NodeKind::from(node.kind_id()) {
-            nk @ NodeKind::Slide | nk @ NodeKind::SlideFunctions => {
-                query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
+    match NodeKind::from(node.kind_id()) {
+        NodeKind::Viewbox => {
+            if let Some(name_node) = node.named_child(0) {
+                let vb_name = current_rope.byte_slice(name_node.byte_range());
+                let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
 
-                let mut iter = query_cursor.matches(
-                    slide_index_query,
-                    tree_info.root_node(),
-                    RopeProvider(current_rope.slice(..)),
-                );
-
-                let slide_num = iter
-                    .position(|n| n.captures[0].node.id() == node.id())
-                    .unwrap_or_default();
-
-                if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
-                    app.next.store(false, Ordering::Relaxed);
-                    app.vb_dbg.store(0, Ordering::Relaxed);
-                    app.obj_dbg.store(0, Ordering::Relaxed);
-                    app.resolved.store(None);
-                    lsp_egui_ctx.request_repaint();
-                }
-                if matches!(nk, NodeKind::SlideFunctions) {
-                    app.restart_timer.store(1, Ordering::Relaxed);
-                    lsp_egui_ctx.request_repaint();
-                }
-            }
-            NodeKind::Viewbox => {
-                if let Some(name_node) = node.named_child(0) {
-                    let vb_name = current_rope.byte_slice(name_node.byte_range());
-                    let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-
-                    let hashed_vb = hasher.hash_one(vb_name);
-                    if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
-                        let mut already_on_slide = false;
-                        match slideshow.slide_show.get_index(app.index.load(Ordering::Relaxed)).map(|s| s.1.deref()) {
+                let hashed_vb = hasher.hash_one(vb_name);
+                if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
+                    let mut already_on_slide = false;
+                    match slideshow.slide_show.get_index(app.index.load(Ordering::Relaxed)).map(|s| s.1) {
                             Some(AstObject::Slide { objects, .. }) => {
                                 already_on_slide = objects
                                     .iter()
@@ -1270,112 +1271,7 @@ pub fn hover(
                             _ => {}
                         }
 
-                        if !already_on_slide {
-                            query_cursor.set_point_range(
-                                name_node.range().start_point..Point {
-                                    row: usize::MAX,
-                                    column: usize::MAX,
-                                },
-                            );
-
-                            let mut iter = query_cursor.matches(
-                                vb_in_slide_query,
-                                tree_info.root_node(),
-                                RopeProvider(current_rope.slice(..)),
-                            );
-
-                            let on_slide = iter.find(|query_match| {
-                                current_rope.byte_slice(query_match.captures[0].node.byte_range())
-                                    == vb_name
-                            });
-
-                            if let Some(mut on_slide) =
-                                on_slide.map(|q_match| q_match.captures[0].node)
-                            {
-                                while on_slide.kind_id() != NodeKind::Slide as u16 {
-                                    if let Some(parent) = on_slide.parent() {
-                                        on_slide = parent;
-                                    } else {
-                                        return None;
-                                    }
-                                }
-                                let range = on_slide.range();
-
-                                query_cursor
-                                    .set_point_range(Point { row: 0, column: 0 }..range.end_point);
-
-                                let mut iter = query_cursor.matches(
-                                    slide_index_query,
-                                    tree_info.root_node(),
-                                    RopeProvider(current_rope.slice(..)),
-                                );
-
-                                let slide_num = iter
-                                    .position(|n| n.captures[0].node.id() == on_slide.id())
-                                    .unwrap_or_default();
-
-                                app.index.store(slide_num, Ordering::Relaxed);
-                            }
-                            app.next.store(false, Ordering::Relaxed);
-                            app.obj_dbg.store(0, Ordering::Relaxed);
-
-                            app.resolved.store(None);
-                            lsp_egui_ctx.request_repaint();
-                        }
-                    }
-                }
-            }
-            NodeKind::SlideVb => {
-                if current_rope
-                    .byte_slice(node.byte_range())
-                    .chunks()
-                    .next()
-                    .map(|c| c.starts_with('|'))
-                    .unwrap_or_default()
-                {
-                    if let Some(name_node) = node.parent().and_then(|n| n.named_child(0)) {
-                        let vb_name = current_rope.byte_slice(name_node.byte_range());
-                        let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-                        let mut hasher = hasher.build_hasher();
-                        vb_name.hash(&mut hasher);
-                        node.range().hash(&mut hasher);
-                        let hashed_vb = hasher.finish();
-                        if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
-                            while node.kind_id() != NodeKind::Slide as u16 {
-                                if let Some(parent) = node.parent() {
-                                    node = parent;
-                                } else {
-                                    return None;
-                                }
-                            }
-                            query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
-
-                            let mut iter = query_cursor.matches(
-                                slide_index_query,
-                                tree_info.root_node(),
-                                RopeProvider(current_rope.slice(..)),
-                            );
-
-                            let slide_num = iter
-                                .position(|n| n.captures[0].node.id() == node.id())
-                                .unwrap_or_default();
-
-                            if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
-                                app.next.store(false, Ordering::Relaxed);
-                                app.resolved.store(None);
-                                lsp_egui_ctx.request_repaint();
-                            }
-                        }
-                    }
-                }
-            }
-            NodeKind::Obj => {
-                if let Some(name_node) = node.named_child(0) {
-                    let obj_name = current_rope.byte_slice(name_node.byte_range());
-                    let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
-
-                    let hashed_obj = hasher.hash_one(obj_name);
-                    if app.obj_dbg.swap(hashed_obj, Ordering::Relaxed) != hashed_obj {
+                    if !already_on_slide {
                         query_cursor.set_point_range(
                             name_node.range().start_point..Point {
                                 row: usize::MAX,
@@ -1384,14 +1280,14 @@ pub fn hover(
                         );
 
                         let mut iter = query_cursor.matches(
-                            obj_in_slide_query,
+                            vb_in_slide_query,
                             tree_info.root_node(),
                             RopeProvider(current_rope.slice(..)),
                         );
 
                         let on_slide = iter.find(|query_match| {
                             current_rope.byte_slice(query_match.captures[0].node.byte_range())
-                                == obj_name
+                                == vb_name
                         });
 
                         if let Some(mut on_slide) = on_slide.map(|q_match| q_match.captures[0].node)
@@ -1400,7 +1296,7 @@ pub fn hover(
                                 if let Some(parent) = on_slide.parent() {
                                     on_slide = parent;
                                 } else {
-                                    return None;
+                                    return;
                                 }
                             }
                             let range = on_slide.range();
@@ -1419,19 +1315,156 @@ pub fn hover(
                                 .unwrap_or_default();
 
                             app.index.store(slide_num, Ordering::Relaxed);
-                            app.next.store(false, Ordering::Relaxed);
-                            app.vb_dbg.store(0, Ordering::Relaxed);
-
-                            app.resolved.store(None);
-                            lsp_egui_ctx.request_repaint();
                         }
+                        app.next.store(false, Ordering::Relaxed);
+                        app.obj_dbg.store(0, Ordering::Relaxed);
+
+                        app.resolved.store(None);
+                        lsp_egui_ctx.request_repaint();
                     }
                 }
             }
-            _ => unreachable!(),
         }
+        NodeKind::SlideVb
+            if current_rope
+                .byte_slice(node.byte_range())
+                .chunks()
+                .next()
+                .map(|c| c.starts_with('|'))
+                .unwrap_or_default() =>
+        {
+            if let Some(name_node) = node.parent().and_then(|n| n.named_child(0)) {
+                let vb_name = current_rope.byte_slice(name_node.byte_range());
+                let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
+                let mut hasher = hasher.build_hasher();
+                vb_name.hash(&mut hasher);
+                node.range().hash(&mut hasher);
+                let hashed_vb = hasher.finish();
+                if app.vb_dbg.swap(hashed_vb, Ordering::Relaxed) != hashed_vb {
+                    while node.kind_id() != NodeKind::Slide as u16 {
+                        if let Some(parent) = node.parent() {
+                            node = parent;
+                        } else {
+                            return;
+                        }
+                    }
+                    query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
+
+                    let mut iter = query_cursor.matches(
+                        slide_index_query,
+                        tree_info.root_node(),
+                        RopeProvider(current_rope.slice(..)),
+                    );
+
+                    let slide_num = iter
+                        .position(|n| n.captures[0].node.id() == node.id())
+                        .unwrap_or_default();
+
+                    if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
+                        app.next.store(false, Ordering::Relaxed);
+                        app.resolved.store(None);
+                        lsp_egui_ctx.request_repaint();
+                    }
+                }
+            }
+        }
+        nk @ NodeKind::Slide | nk @ NodeKind::SlideFunctions | nk @ NodeKind::SlideVb => {
+            while node.kind_id() != NodeKind::Slide as u16 {
+                if let Some(parent) = node.parent() {
+                    node = parent;
+                } else {
+                    if app.vb_dbg.swap(0, Ordering::Relaxed) != 0
+                        || app.obj_dbg.swap(0, Ordering::Relaxed) != 0
+                    {
+                        lsp_egui_ctx.request_repaint();
+                    }
+                    return;
+                }
+            }
+
+            query_cursor.set_point_range(Point { row: 0, column: 0 }..point);
+
+            let mut iter = query_cursor.matches(
+                slide_index_query,
+                tree_info.root_node(),
+                RopeProvider(current_rope.slice(..)),
+            );
+
+            let slide_num = iter
+                .position(|n| n.captures[0].node.id() == node.id())
+                .unwrap_or_default();
+
+            if app.index.swap(slide_num, Ordering::Relaxed) != slide_num {
+                app.next.store(false, Ordering::Relaxed);
+                app.vb_dbg.store(0, Ordering::Relaxed);
+                app.obj_dbg.store(0, Ordering::Relaxed);
+                app.resolved.store(None);
+                lsp_egui_ctx.request_repaint();
+            }
+            if matches!(nk, NodeKind::SlideFunctions) {
+                app.restart_timer.store(1, Ordering::Relaxed);
+                lsp_egui_ctx.request_repaint();
+            }
+        }
+        NodeKind::Obj => {
+            if let Some(name_node) = node.named_child(0) {
+                let obj_name = current_rope.byte_slice(name_node.byte_range());
+                let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
+
+                let hashed_obj = hasher.hash_one(obj_name);
+                if app.obj_dbg.swap(hashed_obj, Ordering::Relaxed) != hashed_obj {
+                    query_cursor.set_point_range(
+                        name_node.range().start_point..Point {
+                            row: usize::MAX,
+                            column: usize::MAX,
+                        },
+                    );
+
+                    let mut iter = query_cursor.matches(
+                        obj_in_slide_query,
+                        tree_info.root_node(),
+                        RopeProvider(current_rope.slice(..)),
+                    );
+
+                    let on_slide = iter.find(|query_match| {
+                        current_rope.byte_slice(query_match.captures[0].node.byte_range())
+                            == obj_name
+                    });
+
+                    if let Some(mut on_slide) = on_slide.map(|q_match| q_match.captures[0].node) {
+                        while on_slide.kind_id() != NodeKind::Slide as u16 {
+                            if let Some(parent) = on_slide.parent() {
+                                on_slide = parent;
+                            } else {
+                                return;
+                            }
+                        }
+                        let range = on_slide.range();
+
+                        query_cursor.set_point_range(Point { row: 0, column: 0 }..range.end_point);
+
+                        let mut iter = query_cursor.matches(
+                            slide_index_query,
+                            tree_info.root_node(),
+                            RopeProvider(current_rope.slice(..)),
+                        );
+
+                        let slide_num = iter
+                            .position(|n| n.captures[0].node.id() == on_slide.id())
+                            .unwrap_or_default();
+
+                        app.index.store(slide_num, Ordering::Relaxed);
+                        app.next.store(false, Ordering::Relaxed);
+                        app.vb_dbg.store(0, Ordering::Relaxed);
+
+                        app.resolved.store(None);
+                        lsp_egui_ctx.request_repaint();
+                    }
+                }
+            }
+        }
+        _ => {}
     }
-    None
 }
 
 #[cfg(not(target_arch = "wasm32"))]
