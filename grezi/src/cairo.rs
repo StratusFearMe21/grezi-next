@@ -269,7 +269,7 @@ pub fn cairo_draw_shape(
                         std::fmt::Write::write_fmt(&mut tag, format_args!("] uri='{}'", url.1))
                             .unwrap();
 
-                        ctx.tag_begin("Link", dbg!(&tag));
+                        ctx.tag_begin("Link", &tag);
                     }
                 }
 
