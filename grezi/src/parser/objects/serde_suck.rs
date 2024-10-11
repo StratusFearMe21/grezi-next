@@ -1,4 +1,7 @@
-use egui_glyphon::glyphon::cosmic_text::{self, CacheMetrics};
+use egui_glyphon::glyphon::{
+    cosmic_text::{self, CacheMetrics},
+    Affinity, Cursor,
+};
 
 use cosmic_text::{
     Align, AttrsOwned, CacheKeyFlags, Color, FamilyOwned, Metrics, Stretch, Style, Weight,
@@ -181,6 +184,41 @@ pub struct AttrsSerde {
     pub metrics_opt: Option<CacheMetrics>,
     #[serde(with = "cache_key_flags")]
     pub cache_key_flags: CacheKeyFlags,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(remote = "Affinity")]
+pub enum AffinitySerde {
+    Before,
+    After,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+pub struct CursorSerde {
+    pub line: usize,
+    pub index: usize,
+    #[serde(with = "AffinitySerde")]
+    pub affinity: Affinity,
+}
+
+impl From<CursorSerde> for Cursor {
+    fn from(value: CursorSerde) -> Self {
+        Self {
+            line: value.line,
+            index: value.index,
+            affinity: value.affinity,
+        }
+    }
+}
+
+impl From<Cursor> for CursorSerde {
+    fn from(value: Cursor) -> Self {
+        Self {
+            line: value.line,
+            index: value.index,
+            affinity: value.affinity,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

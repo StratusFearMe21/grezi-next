@@ -49,7 +49,7 @@ pub enum Constraint {
     /// Allocate at least this much of the box
     Min(f32),
     /// Space evenly all the elements
-    Auto(super::parser::viewboxes::Direction),
+    Auto(crate::parser::viewboxes::Direction),
 }
 
 impl Display for Constraint {

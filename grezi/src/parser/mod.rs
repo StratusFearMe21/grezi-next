@@ -403,11 +403,11 @@ pub fn parse_file(
         arc_swap::ArcSwap<HashMap<u64, u64, BuildHasherDefault<PassThroughHasher>>>,
     >,
 ) -> Result<(), Vec<Error>> {
-    use std::{collections::HashSet, sync::Arc, time::Instant};
+    use std::{collections::HashSet, sync::Arc};
 
     use indexmap::IndexMap;
 
-    use crate::layout::UnresolvedLayout;
+    use crate::resolver::layout::UnresolvedLayout;
 
     use self::objects::ObjectState;
 

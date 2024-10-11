@@ -5,7 +5,7 @@ use egui_glyphon::glyphon::{Attrs, AttrsOwned, Color, Family};
 use helix_core::{tree_sitter::Parser, Rope};
 
 use crate::{
-    layout::{Constraint, UnresolvedLayout},
+    resolver::layout::{Constraint, Direction, UnresolvedLayout},
     SlideShow,
 };
 
@@ -170,7 +170,7 @@ pub fn parse_citations(
             slideshow.viewboxes.insert(
                 vb,
                 UnresolvedLayout {
-                    direction: crate::layout::Direction::Vertical,
+                    direction: Direction::Vertical,
                     margin: 15.0,
                     constraints: vec![Constraint::Length(148.0), Constraint::Min(0.0)],
                     expand_to_fill: true,

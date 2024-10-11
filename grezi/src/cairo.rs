@@ -13,10 +13,13 @@ use egui_glyphon::glyphon::LayoutRun;
 use egui_glyphon::glyphon::LayoutRunIter;
 use egui_glyphon::GlyphonRendererCallback;
 use indexmap::IndexSet;
+use rangemap::RangeMap;
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::Arc;
+
+use crate::parser::objects::serde_suck::CursorSerde;
 
 pub fn fonts_to_ft(
     font_system: Arc<Mutex<FontSystem>>,
@@ -183,7 +186,7 @@ pub fn cairo_draw_shape(
         egui::Shape::Callback(glyphon_callback) => {
             let callback = glyphon_callback
                 .callback
-                .downcast_ref::<GlyphonRendererCallback>()
+                .downcast_ref::<GlyphonRendererCallback<Option<Arc<RangeMap<CursorSerde, String>>>>>()
                 .unwrap();
 
             struct RunIter<'a> {
@@ -218,6 +221,57 @@ pub fn cairo_draw_shape(
                 let buffer_read = buffer.buffer.read();
                 ctx.set_font_size(buffer_read.metrics().font_size as f64);
                 let mut glyphs = RunIter::new(buffer_read.layout_runs()).peekable();
+                let mut link_tags = 0;
+
+                if let Some(urls) = buffer.associated_data.clone() {
+                    for url in urls.iter() {
+                        link_tags += 1;
+
+                        let rects = crate::parser::objects::cosmic_jotdown::link_area(
+                            buffer_read.deref(),
+                            url.0.start.into(),
+                            url.0.end.into(),
+                        );
+
+                        if rects.is_empty() {
+                            continue;
+                        }
+
+                        let mut tag = String::from("rect=[");
+                        // let mut red = 1.0;
+
+                        for mut rect in rects {
+                            rect = rect.translate(buffer.rect.min.to_vec2());
+                            let size = rect.size();
+
+                            // ctx.set_source_rgba(red, 1.0, 1.0, 1.0);
+                            // ctx.rectangle(
+                            //     rect.min.x as f64,
+                            //     rect.min.y as f64,
+                            //     size.x as f64,
+                            //     size.y as f64,
+                            // );
+                            // ctx.fill().unwrap();
+
+                            // red -= 0.1;
+
+                            std::fmt::Write::write_fmt(
+                                &mut tag,
+                                format_args!(
+                                    "{} {} {} {} ",
+                                    rect.min.x, rect.min.y, size.x, size.y
+                                ),
+                            )
+                            .unwrap();
+                        }
+
+                        tag.pop();
+                        std::fmt::Write::write_fmt(&mut tag, format_args!("] uri='{}'", url.1))
+                            .unwrap();
+
+                        ctx.tag_begin("Link", dbg!(&tag));
+                    }
+                }
 
                 while glyphs.peek().is_some() {
                     let color;
@@ -278,6 +332,10 @@ pub fn cairo_draw_shape(
                         },
                     )
                     .unwrap();
+                }
+
+                for _ in 0..link_tags {
+                    ctx.tag_end("Link");
                 }
             }
         }

@@ -4,7 +4,7 @@ use std::{
     str::FromStr,
 };
 
-use crate::layout::{Constraint, UnresolvedLayout};
+use crate::resolver::layout::{Constraint, UnresolvedLayout};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::GrzCursor;
@@ -194,7 +194,7 @@ pub fn parse_viewbox_inner(
     tree_cursor.goto_parent();
 
     Ok(UnresolvedLayout {
-        direction: crate::layout::Direction::from(direction),
+        direction: crate::resolver::layout::Direction::from(direction),
         margin,
         constraints,
         expand_to_fill: true,

@@ -5,7 +5,7 @@ use std::{
     ops::Bound,
 };
 
-use crate::layout::UnresolvedLayout;
+use crate::resolver::layout::UnresolvedLayout;
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::GrzCursor;

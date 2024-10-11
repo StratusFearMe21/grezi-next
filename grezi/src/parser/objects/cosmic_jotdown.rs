@@ -1,12 +1,13 @@
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, cmp, sync::Arc};
 
 use eframe::egui::{mutex::RwLock, Pos2, Rect, Vec2};
 use egui_glyphon::glyphon::{
     cosmic_text::{self, Align},
-    AttrsOwned,
+    Affinity, AttrsOwned, Cursor,
 };
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, Weight};
+use helix_core::unicode::segmentation::UnicodeSegmentation;
 use jotdown::{Container, Event, ListKind, OrderedListNumbering, OrderedListStyle};
 use nominals::{LetterLower, LetterUpper, Nominal, RomanLower, RomanUpper};
 
@@ -26,9 +27,9 @@ struct JotdownIntoBuffer<'a, 'b, T: Iterator<Item = Event<'a>>> {
     pub attrs: Attrs<'a>,
     pub metrics: Metrics,
     pub indent: &'b mut Vec<Indent>,
-    pub link_start: usize,
-    pub urls: Vec<(std::ops::Range<usize>, Cow<'a, str>)>,
-    pub location: usize,
+    pub link_start: Cursor,
+    pub urls: Vec<(std::ops::Range<Cursor>, Cow<'a, str>)>,
+    pub location: Cursor,
     pub added: bool,
     pub top_level_container: Option<Container<'a>>,
 }
@@ -50,52 +51,53 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
             match event {
                 Event::LeftSingleQuote => {
                     self.added = true;
-                    self.location += "‘".len();
+                    self.location.index += "‘".len();
                     return Some(("‘", self.attrs.clone()));
                 }
                 Event::LeftDoubleQuote => {
                     self.added = true;
-                    self.location += "“".len();
+                    self.location.index += "“".len();
                     return Some(("“", self.attrs.clone()));
                 }
                 Event::RightSingleQuote => {
                     self.added = true;
-                    self.location += "’".len();
+                    self.location.index += "’".len();
                     return Some(("’", self.attrs.clone()));
                 }
                 Event::RightDoubleQuote => {
                     self.added = true;
-                    self.location += "”".len();
+                    self.location.index += "”".len();
                     return Some(("”", self.attrs.clone()));
                 }
                 Event::Ellipsis => {
                     self.added = true;
-                    self.location += "…".len();
+                    self.location.index += "…".len();
                     return Some(("…", self.attrs.clone()));
                 }
                 Event::EmDash => {
                     self.added = true;
-                    self.location += "—".len();
+                    self.location.index += "—".len();
                     return Some(("—", self.attrs.clone()));
                 }
                 Event::EnDash => {
                     self.added = true;
-                    self.location += "–".len();
+                    self.location.index += "–".len();
                     return Some(("–", self.attrs.clone()));
                 }
                 Event::Softbreak | Event::NonBreakingSpace => {
                     self.added = true;
-                    self.location += " ".len();
+                    self.location.index += " ".len();
                     return Some((" ", self.attrs.clone()));
                 }
                 Event::Hardbreak | Event::ThematicBreak(_) => {
                     self.added = true;
-                    self.location += "\n".len();
+                    self.location.index = 0;
+                    self.location.line += 1;
                     return Some(("\n", self.attrs.clone()));
                 }
                 Event::Str(Cow::Borrowed(s)) | Event::Symbol(Cow::Borrowed(s)) => {
                     self.added = true;
-                    self.location += s.len();
+                    self.location.index += s.len();
                     return Some((s, self.attrs.clone()));
                 }
                 Event::Start(container, _) => match container {
@@ -123,7 +125,7 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                         modifier: Some(kind),
                     }),
                     Container::Link(_, _) => {
-                        self.link_start = self.location + 1;
+                        self.link_start = self.location;
                         self.attrs = self.attrs.color(Color::rgb(96, 198, 233));
                     }
                     _ => {}
@@ -141,8 +143,10 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                         }
                     }
                     Container::Link(Cow::Borrowed(url), _) => {
+                        let mut location = self.location;
+                        location.index += 1;
                         self.urls
-                            .push((self.link_start..self.location, Cow::Borrowed(url)));
+                            .push((self.link_start..location, Cow::Borrowed(url)));
                         self.attrs = self.attrs.color(Color::rgb(255, 255, 255));
                     }
                     _ => {}
@@ -166,7 +170,7 @@ pub struct JotdownItem {
     #[serde(with = "MetricsSerde")]
     pub metrics: Metrics,
     pub margin: f32,
-    pub url_map: Option<RangeMap<usize, String>>,
+    pub url_map: Option<RangeMap<CursorSerde, String>>,
 }
 
 #[derive(Clone)]
@@ -175,7 +179,7 @@ pub struct ResolvedJotdownItem {
     pub buffer: Arc<RwLock<Buffer>>,
     pub metrics: Metrics,
     pub relative_bounds: Rect,
-    pub url_map: Option<RangeMap<usize, String>>,
+    pub url_map: Option<Arc<RangeMap<CursorSerde, String>>>,
 }
 
 pub fn resolve_paragraphs(
@@ -325,7 +329,7 @@ impl JotdownItem {
                 self.metrics.font_size * metrics.font_size,
                 self.metrics.line_height * metrics.line_height,
             ),
-            url_map: self.url_map,
+            url_map: self.url_map.map(|m| Arc::new(m)),
         }
     }
 
@@ -392,8 +396,11 @@ impl<'a, T: Iterator<Item = Event<'a>>> Iterator for JotdownBufferIter<'a, T> {
             indent: &mut self.indent,
             metrics: Metrics::new(1.0, 1.2),
             added: false,
-            link_start: 0,
-            location: 0,
+            link_start: Cursor::default(),
+            location: Cursor {
+                affinity: Affinity::After,
+                ..Cursor::default()
+            },
             urls: Vec::new(),
             top_level_container: None,
         };
@@ -415,11 +422,10 @@ impl<'a, T: Iterator<Item = Event<'a>>> Iterator for JotdownBufferIter<'a, T> {
                 url_map: if urls.is_empty() {
                     None
                 } else {
-                    let mut map = RangeMap::new();
-                    map.extend(
-                        urls.into_iter()
-                            .map(|(range, url)| (range.start..range.end + 1, url.into_owned())),
-                    );
+                    let mut map: RangeMap<CursorSerde, String> = RangeMap::new();
+                    map.extend(urls.into_iter().map(|(range, url)| {
+                        (range.start.into()..range.end.into(), url.into_owned())
+                    }));
                     Some(map)
                 },
                 buffer,
@@ -502,4 +508,67 @@ pub fn make_list_number(list_kind: ListKind) -> Cow<'static, str> {
             Cow::Owned(result)
         }
     }
+}
+
+pub fn link_area(buffer: &Buffer, start: Cursor, end: Cursor) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    for run in buffer.layout_runs() {
+        let line_i = run.line_i;
+        let line_top = run.line_top;
+        let line_height = run.line_height;
+
+        // Highlight selection
+        if line_i >= start.line && line_i <= end.line {
+            let mut range_opt = None;
+            for glyph in run.glyphs.iter() {
+                // Guess x offset based on characters
+                let cluster = &run.text[glyph.start..glyph.end];
+                let total = cluster.grapheme_indices(true).count();
+                let mut c_x = glyph.x;
+                let c_w = glyph.w / total as f32;
+                for (i, c) in cluster.grapheme_indices(true) {
+                    let c_start = glyph.start + i;
+                    let c_end = glyph.start + i + c.len();
+                    if (start.line != line_i || c_end > start.index)
+                        && (end.line != line_i || c_start < end.index)
+                    {
+                        range_opt = match range_opt.take() {
+                            Some((min, max)) => {
+                                Some((cmp::min(min, c_x as i32), cmp::max(max, (c_x + c_w) as i32)))
+                            }
+                            None => Some((c_x as i32, (c_x + c_w) as i32)),
+                        };
+                    } else if let Some((min, max)) = range_opt.take() {
+                        rects.push(Rect::from_min_size(
+                            Pos2::new(min as f32, line_top as f32),
+                            Vec2::new(cmp::max(0, max - min) as f32, line_height as f32),
+                        ));
+                    }
+                    c_x += c_w;
+                }
+            }
+
+            if run.glyphs.is_empty() && end.line > line_i {
+                // Highlight all of internal empty lines
+                range_opt = Some((0, buffer.size().0.unwrap_or(0.0) as i32));
+            }
+
+            if let Some((mut min, mut max)) = range_opt.take() {
+                if end.line > line_i {
+                    // Draw to end of line
+                    if run.rtl {
+                        min = 0;
+                    } else {
+                        max = buffer.size().0.unwrap_or(0.0) as i32;
+                    }
+                }
+                rects.push(Rect::from_min_size(
+                    Pos2::new(min as f32, line_top as f32),
+                    Vec2::new(cmp::max(0, max - min) as f32, line_height as f32),
+                ));
+            }
+        }
+    }
+
+    rects
 }
