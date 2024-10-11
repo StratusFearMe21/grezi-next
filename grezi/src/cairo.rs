@@ -7,6 +7,7 @@ use eframe::epaint::mutex::Mutex;
 use eframe::epaint::ColorMode;
 use eframe::epaint::TextureId;
 use egui_glyphon::glyphon::fontdb::ID;
+use egui_glyphon::glyphon::Cursor;
 use egui_glyphon::glyphon::FontSystem;
 use egui_glyphon::glyphon::LayoutGlyph;
 use egui_glyphon::glyphon::LayoutRun;
@@ -227,10 +228,15 @@ pub fn cairo_draw_shape(
                     for url in urls.iter() {
                         link_tags += 1;
 
+                        let start: Cursor = url.0.start.into();
+                        let mut end: Cursor = url.0.end.into();
+
+                        end.index -= 1;
+
                         let rects = crate::parser::objects::cosmic_jotdown::link_area(
                             buffer_read.deref(),
-                            url.0.start.into(),
-                            url.0.end.into(),
+                            start,
+                            end,
                         );
 
                         if rects.is_empty() {
