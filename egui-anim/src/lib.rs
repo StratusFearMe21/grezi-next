@@ -99,7 +99,10 @@ impl ImageLoader for AnimLoader {
                             AnimEntry::new(GifDecoder::new(Cursor::new(bytes.as_ref())).unwrap())
                         }
                         "apng" => AnimEntry::new(
-                            PngDecoder::new(Cursor::new(bytes.as_ref())).unwrap().apng(),
+                            PngDecoder::new(Cursor::new(bytes.as_ref()))
+                                .unwrap()
+                                .apng()
+                                .unwrap(),
                         ),
                         "webp" => {
                             AnimEntry::new(WebPDecoder::new(Cursor::new(bytes.as_ref())).unwrap())

@@ -40,7 +40,7 @@ pub struct Indent {
     pub indent: f32,
 }
 
-pub const INDENT_AMOUNT: f32 = 64.0;
+pub const INDENT_AMOUNT: f32 = 4.0 / 3.0;
 
 impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, 'b, T> {
     type Item = (&'a str, Attrs<'a>);
@@ -119,7 +119,7 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                     }
                     Container::List { kind, .. } => self.indent.push(Indent {
                         indent: self.indent.last().copied().unwrap_or_default().indent
-                            + INDENT_AMOUNT,
+                            + (INDENT_AMOUNT * self.metrics.font_size),
                         modifier: Some(kind),
                     }),
                     Container::Link(_, _) => {
@@ -235,7 +235,7 @@ pub fn resolve_paragraphs(
                 list_buffer.shape_until_scroll(font_system, false);
 
                 let list_buffer_metrics = buffer.metrics;
-                let indent = (buffer_indent) - (INDENT_AMOUNT * factor);
+                let indent = (buffer_indent) - (INDENT_AMOUNT * list_buffer_metrics.font_size);
                 [
                     Some(buffer),
                     Some(ResolvedJotdownItem {
@@ -313,6 +313,7 @@ impl JotdownItem {
         factor: f32,
     ) -> ResolvedJotdownItem {
         self.indent.indent *= factor;
+        self.indent.indent *= metrics.font_size;
 
         let buffer = self.make_buffer(font_system, width, metrics, align);
 

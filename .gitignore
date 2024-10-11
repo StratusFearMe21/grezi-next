@@ -1,4 +1,5 @@
 *.so
+*.pkg.tar.zst
 dist/
 target/
 .ccls-cache/
