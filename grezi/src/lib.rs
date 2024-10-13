@@ -56,6 +56,8 @@ use crate::parser::objects::ResolvedObject;
 pub mod cairo;
 // mod frame_history;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod args;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod lsp;
 pub mod parser;
 pub mod resolver;
@@ -349,6 +351,7 @@ impl SpeakerView {
                     f32::MAX,
                     &mut buffers,
                     font_system.lock().deref_mut(),
+                    false,
                 );
                 next_resolved.draw_actions(ui, f32::MAX, false);
             }
@@ -401,6 +404,7 @@ impl SpeakerView {
                     f32::MAX,
                     &mut buffers,
                     font_system.lock().deref_mut(),
+                    false,
                 );
                 current_resolved.draw_actions(ui, f32::MAX, false);
             }
@@ -1071,6 +1075,7 @@ impl MyEguiApp {
                                 time,
                                 &mut buffers,
                                 self.font_system.lock().deref_mut(),
+                                self.export,
                             );
                             resolved.draw_actions(ui, time, self.export);
 
@@ -1100,6 +1105,7 @@ impl MyEguiApp {
                                         *max_time,
                                         &mut buffers,
                                         self.font_system.lock().deref_mut(),
+                                        self.export,
                                     );
                                 }
                                 _ => todo!(),

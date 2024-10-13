@@ -62,6 +62,7 @@ impl Resolved {
         time: f32,
         buffers: &mut Vec<BufferWithTextArea<Option<Arc<RangeMap<CursorSerde, String>>>>>,
         font_system: &mut FontSystem,
+        export: bool,
     ) {
         let current_clip = ui.clip_rect();
         ui.set_clip_rect(self.window_size);
@@ -201,13 +202,21 @@ impl Resolved {
                         ),
                         ObjectState::OnScreen => 1.0,
                     };
-                    tint = tint.gamma_multiply(gamma);
-                    if tint.a() > 0 {
-                        image
+                    if !export {
+                        tint = tint.gamma_multiply(gamma);
+                    }
+                    if gamma > 0.0 {
+                        let mut img = image
                             .clone()
                             .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
-                            .tint(tint)
-                            .paint_at(ui, obj_pos);
+                            .tint(tint);
+                        if export {
+                            img = img.uv(Rect {
+                                min: Pos2::new(gamma, 0.0),
+                                ..Rect::ZERO
+                            });
+                        }
+                        img.paint_at(ui, obj_pos);
                     }
                 }
                 ResolvedObject::Anim {

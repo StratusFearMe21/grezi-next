@@ -1,124 +1,9 @@
 use grezi::MyEguiApp;
-#[cfg(not(target_arch = "wasm32"))]
-use std::str::FromStr;
-
-#[cfg(not(target_arch = "wasm32"))]
-use clap::builder::{StringValueParser, TypedValueParser};
 
 use eframe::epaint::mutex::Mutex;
 use egui_glyphon::glyphon::FontSystem;
 use egui_glyphon::GlyphonRenderer;
 use std::sync::Arc;
-
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Clone)]
-pub struct Range(std::ops::Range<usize>);
-
-#[derive(Clone)]
-#[cfg(not(target_arch = "wasm32"))]
-struct RangeParser;
-
-#[cfg(not(target_arch = "wasm32"))]
-impl TypedValueParser for RangeParser {
-    type Value = Range;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let parsed = StringValueParser::new().parse_ref(cmd, arg, value)?;
-
-        Range::from_str(&parsed).map_err(|_| clap::Error::new(clap::error::ErrorKind::InvalidValue))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl FromStr for Range {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut split = s.split("..");
-        let start: usize = split.next().unwrap().parse().or(Err(()))?;
-        let end;
-        if let Some(s) = split.next() {
-            end = s.parse().or(Err(()))?;
-        } else {
-            end = start;
-        }
-
-        Ok(Range(std::ops::Range {
-            start: start.saturating_sub(1),
-            end,
-        }))
-    }
-}
-
-#[derive(Clone, Copy)]
-#[cfg(not(target_arch = "wasm32"))]
-pub struct Fit(eframe::egui::Vec2);
-
-#[derive(Clone)]
-#[cfg(not(target_arch = "wasm32"))]
-struct FitParser;
-
-#[cfg(not(target_arch = "wasm32"))]
-impl TypedValueParser for FitParser {
-    type Value = Fit;
-
-    fn parse_ref(
-        &self,
-        cmd: &clap::Command,
-        arg: Option<&clap::Arg>,
-        value: &std::ffi::OsStr,
-    ) -> Result<Self::Value, clap::Error> {
-        let parsed = StringValueParser::new().parse_ref(cmd, arg, value)?;
-
-        Fit::from_str(&parsed).map_err(|_| clap::Error::new(clap::error::ErrorKind::InvalidValue))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl FromStr for Fit {
-    type Err = ();
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let mut split = s.split('x');
-        let start: f32 = split.next().unwrap().parse().or(Err(()))?;
-        let fit = if let Some(s) = split.next() {
-            let fit: f32 = s.parse().or(Err(()))?;
-
-            eframe::egui::vec2(start, fit)
-        } else {
-            eframe::egui::vec2(start, start)
-        };
-
-        Ok(Fit(fit))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(clap::Parser)]
-pub struct Args {
-    pub presentation: Option<String>,
-    #[clap(short, long)]
-    pub export: bool,
-    #[clap(long)]
-    pub lsp: bool,
-    #[clap(short, long)]
-    pub output: Option<String>,
-    #[clap(short, long, value_parser = RangeParser)]
-    pub index: Option<Range>,
-    #[clap(short, long, value_parser = FitParser)]
-    pub size: Option<Fit>,
-    /// Automatically advance to the next page after the given number of seconds
-    #[clap(short, long)]
-    pub auto: Option<u64>,
-    /// Specifies the expected run time of the presentation
-    #[clap(long)]
-    pub duration: Option<humantime::Duration>,
-}
 
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
@@ -129,6 +14,7 @@ fn main() -> miette::Result<()> {
     use std::{hash::Hash, rc::Rc};
 
     use eframe::egui::ViewportBuilder;
+    use grezi::args::{Args, Fit};
     use indexmap::IndexSet;
     use lsp_server::IoThreads;
     use lsp_types::notification::Notification;
@@ -137,6 +23,10 @@ fn main() -> miette::Result<()> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let args: Args = clap::Parser::parse();
+    if args.gtk {
+        grezi::cairo::run_gtk();
+        return Ok(());
+    }
     let native_options = eframe::NativeOptions {
         viewport: ViewportBuilder {
             fullscreen: Some(!args.lsp),
@@ -282,13 +172,14 @@ fn main() -> miette::Result<()> {
             let mut init_app = app.0.init_app(&egui_ctx, app.1);
             let ft = cairo::freetype::Library::init().unwrap();
 
-            let font_defs_ft = grezi::cairo::fonts_to_ft(Arc::clone(&font_system), &used_fonts, ft);
+            let mut font_defs_ft =
+                grezi::cairo::fonts_to_ft(Arc::clone(&font_system), &used_fonts, &ft);
             let input = egui::RawInput {
                 screen_rect: Some(Rect::from_min_size(Pos2::ZERO, fit)),
                 //pixels_per_point: Some(2.0),
                 ..Default::default()
             };
-            let mut textures: HashMap<TextureId, ImageSurface> = HashMap::default();
+            let mut textures: HashMap<TextureId, (ImageSurface, bool)> = HashMap::default();
             if multi_page {
                 for i in range {
                     init_app.index.store(i, Ordering::SeqCst);
@@ -297,7 +188,14 @@ fn main() -> miette::Result<()> {
 
                     init_app.resolved.store(None);
 
-                    grezi::cairo::cairo_draw(output, &mut textures, &ctx, &font_defs_ft);
+                    grezi::cairo::cairo_draw(
+                        output,
+                        &mut textures,
+                        &ctx,
+                        &ft,
+                        Arc::clone(&font_system),
+                        &mut font_defs_ft,
+                    );
 
                     ctx.show_page().unwrap();
                 }
@@ -330,7 +228,14 @@ fn main() -> miette::Result<()> {
 
                     let e_output = egui_ctx.run(input.clone(), |ctx| init_app.update(ctx));
 
-                    grezi::cairo::cairo_draw(e_output, &mut textures, &ctx, &font_defs_ft);
+                    grezi::cairo::cairo_draw(
+                        e_output,
+                        &mut textures,
+                        &ctx,
+                        &ft,
+                        Arc::clone(&font_system),
+                        &mut font_defs_ft,
+                    );
 
                     ctx.target().finish();
 
