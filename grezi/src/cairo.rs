@@ -257,62 +257,6 @@ pub fn cairo_draw_shape(
                 let buffer_read = buffer.buffer.read();
                 ctx.set_font_size(buffer_read.metrics().font_size as f64);
                 let mut glyphs = RunIter::new(buffer_read.layout_runs()).peekable();
-                let mut link_tags = 0;
-
-                if let Some(urls) = buffer.associated_data.clone() {
-                    for url in urls.iter() {
-                        link_tags += 1;
-
-                        let start: Cursor = url.0.start.into();
-                        let mut end: Cursor = url.0.end.into();
-
-                        end.index -= 1;
-
-                        let rects = crate::parser::objects::cosmic_jotdown::link_area(
-                            buffer_read.deref(),
-                            start,
-                            end,
-                        );
-
-                        if rects.is_empty() {
-                            continue;
-                        }
-
-                        let mut tag = String::from("rect=[");
-                        // let mut red = 1.0;
-
-                        for mut rect in rects {
-                            rect = rect.translate(buffer.rect.min.to_vec2());
-                            let size = rect.size();
-
-                            // ctx.set_source_rgba(red, 1.0, 1.0, 1.0);
-                            // ctx.rectangle(
-                            //     rect.min.x as f64,
-                            //     rect.min.y as f64,
-                            //     size.x as f64,
-                            //     size.y as f64,
-                            // );
-                            // ctx.fill().unwrap();
-
-                            // red -= 0.1;
-
-                            std::fmt::Write::write_fmt(
-                                &mut tag,
-                                format_args!(
-                                    "{} {} {} {} ",
-                                    rect.min.x, rect.min.y, size.x, size.y
-                                ),
-                            )
-                            .unwrap();
-                        }
-
-                        tag.pop();
-                        std::fmt::Write::write_fmt(&mut tag, format_args!("] uri='{}'", url.1))
-                            .unwrap();
-
-                        ctx.tag_begin("Link", &tag);
-                    }
-                }
 
                 while glyphs.peek().is_some() {
                     let color;
@@ -393,8 +337,63 @@ pub fn cairo_draw_shape(
                     .unwrap();
                 }
 
-                for _ in 0..link_tags {
-                    ctx.tag_end("Link");
+                if let Some(urls) = buffer.associated_data.clone() {
+                    for url in urls.iter() {
+                        let start: Cursor = url.0.start.into();
+                        let mut end: Cursor = url.0.end.into();
+
+                        end.index -= 1;
+
+                        let rects = crate::parser::objects::cosmic_jotdown::link_area(
+                            buffer_read.deref(),
+                            start,
+                            end,
+                        );
+
+                        if rects.is_empty() {
+                            continue;
+                        }
+
+                        // Multiline links would be sick as hell, but they don't work right,
+                        // and not even Firefox implements them
+                        for mut rect in rects {
+                            let mut tag = String::from("rect=[");
+                            // let mut red = 1.0;
+
+                            rect = rect.translate(buffer.rect.min.to_vec2());
+                            let size = rect.size();
+
+                            // ctx.set_source_rgba(red, 1.0, 1.0, 1.0);
+                            // ctx.rectangle(
+                            //     rect.min.x as f64,
+                            //     rect.min.y as f64,
+                            //     size.x as f64,
+                            //     size.y as f64,
+                            // );
+                            // ctx.fill().unwrap();
+
+                            // red -= 0.1;
+
+                            std::fmt::Write::write_fmt(
+                                &mut tag,
+                                format_args!(
+                                    "{} {} {} {} ",
+                                    rect.min.x.ceil(),
+                                    rect.min.y.ceil(),
+                                    size.x.ceil(),
+                                    size.y.ceil()
+                                ),
+                            )
+                            .unwrap();
+
+                            tag.pop();
+                            std::fmt::Write::write_fmt(&mut tag, format_args!("] uri='{}'", url.1))
+                                .unwrap();
+
+                            ctx.tag_begin("Link", &tag);
+                            ctx.tag_end("Link");
+                        }
+                    }
                 }
             }
         }

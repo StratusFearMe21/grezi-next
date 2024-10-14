@@ -414,6 +414,7 @@ pub fn parse_file(
     // let instant = Instant::now();
     let mut bg = (Color::default(), None);
     let mut margin_register = 15.0;
+    let mut create_edges_register = false;
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
     let mut on_screen: HashMap<u64, (usize, bool), BuildHasherDefault<PassThroughHasher>> =
@@ -544,6 +545,7 @@ pub fn parse_file(
                                 (bg.0, bg.1.take()),
                                 &mut slide_show.viewboxes,
                                 margin_register,
+                                create_edges_register,
                             ) {
                                 Ok((slide, color)) => {
                                     slides.insert(node_id, slide);
@@ -666,6 +668,12 @@ pub fn parse_file(
                     } else if key == "MARGIN" {
                         match value.parse() {
                             Ok(value) => margin_register = value,
+                            Err(_) => errors_present
+                                .push(Error::Syntax(PointFromRange::new(node.range(), source))),
+                        }
+                    } else if key == "CREATE_EDGES" {
+                        match value.parse() {
+                            Ok(value) => create_edges_register = value,
                             Err(_) => errors_present
                                 .push(Error::Syntax(PointFromRange::new(node.range(), source))),
                         }

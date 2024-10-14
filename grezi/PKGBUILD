@@ -6,6 +6,7 @@ arch=('any')
 license=('gpl')
 depends=(
   helix
+  gtk4
 )
 
 

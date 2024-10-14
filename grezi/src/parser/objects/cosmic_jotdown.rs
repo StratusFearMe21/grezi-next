@@ -7,7 +7,6 @@ use egui_glyphon::glyphon::{
 };
 
 use cosmic_text::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, Weight};
-use helix_core::unicode::segmentation::UnicodeSegmentation;
 use jotdown::{Container, Event, ListKind, OrderedListNumbering, OrderedListStyle};
 use nominals::{LetterLower, LetterUpper, Nominal, RomanLower, RomanUpper};
 
@@ -510,7 +509,10 @@ pub fn make_list_number(list_kind: ListKind) -> Cow<'static, str> {
     }
 }
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "cairo"))]
 pub fn link_area(buffer: &Buffer, start: Cursor, end: Cursor) -> Vec<Rect> {
+    use helix_core::unicode::segmentation::UnicodeSegmentation;
+
     let mut rects = Vec::new();
     for run in buffer.layout_runs() {
         let line_i = run.line_i;

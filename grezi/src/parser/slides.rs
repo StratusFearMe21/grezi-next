@@ -45,6 +45,7 @@ pub fn parse_slides(
     bg: (super::Color, Option<(std::time::Duration, super::Color)>),
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     margin: f32,
+    create_edges: bool,
 ) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
     use std::num::NonZeroU16;
 
@@ -76,6 +77,7 @@ pub fn parse_slides(
                     slide_objects.push(object);
                 },
                 margin,
+                create_edges,
             ) {
                 Ok(()) => {}
                 Err(e) => errors_present.push(e),
@@ -139,6 +141,7 @@ pub fn parse_slide_object(
     last_obj: Option<&SlideObj>,
     mut insert_fn: impl FnMut(SlideObj),
     margin: f32,
+    create_edges: bool,
 ) -> Result<(), super::Error> {
     use crate::parser::{viewboxes::align_from_str, PointFromRange};
 
@@ -312,12 +315,19 @@ pub fn parse_slide_object(
         let viewbox_first = from.unwrap_or_else(|| object.viewbox.unwrap_or(viewbox));
         let line_up_now;
         if &edges[..1] == ":" || &edges[..1] == "|" || &edges[..1] == "{" || edges == name {
-            let object_position = object.position.ok_or_else(|| {
-                Error::ImplicitEdge(PointFromRange::new(
-                    tree_cursor.node().range().into(),
-                    source,
-                ))
-            })?;
+            let object_position = match object.position {
+                Some(op) => op,
+                None => {
+                    if create_edges {
+                        Align2::CENTER_CENTER
+                    } else {
+                        return Err(Error::ImplicitEdge(PointFromRange::new(
+                            tree_cursor.node().range().into(),
+                            source,
+                        )));
+                    }
+                }
+            };
             lineup_first = object_position;
             line_up_now = object_position;
             (
@@ -336,12 +346,19 @@ pub fn parse_slide_object(
                     (lineup_first, viewbox_first)
                 }
                 None => {
-                    lineup_first = object.position.ok_or_else(|| {
-                        Error::ImplicitEdge(PointFromRange::new(
-                            tree_cursor.node().range().into(),
-                            source,
-                        ))
-                    })?;
+                    lineup_first = match object.position {
+                        Some(op) => op,
+                        None => {
+                            if create_edges {
+                                Align2::CENTER_CENTER
+                            } else {
+                                return Err(Error::ImplicitEdge(PointFromRange::new(
+                                    tree_cursor.node().range().into(),
+                                    source,
+                                )));
+                            }
+                        }
+                    };
                     (lineup_first, viewbox_first)
                 }
             };
@@ -373,12 +390,19 @@ pub fn parse_slide_object(
                     _ => {
                         line_up_now = lineup_first;
                         lineup_first_locations = (
-                            object.position.ok_or_else(|| {
-                                Error::ImplicitEdge(PointFromRange::new(
-                                    tree_cursor.node().range().into(),
-                                    source,
-                                ))
-                            })?,
+                            match object.position {
+                                Some(op) => op,
+                                None => {
+                                    if create_edges {
+                                        Align2::CENTER_CENTER
+                                    } else {
+                                        return Err(Error::ImplicitEdge(PointFromRange::new(
+                                            tree_cursor.node().range().into(),
+                                            source,
+                                        )));
+                                    }
+                                }
+                            },
                             viewbox_first,
                         );
                         (lineup_first, viewbox)
