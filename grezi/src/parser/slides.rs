@@ -45,6 +45,7 @@ pub fn parse_slides(
     bg: (super::Color, Option<(std::time::Duration, super::Color)>),
     viewboxes: &mut HashMap<u64, UnresolvedLayout, BuildHasherDefault<PassThroughHasher>>,
     margin: f32,
+    margin_per: f32,
     create_edges: bool,
 ) -> Result<(AstObject, Option<(std::time::Duration, super::Color)>), super::Error> {
     use std::num::NonZeroU16;
@@ -77,6 +78,7 @@ pub fn parse_slides(
                     slide_objects.push(object);
                 },
                 margin,
+                margin_per,
                 create_edges,
             ) {
                 Ok(()) => {}
@@ -141,6 +143,7 @@ pub fn parse_slide_object(
     last_obj: Option<&SlideObj>,
     mut insert_fn: impl FnMut(SlideObj),
     margin: f32,
+    margin_per: f32,
     create_edges: bool,
 ) -> Result<(), super::Error> {
     use crate::parser::{viewboxes::align_from_str, PointFromRange};
@@ -182,6 +185,7 @@ pub fn parse_slide_object(
                 hasher,
                 viewboxes,
                 margin,
+                margin_per,
             )?;
             let name = {
                 let mut hasher = hasher.build_hasher();

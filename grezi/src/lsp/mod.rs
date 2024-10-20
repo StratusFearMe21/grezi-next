@@ -32,28 +32,30 @@ use indexmap::IndexSet;
 use lsp_server::{Message, Response};
 use lsp_types::{
     notification::{
-        DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
-        Notification, PublishDiagnostics, ShowMessage,
+        DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+        DidSaveTextDocument, Notification, PublishDiagnostics, ShowMessage,
     },
     request::{
         ApplyWorkspaceEdit, Completion, DocumentSymbolRequest, ExecuteCommand, FoldingRangeRequest,
         Formatting, GotoDeclaration, HoverRequest, InlayHintRequest, PrepareRenameRequest,
-        RangeFormatting, References, Rename, Request, SemanticTokensFullRequest,
+        RangeFormatting, References, RegisterCapability, Rename, Request,
+        SemanticTokensFullRequest, WorkspaceSymbolRequest,
     },
     ApplyWorkspaceEditParams, CompletionItem, CompletionItemKind, CompletionOptions,
     CompletionOptionsCompletionItem, CompletionParams, CompletionResponse, CompletionTextEdit,
-    DeclarationCapability, DocumentChanges, DocumentFormattingParams,
-    DocumentRangeFormattingParams, DocumentSymbolParams, ExecuteCommandOptions,
-    ExecuteCommandParams, FoldingRangeParams, GotoDefinitionParams, HoverParams,
-    HoverProviderCapability, InlayHintOptions, InlayHintParams, InlayHintServerCapabilities,
-    InsertTextFormat, MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position,
-    PositionEncodingKind, PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams,
-    SaveOptions, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
+    DeclarationCapability, DidChangeWatchedFilesRegistrationOptions, DocumentChanges,
+    DocumentFormattingParams, DocumentRangeFormattingParams, DocumentSymbolParams,
+    DocumentSymbolResponse, ExecuteCommandOptions, ExecuteCommandParams, FileSystemWatcher,
+    FoldingRangeParams, GlobPattern, GotoDefinitionParams, HoverParams, HoverProviderCapability,
+    InlayHintOptions, InlayHintParams, InlayHintServerCapabilities, InsertTextFormat, Location,
+    MessageType, OneOf, OptionalVersionedTextDocumentIdentifier, Position, PositionEncodingKind,
+    PublishDiagnosticsParams, ReferenceParams, Registration, RegistrationParams, RenameOptions,
+    RenameParams, SaveOptions, SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions,
     SemanticTokensLegend, SemanticTokensOptions, SemanticTokensParams,
     SemanticTokensServerCapabilities, ServerCapabilities, ShowMessageParams, TextDocumentEdit,
     TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkDoneProgressOptions,
-    WorkspaceEdit,
+    WorkspaceEdit, WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 
 use self::formatter::char_range_from_byte_range;
@@ -176,6 +178,7 @@ pub fn start_lsp(
         references_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -238,6 +241,29 @@ pub fn start_lsp(
             .unwrap();
         (panic_hook)(panic_info)
     }));
+
+    connection
+        .sender
+        .send(Message::Request(lsp_server::Request::new(
+            69420.into(),
+            RegisterCapability::METHOD.to_string(),
+            RegistrationParams {
+                registrations: vec![Registration {
+                    id: "Template watching".to_string(),
+                    method: DidChangeWatchedFiles::METHOD.to_string(),
+                    register_options: Some(
+                        serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![FileSystemWatcher {
+                                glob_pattern: GlobPattern::String("**/*.grz".to_string()),
+                                kind: None,
+                            }],
+                        })
+                        .unwrap(),
+                    ),
+                }],
+            },
+        )))
+        .unwrap();
 
     let mut inlay_edge_map: HashMap<
         RopeSlice<'static>,
@@ -359,12 +385,12 @@ pub fn start_lsp(
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    Some(semantic_tokens::semantic_tokens(
+                                    semantic_tokens::semantic_tokens(
                                         &semantic_token_query,
                                         &doc.rope,
                                         &mut query_cursor,
                                         &doc.tree,
-                                    )),
+                                    ),
                                 )))
                                 .unwrap();
                         }
@@ -412,11 +438,52 @@ pub fn start_lsp(
                             req.extract::<DocumentSymbolParams>(DocumentSymbolRequest::METHOD)
                         {
                             let doc = current_state.get(&params.text_document.uri).unwrap();
+                            let mut symbols = Vec::new();
+                            let symbols = symbols::document_symbols(
+                                &doc.rope,
+                                &doc.tree,
+                                &mut symbols,
+                                |s| s,
+                            )
+                            .map(|_| DocumentSymbolResponse::Nested(symbols));
+                            connection
+                                .sender
+                                .send(Message::Response(Response::new_ok(rqid, symbols)))
+                                .unwrap();
+                        }
+                    }
+                    WorkspaceSymbolRequest::METHOD => {
+                        if let Ok((rqid, _)) =
+                            req.extract::<WorkspaceSymbolParams>(WorkspaceSymbolRequest::METHOD)
+                        {
+                            let mut symbols = Vec::new();
+                            for (uri, doc) in current_state.iter() {
+                                symbols::document_symbols(
+                                    &doc.rope,
+                                    &doc.tree,
+                                    &mut symbols,
+                                    |s| lsp_types::WorkspaceSymbol {
+                                        name: s.name,
+                                        kind: s.kind,
+                                        tags: s.tags,
+                                        container_name: s.detail,
+                                        location: OneOf::Left(Location {
+                                            uri: uri.clone(),
+                                            range: s.range,
+                                        }),
+                                        data: None,
+                                    },
+                                );
+                            }
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(
                                     rqid,
-                                    symbols::document_symbols(&doc.rope, &doc.tree),
+                                    if symbols.is_empty() {
+                                        None
+                                    } else {
+                                        Some(WorkspaceSymbolResponse::Nested(symbols))
+                                    },
                                 )))
                                 .unwrap();
                         }
@@ -1146,10 +1213,28 @@ pub fn start_lsp(
                             }
                         }
                     }
-                    DidSaveTextDocument::METHOD => {
-                        let saved_doc: lsp_types::DidSaveTextDocumentParams =
-                            serde_json::from_value(not.params).unwrap();
-                        let doc = current_state.get(&saved_doc.text_document.uri).unwrap();
+                    DidSaveTextDocument::METHOD | DidChangeWatchedFiles::METHOD => {
+                        let saved_doc_uri = match not.method.as_str() {
+                            DidSaveTextDocument::METHOD => {
+                                serde_json::from_value::<lsp_types::DidSaveTextDocumentParams>(
+                                    not.params,
+                                )
+                                .unwrap()
+                                .text_document
+                                .uri
+                            }
+                            DidChangeWatchedFiles::METHOD => {
+                                serde_json::from_value::<lsp_types::DidChangeWatchedFilesParams>(
+                                    not.params,
+                                )
+                                .unwrap()
+                                .changes
+                                .remove(0)
+                                .uri
+                            }
+                            _ => unreachable!(),
+                        };
+                        let doc = current_state.get(&saved_doc_uri).unwrap();
                         let mut slide_show = doc.slideshow.write();
 
                         let ast = super::parser::parse_file(
@@ -1159,7 +1244,7 @@ pub fn start_lsp(
                             &mut app.helix_cell,
                             &mut slide_show,
                             &lsp_egui_ctx,
-                            Path::new(saved_doc.text_document.uri.path()),
+                            Path::new(saved_doc_uri.path()),
                             Arc::clone(&app.viewbox_nodes),
                         );
                         match ast {
@@ -1169,7 +1254,7 @@ pub fn start_lsp(
                                     .send(Message::Notification(lsp_server::Notification::new(
                                         PublishDiagnostics::METHOD.to_string(),
                                         PublishDiagnosticsParams {
-                                            uri: saved_doc.text_document.uri.clone(),
+                                            uri: saved_doc_uri.clone(),
                                             diagnostics: vec![],
                                             version: Some(doc.version),
                                         },
@@ -1186,7 +1271,7 @@ pub fn start_lsp(
                                     .send(Message::Notification(lsp_server::Notification::new(
                                         PublishDiagnostics::METHOD.to_string(),
                                         PublishDiagnosticsParams {
-                                            uri: saved_doc.text_document.uri.clone(),
+                                            uri: saved_doc_uri.clone(),
                                             diagnostics: errors
                                                 .into_iter()
                                                 .map(|error| {

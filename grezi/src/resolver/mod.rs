@@ -6,7 +6,7 @@ use eframe::egui::{
 };
 use egui_anim::Anim;
 use egui_glyphon::{
-    glyphon::{cosmic_text::BufferRef, Edit, Editor, FontSystem, Metrics},
+    glyphon::{cosmic_text::BufferRef, Buffer, Edit, Editor, FontSystem, Metrics},
     BufferWithTextArea,
 };
 use image::codecs::{png::PngDecoder, webp::WebPDecoder};
@@ -65,7 +65,7 @@ impl Resolved {
         export: bool,
     ) {
         let current_clip = ui.clip_rect();
-        ui.set_clip_rect(self.window_size);
+        ui.set_clip_rect(self.draw_size);
         for obj in self.slide.iter() {
             let time = if obj.scaled_time[0] < time {
                 (time - obj.scaled_time[0]).clamp(0.0, obj.scaled_time[1])
@@ -224,32 +224,37 @@ impl Resolved {
                     mut tint,
                     scale,
                 } => {
-                    match obj.state {
-                        ObjectState::Entering => {
-                            tint = tint.gamma_multiply(keyframe::ease_with_scaled_time(
-                                EaseOutCubic,
-                                0.0,
-                                1.0,
-                                time,
-                                obj.scaled_time[1],
-                            ));
-                        }
-                        ObjectState::Exiting => {
-                            tint = tint.gamma_multiply(keyframe::ease_with_scaled_time(
-                                EaseOutCubic,
-                                1.0,
-                                0.0,
-                                time,
-                                obj.scaled_time[1],
-                            ));
-                        }
-                        ObjectState::OnScreen => {}
+                    let gamma = match obj.state {
+                        ObjectState::Entering => keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            0.0,
+                            1.0,
+                            time,
+                            obj.scaled_time[1],
+                        ),
+                        ObjectState::Exiting => keyframe::ease_with_scaled_time(
+                            EaseOutCubic,
+                            1.0,
+                            0.0,
+                            time,
+                            obj.scaled_time[1],
+                        ),
+                        ObjectState::OnScreen => 1.0,
+                    };
+                    if !export {
+                        tint = tint.gamma_multiply(gamma);
                     }
-                    if tint.a() > 0 {
-                        Image::from_uri(anim.find_img(ui.ctx()))
+                    if gamma > 0.0 {
+                        let mut img = Image::from_uri(anim.find_img(ui.ctx()))
                             .fit_to_exact_size(scale.unwrap_or_else(|| obj_pos.size()))
-                            .tint(tint)
-                            .paint_at(ui, obj_pos);
+                            .tint(tint);
+                        if export {
+                            img = img.uv(Rect {
+                                min: Pos2::new(gamma, 0.0),
+                                ..Rect::ZERO
+                            });
+                        }
+                        img.paint_at(ui, obj_pos);
                     }
                 }
                 ResolvedObject::Rect { color, rect } => {
@@ -422,6 +427,7 @@ impl Resolved {
                     constraints,
                     split,
                     unresolved_layout.margin,
+                    unresolved_layout.margin_per,
                 );
                 let splits = Splits {
                     unadjusted: layout.unadjusted[index],
@@ -447,7 +453,6 @@ impl Resolved {
         resolved_images: Arc<
             Mutex<HashMap<u64, ResolvedObject, BuildHasherDefault<PassThroughHasher>>>,
         >,
-        export: bool,
     ) -> Self {
         let mut resolved = Resolved::default();
         resolved.draw_size = {
@@ -472,6 +477,7 @@ impl Resolved {
                         adjusted: resolved.draw_size,
                     },
                     15.0,
+                    0.0,
                 )
                 .get_splits(0),
                 ViewboxIn::Custom(hash, index) => {
@@ -489,6 +495,7 @@ impl Resolved {
                         adjusted: resolved.draw_size,
                     },
                     15.0,
+                    0.0,
                 )
                 .get_splits(0),
                 ViewboxIn::Custom(hash, index) => {
@@ -498,6 +505,7 @@ impl Resolved {
             };
 
             let obj = slide_show.objects.get(&object.object).unwrap();
+            let factor = second_viewbox.adjusted.size() / second_viewbox.unadjusted.size();
             match &obj.object {
                 crate::parser::objects::ObjectType::Spinner => {
                     let size = ResolvedObject::Spinner.bounds(second_viewbox.adjusted.size(), ui);
@@ -550,7 +558,6 @@ impl Resolved {
                     align,
                     spacing,
                 } => {
-                    let factor = second_viewbox.adjusted.size() / second_viewbox.unadjusted.size();
                     let font_size = *font_size * factor.x;
                     let (size, resolved_job) =
                         crate::parser::objects::cosmic_jotdown::resolve_paragraphs(
@@ -562,7 +569,6 @@ impl Resolved {
                                 line_height.map_or(font_size * 1.2, |h| h * font_size),
                             ),
                             *align,
-                            factor.x,
                             *spacing,
                         );
 
@@ -589,6 +595,7 @@ impl Resolved {
                     tint,
                     scale,
                 } => {
+                    let scale = scale.map(|s| s * factor);
                     match images.binary_search(&object.object) {
                         Err(index) | Ok(index) => images.insert(index, object.object),
                     }
@@ -603,64 +610,63 @@ impl Resolved {
                                 tint: t, scale: s, ..
                             } => {
                                 *t = *tint;
-                                *s = *scale;
+                                *s = scale;
                             }
                             _ => {}
                         })
                         .or_insert_with(|| {
-                            if !export {
-                                match uri.rsplit_once('.') {
-                                    Some((_, "gif")) => {
-                                        ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
+                            match uri.rsplit_once('.') {
+                                Some((_, "gif")) => {
+                                    ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
+                                    return ResolvedObject::Anim {
+                                        anim: Anim::new(
+                                            ui.ctx(),
+                                            &format!("{}\0gif", uri),
+                                            SizeHint::default(),
+                                        ),
+                                        tint: *tint,
+                                        scale,
+                                    };
+                                }
+                                Some((_, "apng" | "png")) => {
+                                    ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
+                                    let decoder =
+                                        PngDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
+                                    if decoder.is_apng().unwrap_or_default() {
                                         return ResolvedObject::Anim {
                                             anim: Anim::new(
                                                 ui.ctx(),
-                                                &format!("{}\0gif", uri),
+                                                &format!("{}\0apng", uri),
                                                 SizeHint::default(),
                                             ),
                                             tint: *tint,
-                                            scale: *scale,
+                                            scale,
                                         };
                                     }
-                                    Some((_, "apng" | "png")) => {
-                                        ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
-                                        let decoder =
-                                            PngDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
-                                        if decoder.is_apng().unwrap_or_default() {
-                                            return ResolvedObject::Anim {
-                                                anim: Anim::new(
-                                                    ui.ctx(),
-                                                    &format!("{}\0apng", uri),
-                                                    SizeHint::default(),
-                                                ),
-                                                tint: *tint,
-                                                scale: *scale,
-                                            };
-                                        }
-                                    }
-                                    Some((_, "webp")) => {
-                                        ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
-                                        let decoder =
-                                            WebPDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
-                                        if decoder.has_animation() {
-                                            return ResolvedObject::Anim {
-                                                anim: Anim::new(
-                                                    ui.ctx(),
-                                                    &format!("{}\0webp", uri),
-                                                    SizeHint::default(),
-                                                ),
-                                                tint: *tint,
-                                                scale: *scale,
-                                            };
-                                        }
-                                    }
-                                    _ => {}
                                 }
+                                Some((_, "webp")) => {
+                                    ui.ctx().include_bytes(uri.clone(), Arc::clone(bytes));
+                                    let decoder =
+                                        WebPDecoder::new(Cursor::new(bytes.as_ref())).unwrap();
+                                    if decoder.has_animation() {
+                                        return ResolvedObject::Anim {
+                                            anim: Anim::new(
+                                                ui.ctx(),
+                                                &format!("{}\0webp", uri),
+                                                SizeHint::default(),
+                                            ),
+                                            tint: *tint,
+                                            scale,
+                                        };
+                                    }
+                                }
+                                _ => {}
                             }
+
                             ResolvedObject::Image {
                                 image: Image::from_bytes(uri.clone(), Arc::clone(bytes)),
                                 tint: *tint,
-                                scale: *scale,
+                                scale,
                             }
                         });
 
@@ -695,52 +701,48 @@ impl Resolved {
                 } => {
                     let text_object = resolved.slide.get(*index).unwrap();
                     let locations = if let Some(locations) = locations {
+                        fn get_rect_from_locations(
+                            locations: [usize; 2],
+                            buffer: &Buffer,
+                        ) -> Option<Rect> {
+                            let glyph = buffer.lines.get(locations[0])?;
+                            let glyph = glyph.layout_opt().as_ref().unwrap();
+                            let glyph = glyph
+                                .iter()
+                                .flat_map(|g| &g.glyphs)
+                                .take(locations[1] + 1)
+                                .last()?;
+
+                            Some(Rect::from_min_size(
+                                Pos2::new(
+                                    glyph.x,
+                                    glyph.y + buffer.metrics().line_height * locations[0] as f32,
+                                ),
+                                Vec2::new(glyph.w, glyph.y_offset + buffer.metrics().line_height),
+                            ))
+                        }
+
                         let (from_rect, to_rect) = match &text_object.object {
                             ResolvedObject::Text(buffer) => (
                                 {
                                     let buffer = buffer[0].buffer.read();
-                                    let glyph = buffer.lines.get(locations[0][0]).unwrap();
-                                    let glyph = glyph.layout_opt().as_ref().unwrap();
-                                    let glyph = glyph
-                                        .iter()
-                                        .flat_map(|g| &g.glyphs)
-                                        .take(locations[0][1] + 1)
-                                        .last()
-                                        .unwrap();
-
-                                    Rect::from_min_size(
-                                        Pos2::new(
-                                            glyph.x,
-                                            glyph.y
-                                                + buffer.metrics().line_height
-                                                    * locations[0][0] as f32,
-                                        ),
-                                        Vec2::new(0.0, glyph.y_offset),
-                                    )
+                                    if let Some(rect) =
+                                        get_rect_from_locations(locations[0], &buffer)
+                                    {
+                                        rect
+                                    } else {
+                                        Rect::ZERO
+                                    }
                                 },
                                 {
                                     let buffer = buffer[0].buffer.read();
-                                    let glyph = buffer.lines.get(locations[1][0]).unwrap();
-                                    let glyph = glyph.layout_opt().as_ref().unwrap();
-                                    let glyph = glyph
-                                        .iter()
-                                        .flat_map(|g| &g.glyphs)
-                                        .take(locations[1][1])
-                                        .last()
-                                        .unwrap();
-
-                                    Rect::from_min_size(
-                                        Pos2::new(
-                                            glyph.x,
-                                            glyph.y
-                                                + buffer.metrics().line_height
-                                                    * locations[1][0] as f32,
-                                        ),
-                                        Vec2::new(
-                                            glyph.w,
-                                            glyph.y_offset + buffer.metrics().line_height,
-                                        ),
-                                    )
+                                    if let Some(rect) =
+                                        get_rect_from_locations(locations[1], &buffer)
+                                    {
+                                        rect
+                                    } else {
+                                        Rect::ZERO
+                                    }
                                 },
                             ),
                             _ => todo!(),
@@ -895,10 +897,12 @@ fn resolve_layout_raw(
     constraints: Vec<Constraint>,
     splits: Splits,
     margin: f32,
+    margin_per: f32,
 ) -> Layouts {
     let unadjusted = layout::Layout::default()
         .direction(direction)
         .margin(margin)
+        .margin_per(margin_per)
         .constraints(&constraints)
         .split(splits.unadjusted)
         .unwrap();

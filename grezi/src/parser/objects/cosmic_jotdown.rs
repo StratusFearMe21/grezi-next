@@ -118,9 +118,13 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                     Container::ListItem { .. } | Container::Paragraph => {
                         self.top_level_container.get_or_insert(container);
                     }
+                    Container::CodeBlock { .. } => {
+                        self.attrs = self.attrs.family(Family::Monospace);
+                        self.top_level_container.get_or_insert(container);
+                    }
                     Container::List { kind, .. } => self.indent.push(Indent {
                         indent: self.indent.last().copied().unwrap_or_default().indent
-                            + (INDENT_AMOUNT * self.metrics.font_size),
+                            + INDENT_AMOUNT,
                         modifier: Some(kind),
                     }),
                     Container::Link(_, _) => {
@@ -137,6 +141,12 @@ impl<'a, 'b, T: Iterator<Item = Event<'a>>> Iterator for JotdownIntoBuffer<'a, '
                         self.indent.pop();
                     }
                     Container::Heading { .. } | Container::Paragraph => {
+                        if self.added {
+                            return None;
+                        }
+                    }
+                    Container::CodeBlock { .. } => {
+                        self.attrs.family(Family::SansSerif);
                         if self.added {
                             return None;
                         }
@@ -187,7 +197,6 @@ pub fn resolve_paragraphs(
     font_system: &mut FontSystem,
     metrics: Metrics,
     align: Option<Align>,
-    factor: f32,
     spacing: VerticalSpacing,
 ) -> (Vec2, Vec<ResolvedJotdownItem>) {
     let mut size = Vec2::new(0.0, 0.0);
@@ -198,10 +207,9 @@ pub fn resolve_paragraphs(
     let mut paragraphs = paragaphs
         .iter()
         .flat_map(|jbuffer| {
-            let mut buffer =
-                jbuffer
-                    .clone()
-                    .resolve(font_system, viewbox.x, metrics, align, factor);
+            let mut buffer = jbuffer
+                .clone()
+                .resolve(font_system, viewbox.x, metrics, align);
             let margin = jbuffer.margin * buffer.metrics.line_height;
 
             let margin_top = (margin - last_margin).max(0.0);
@@ -238,7 +246,7 @@ pub fn resolve_paragraphs(
                 list_buffer.shape_until_scroll(font_system, false);
 
                 let list_buffer_metrics = buffer.metrics;
-                let indent = (buffer_indent) - (INDENT_AMOUNT * list_buffer_metrics.font_size);
+                let indent = (buffer_indent) - (INDENT_AMOUNT * metrics.font_size);
                 [
                     Some(buffer),
                     Some(ResolvedJotdownItem {
@@ -313,11 +321,8 @@ impl JotdownItem {
         width: f32,
         metrics: Metrics,
         align: Option<Align>,
-        factor: f32,
     ) -> ResolvedJotdownItem {
-        self.indent.indent *= factor;
         self.indent.indent *= metrics.font_size;
-
         let buffer = self.make_buffer(font_system, width, metrics, align);
 
         ResolvedJotdownItem {

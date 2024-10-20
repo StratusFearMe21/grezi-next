@@ -61,6 +61,8 @@ pub mod args;
 pub mod lsp;
 pub mod parser;
 pub mod resolver;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod server;
 
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -203,7 +205,6 @@ impl SpeakerView {
                                     &slide_show,
                                     font_system.deref_mut(),
                                     Arc::clone(&resolved_images),
-                                    false,
                                 ));
                                 self.next_resolved.store(Some(Arc::clone(&res)));
                                 next_resolved = res;
@@ -229,7 +230,6 @@ impl SpeakerView {
                                             &slide_show,
                                             font_system.deref_mut(),
                                             Arc::clone(&resolved_images),
-                                            false,
                                         ));
                                         self.next_resolved.store(Some(Arc::clone(&res)));
                                         next_resolved = res;
@@ -259,7 +259,6 @@ impl SpeakerView {
                                     &slide_show,
                                     font_system.deref_mut(),
                                     Arc::clone(&resolved_images),
-                                    false,
                                 ));
                                 self.current_resolved.store(Some(Arc::clone(&res)));
                                 current_resolved = res;
@@ -285,7 +284,6 @@ impl SpeakerView {
                                             &slide_show,
                                             font_system.deref_mut(),
                                             Arc::clone(&resolved_images),
-                                            false,
                                         ));
                                         self.current_resolved.store(Some(Arc::clone(&res)));
                                         current_resolved = res;
@@ -504,6 +502,7 @@ impl SlideShow {
                     UnresolvedLayout {
                         direction: Direction::Vertical,
                         margin: 15.0,
+                        margin_per: 0.0,
                         constraints: vec![Constraint::Ratio(1.0, 2.0), Constraint::Ratio(1.0, 2.0)],
                         expand_to_fill: true,
                         split_on: ViewboxIn::Size,
@@ -1000,7 +999,6 @@ impl MyEguiApp {
                                     &slide_show,
                                     font_system.deref_mut(),
                                     Arc::clone(&self.resolved_images),
-                                    self.export,
                                 ));
                                 self.resolved.store(Some(Arc::clone(&resolved)));
                                 resolved
@@ -1028,7 +1026,6 @@ impl MyEguiApp {
                                             &slide_show,
                                             font_system.deref_mut(),
                                             Arc::clone(&self.resolved_images),
-                                            self.export,
                                         ));
                                         self.resolved.store(Some(Arc::clone(&resolved)));
                                         resolved

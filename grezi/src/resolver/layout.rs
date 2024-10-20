@@ -187,6 +187,8 @@ pub struct UnresolvedLayout {
     pub direction: Direction,
     /// The margin between the boxes inside of a viewbox
     pub margin: f32,
+    /// The margin between the boxes _within_ a viewbox
+    pub margin_per: f32,
     /// Tells the solver how the boxes should be allocated inside of the viewbox
     pub constraints: Vec<Constraint>,
     /// Whether the last chunk of the computed layout should be expanded to fill the available
@@ -215,6 +217,8 @@ pub struct Layout<'a> {
     direction: Direction,
     /// The margin between the boxes inside of a viewbox
     margin: f32,
+    /// The margin between the boxes _within_ a viewbox
+    margin_per: f32,
     /// Tells the solver how the boxes should be allocated inside of the viewbox
     constraints: &'a [Constraint],
     /// option for segment size preferences
@@ -227,6 +231,7 @@ impl<'a> Default for Layout<'a> {
         Layout {
             direction: Direction::Vertical,
             margin: 15.0,
+            margin_per: 0.0,
             constraints: &[],
             segment_size: SegmentSize::LastTakesRemainder,
         }
@@ -258,6 +263,12 @@ impl<'a> Layout<'a> {
     #[inline]
     pub fn margin(mut self, margin: f32) -> Layout<'a> {
         self.margin = margin;
+        self
+    }
+
+    #[inline]
+    pub fn margin_per(mut self, margin_per: f32) -> Layout<'a> {
+        self.margin_per = margin_per;
         self
     }
 
@@ -426,11 +437,13 @@ impl<'a> Layout<'a> {
                     Direction::Horizontal => Rect::from_min_size(
                         Pos2::new(start, inner.min.y),
                         Vec2::new(size, inner.height()),
-                    ),
+                    )
+                    .shrink(self.margin_per),
                     Direction::Vertical => Rect::from_min_size(
                         Pos2::new(inner.min.x, start),
                         Vec2::new(inner.width(), size),
-                    ),
+                    )
+                    .shrink(self.margin_per),
                 }
             })
             .collect::<Vec<_>>();

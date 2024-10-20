@@ -269,28 +269,30 @@ pub fn parse_objects(
                 match parameter.0.as_ref() {
                     "value" => uri = value,
                     "scale" => {
-                        let split = value.split_once('x').ok_or_else(|| {
-                            super::Error::InvalidParameter(PointFromRange::new(
-                                parameter.1.range().into(),
-                                source,
-                            ))
-                        })?;
+                        if let Some(split) = value.split_once('x') {
+                            let w: f32 = split.0.parse().map_err(|_| {
+                                super::Error::InvalidParameter(PointFromRange::new(
+                                    parameter.1.range().into(),
+                                    source,
+                                ))
+                            })?;
 
-                        let w: f32 = split.0.parse().map_err(|_| {
-                            super::Error::InvalidParameter(PointFromRange::new(
-                                parameter.1.range().into(),
-                                source,
-                            ))
-                        })?;
+                            let h: f32 = split.1.parse().map_err(|_| {
+                                super::Error::InvalidParameter(PointFromRange::new(
+                                    parameter.1.range().into(),
+                                    source,
+                                ))
+                            })?;
 
-                        let h: f32 = split.1.parse().map_err(|_| {
-                            super::Error::InvalidParameter(PointFromRange::new(
-                                parameter.1.range().into(),
-                                source,
-                            ))
-                        })?;
-
-                        scale = Some(Vec2::new(w, h));
+                            scale = Some(Vec2::new(w, h));
+                        } else {
+                            scale = Some(Vec2::splat(value.parse().map_err(|_| {
+                                super::Error::InvalidParameter(PointFromRange::new(
+                                    parameter.1.range().into(),
+                                    source,
+                                ))
+                            })?))
+                        };
                     }
                     "tint" => {
                         let t = super::color::parse_color_with(
@@ -321,6 +323,9 @@ pub fn parse_objects(
             }
             if let Ok(mut new_uri) = Url::parse(&uri) {
                 if new_uri.scheme() == "file" {
+                    #[cfg(windows)]
+                    let file_path = dunce::simplified(file_path);
+
                     new_uri.set_path(
                         file_path
                             .parent()

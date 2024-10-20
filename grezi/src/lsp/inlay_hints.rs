@@ -45,6 +45,7 @@ pub fn inlay_hints(
         RopeProvider(current_rope.slice(..)),
     );
 
+    let mut in_slide = false;
     for query_match in edge_iter {
         match query_match.pattern_index {
             0 => {
@@ -140,6 +141,7 @@ pub fn inlay_hints(
                 }
             }
             1 => {
+                in_slide = true;
                 slide_num += 1;
                 let range = query_match.captures[0].node.range();
                 hints.push(InlayHint {
@@ -184,7 +186,14 @@ pub fn inlay_hints(
                     data: None,
                 });
             }
-            _ => unreachable!(),
+            3 => {
+                if in_slide {
+                    in_slide = false;
+                } else {
+                    slide_num += 1;
+                }
+            }
+            n => unreachable!("{}", n),
         }
     }
 

@@ -98,6 +98,9 @@ pub struct Args {
     pub export: bool,
     #[clap(long)]
     pub lsp: bool,
+    /// Access speaker notes and control slide show from mobile device using ProRemote (https://play.google.com/store/apps/details?id=com.renewedvision.proremote_android&hl=en_US&gl=US)
+    #[clap(long)]
+    pub server_password: Option<String>,
     /// For compatibility, if your system is wacky
     #[clap(short, long)]
     pub gtk: bool,

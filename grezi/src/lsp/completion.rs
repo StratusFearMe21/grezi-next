@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use helix_core::{
     syntax::RopeProvider,
     tree_sitter::{Node, Point, Query, QueryCursor, Tree},
-    Rope,
+    Rope, RopeSlice,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionParams,
@@ -81,11 +83,13 @@ pub fn complete_source_file(
     walker.goto_first_child()?;
 
     let mut line = String::new();
+    let mut visible_objs: HashSet<RopeSlice<'_>, ahash::RandomState> = HashSet::default();
     loop {
         line.clear();
         walker.goto_first_child_raw()?;
         line.push_str("    ");
         'outer: {
+            let mut ident_slice = RopeSlice::from("");
             loop {
                 match NodeKind::from(walker.node().kind_id()) {
                     NodeKind::EdgeParser => {
@@ -98,10 +102,8 @@ pub fn complete_source_file(
                         }
                     }
                     NodeKind::Identifier => {
-                        current_rope
-                            .byte_slice(walker.node().byte_range())
-                            .chunks()
-                            .for_each(|c| line.push_str(c));
+                        ident_slice = current_rope.byte_slice(walker.node().byte_range());
+                        ident_slice.chunks().for_each(|c| line.push_str(c));
                         line.push(',');
                     }
                     _ => {}
@@ -111,6 +113,7 @@ pub fn complete_source_file(
                     break;
                 }
             }
+            visible_objs.insert(dbg!(ident_slice));
             new_text.push_str(&line);
             new_text.push('\n');
         }
@@ -125,7 +128,59 @@ pub fn complete_source_file(
             break;
         }
     }
-    new_text.push_str("}[]");
+    new_text.push_str("}[");
+    walker.goto_parent();
+    walker.goto_next_sibling()?;
+    if !walker.goto_first_child()? {
+        new_text.push(']');
+    } else {
+        dbg!(NodeKind::from(walker.node().kind_id()));
+        loop {
+            line.clear();
+            line.push_str("    ");
+
+            walker.goto_first_child()?;
+            'outer: {
+                let mut strike = false;
+                loop {
+                    match NodeKind::from(walker.node().kind_id()) {
+                        NodeKind::Identifier => {
+                            if !visible_objs.contains(dbg!(
+                                &current_rope.byte_slice(walker.node().byte_range())
+                            )) {
+                                if strike {
+                                    break 'outer;
+                                }
+                                strike = true;
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    current_rope
+                        .byte_slice(walker.node().byte_range())
+                        .chunks()
+                        .for_each(|c| line.push_str(c));
+
+                    if !walker.goto_next_sibling_raw()? {
+                        break;
+                    }
+                }
+                line.push(',');
+
+                new_text.push('\n');
+                new_text.push_str(&line);
+            }
+
+            walker.goto_parent();
+
+            if !walker.goto_next_sibling()? {
+                break;
+            }
+        }
+
+        new_text.push_str("\n]");
+    }
     let continue_slide_range = lsp_types::Range {
         start: Position {
             line: completion.text_document_position.position.line,

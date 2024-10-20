@@ -172,6 +172,7 @@ pub fn parse_citations(
                 UnresolvedLayout {
                     direction: Direction::Vertical,
                     margin: 15.0,
+                    margin_per: 0.0,
                     constraints: vec![Constraint::Length(148.0), Constraint::Min(0.0)],
                     expand_to_fill: true,
                     split_on: super::viewboxes::ViewboxIn::Size,

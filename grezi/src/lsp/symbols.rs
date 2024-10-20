@@ -4,8 +4,8 @@ use helix_core::{
     Rope,
 };
 use lsp_types::{
-    DocumentSymbol, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverParams, Location, ReferenceParams, SymbolKind, Url,
+    DocumentSymbol, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, Location,
+    ReferenceParams, SymbolKind, Url,
 };
 
 use crate::{
@@ -110,9 +110,16 @@ pub fn goto_declaration(
 }
 
 #[allow(deprecated)]
-pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymbolResponse> {
+pub fn document_symbols<F, S>(
+    current_rope: &Rope,
+    tree: &Tree,
+    symbols: &mut Vec<S>,
+    callback: F,
+) -> Option<()>
+where
+    F: Fn(DocumentSymbol) -> S,
+{
     let mut tree_cursor = GrzCursor::new(tree, current_rope);
-    let mut symbols = Vec::new();
 
     let _ = tree_cursor.goto_first_child();
     let mut slide_num = 0;
@@ -126,7 +133,7 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
 
                 let selection_range = tree_cursor.node().range();
 
-                symbols.push(DocumentSymbol {
+                symbols.push(callback(DocumentSymbol {
                     name: format!("Slide {}", slide_num),
                     kind: SymbolKind::FUNCTION,
                     range: char_range_from_byte_range(range, current_rope).ok()?,
@@ -136,7 +143,7 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
                     tags: None,
                     deprecated: None,
                     children: None,
-                })
+                }))
             }
             NodeKind::Viewbox => {
                 let _ = tree_cursor.goto_first_child();
@@ -148,21 +155,21 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
                 let index_range = tree_cursor.node().byte_range();
                 tree_cursor.goto_parent();
 
-                symbols.push(DocumentSymbol {
+                symbols.push(callback(DocumentSymbol {
                     name: current_rope.byte_slice(byte_range).to_string(),
                     kind: SymbolKind::VARIABLE,
                     range: char_range_from_byte_range(range, current_rope).ok()?,
                     detail: Some(format!(
                         "{}{}",
-                        current_rope.slice(name_range),
-                        current_rope.slice(index_range)
+                        current_rope.byte_slice(name_range),
+                        current_rope.byte_slice(index_range)
                     )),
                     selection_range: char_range_from_byte_range(selection_range, current_rope)
                         .ok()?,
                     tags: None,
                     deprecated: None,
                     children: None,
-                })
+                }))
             }
             NodeKind::Obj => {
                 let _ = tree_cursor.goto_first_child();
@@ -172,25 +179,27 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
                 let name_range = tree_cursor.node().byte_range();
                 tree_cursor.goto_parent();
 
-                symbols.push(DocumentSymbol {
+                symbols.push(callback(DocumentSymbol {
                     name: current_rope.byte_slice(byte_range).to_string(),
                     kind: SymbolKind::OBJECT,
                     range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: Some(current_rope.slice(name_range).to_string()),
+                    detail: Some(current_rope.byte_slice(name_range).to_string()),
                     selection_range: char_range_from_byte_range(selection_range, current_rope)
                         .ok()?,
                     tags: None,
                     deprecated: None,
                     children: None,
-                })
+                }))
             }
             NodeKind::Register => { /* todo */ }
             NodeKind::SlideFunctions => {
+                slide_num += 1;
+
                 let _ = tree_cursor.goto_first_child();
                 let selection_range = tree_cursor.node().range();
                 tree_cursor.goto_parent();
 
-                symbols.push(DocumentSymbol {
+                symbols.push(callback(DocumentSymbol {
                     name: "Actions".to_string(),
                     kind: SymbolKind::ARRAY,
                     range: char_range_from_byte_range(range, current_rope).ok()?,
@@ -200,7 +209,7 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
                     tags: None,
                     deprecated: None,
                     children: None,
-                })
+                }))
             }
             _ => {}
         }
@@ -214,7 +223,7 @@ pub fn document_symbols(current_rope: &Rope, tree: &Tree) -> Option<DocumentSymb
         }
     }
 
-    Some(DocumentSymbolResponse::Nested(symbols))
+    Some(())
 }
 
 pub fn hover(

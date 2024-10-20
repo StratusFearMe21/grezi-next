@@ -89,7 +89,14 @@ impl ImageLoader for AnimLoader {
         let mut cache = self.cache.lock();
         if let Some(entry) = cache.get(uri).cloned() {
             Ok(ImagePoll::Ready {
-                image: Arc::clone(&entry.frames[index.parse::<usize>().unwrap()].0),
+                image: Arc::clone(
+                    &entry
+                        .frames
+                        .get(index.parse::<usize>().unwrap())
+                        .or_else(|| entry.frames.last())
+                        .unwrap()
+                        .0,
+                ),
             })
         } else {
             match ctx.try_load_bytes(uri) {

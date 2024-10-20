@@ -10,7 +10,7 @@ pub fn semantic_tokens(
     current_rope: &Rope,
     query_cursor: &mut QueryCursor,
     tree: &Tree,
-) -> SemanticTokensResult {
+) -> Option<SemanticTokensResult> {
     let start_node = tree.root_node();
 
     query_cursor.set_point_range(
@@ -51,18 +51,20 @@ pub fn semantic_tokens(
                     },
                     length: if line == range.start_point.row {
                         if (range.end_point.row - range.start_point.row) > 0 {
-                            current_rope
+                            let slice = current_rope
                                 .line(line)
-                                .slice(range.start_point.column..)
-                                .len_chars() as u32
+                                .get_byte_slice(range.start_point.column..);
+
+                            slice?.len_chars() as u32
                         } else {
                             (range.end_point.column - range.start_point.column) as u32
                         }
                     } else if line == range.end_point.row {
-                        current_rope
+                        let slice = current_rope
                             .line(line)
-                            .slice(..range.end_point.column)
-                            .len_chars() as u32
+                            .get_byte_slice(..range.end_point.column);
+
+                        slice?.len_chars() as u32
                     } else {
                         current_rope.line(line).len_chars() as u32
                     },
@@ -84,8 +86,8 @@ pub fn semantic_tokens(
         }
     }
 
-    SemanticTokensResult::Tokens(SemanticTokens {
+    Some(SemanticTokensResult::Tokens(SemanticTokens {
         data: tokens,
         ..Default::default()
-    })
+    }))
 }

@@ -414,6 +414,7 @@ pub fn parse_file(
     // let instant = Instant::now();
     let mut bg = (Color::default(), None);
     let mut margin_register = 15.0;
+    let mut margin_per_register = 0.0;
     let mut create_edges_register = false;
     let mut errors_present = Vec::new();
     let hasher = ahash::RandomState::with_seeds(69, 420, 24, 96);
@@ -545,6 +546,7 @@ pub fn parse_file(
                                 (bg.0, bg.1.take()),
                                 &mut slide_show.viewboxes,
                                 margin_register,
+                                margin_per_register,
                                 create_edges_register,
                             ) {
                                 Ok((slide, color)) => {
@@ -605,6 +607,7 @@ pub fn parse_file(
                                 &hasher,
                                 &slide_show.viewboxes,
                                 margin_register,
+                                margin_per_register,
                             ) {
                                 Ok(layout) => {
                                     viewboxes.insert(node_id, layout.0);
@@ -614,11 +617,14 @@ pub fn parse_file(
                             }
                         })
                     } else {
-                        if let Some(UnresolvedLayout { margin, .. }) = viewbox_on.map(|v| {
+                        if let Some(UnresolvedLayout {
+                            margin, margin_per, ..
+                        }) = viewbox_on.map(|v| {
                             viewboxes.insert(node_id, viewbox_node.unwrap());
                             v
                         }) {
                             *margin = margin_register;
+                            *margin_per = margin_per_register;
                         }
                     }
                 }
@@ -668,6 +674,12 @@ pub fn parse_file(
                     } else if key == "MARGIN" {
                         match value.parse() {
                             Ok(value) => margin_register = value,
+                            Err(_) => errors_present
+                                .push(Error::Syntax(PointFromRange::new(node.range(), source))),
+                        }
+                    } else if key == "MARGIN_PER" {
+                        match value.parse() {
+                            Ok(value) => margin_per_register = value,
                             Err(_) => errors_present
                                 .push(Error::Syntax(PointFromRange::new(node.range(), source))),
                         }

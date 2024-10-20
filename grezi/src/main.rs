@@ -23,6 +23,7 @@ fn main() -> miette::Result<()> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let args: Args = clap::Parser::parse();
+
     if args.gtk {
         grezi::cairo::run_gtk();
         return Ok(());
@@ -293,6 +294,25 @@ fn main() -> miette::Result<()> {
                 let cache = egui_glyphon::glyphon::Cache::new(&render_state.device);
                 let viewport = egui_glyphon::glyphon::Viewport::new(&render_state.device, &cache);
                 GlyphonRenderer::insert(render_state, Arc::clone(&font_system), &cache, viewport);
+            }
+            if let Some(password) = args.server_password {
+                let server_egui_ctx = cc.egui_ctx.clone();
+                egui_extras::install_image_loaders(&server_egui_ctx);
+                if !server_egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+                    server_egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                }
+
+                let server_app = app.0.clone();
+
+                let password: Arc<str> = password.into();
+
+                std::thread::spawn(move || loop {
+                    let _ = grezi::server::start_server(
+                        server_app.clone(),
+                        server_egui_ctx.clone(),
+                        Arc::clone(&password),
+                    );
+                });
             }
             if args.lsp {
                 let lsp_egui_ctx = cc.egui_ctx.clone();

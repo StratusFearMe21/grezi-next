@@ -133,7 +133,7 @@ pub fn cairo_draw(
 fn convert_color(color: Color32) -> palette::Srgba<f64> {
     let color: palette::LinSrgba<f32> = palette::cast::from_array(Rgba::from(color).to_array());
     let color = palette::Srgba {
-        alpha: color.alpha,
+        alpha: ecolor::gamma_from_linear(color.alpha),
         color: palette::Srgb::new(
             ecolor::gamma_from_linear(color.red),
             ecolor::gamma_from_linear(color.green),
@@ -378,10 +378,7 @@ pub fn cairo_draw_shape(
                                 &mut tag,
                                 format_args!(
                                     "{} {} {} {} ",
-                                    rect.min.x.ceil(),
-                                    rect.min.y.ceil(),
-                                    size.x.ceil(),
-                                    size.y.ceil()
+                                    rect.min.x, rect.min.y, size.x, size.y
                                 ),
                             )
                             .unwrap();

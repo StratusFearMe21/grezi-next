@@ -17,3 +17,4 @@
     key: (identifier) @key
     value: (string_literal) @value
     (#eq? @key "value"))
+(slide_functions) @slide_functions
