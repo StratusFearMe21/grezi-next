@@ -39,7 +39,7 @@ enum ProMessage<'a> {
     },
     #[serde(rename_all = "camelCase")]
     PresentationRequest {
-        presentation_path: Cow<'a, str>,
+        // presentation_path: Cow<'a, str>,
         #[serde(default)]
         presentation_destination: i32,
     },
@@ -58,7 +58,7 @@ enum ProMessage<'a> {
     #[serde(rename_all = "camelCase")]
     PresentationTriggerIndex {
         slide_index: Cow<'a, str>,
-        presentation_path: Cow<'a, str>,
+        // presentation_path: Cow<'a, str>,
         #[serde(default)]
         presentation_destination: i32,
     },
@@ -101,7 +101,6 @@ enum ProResponse<'a> {
         presentation_path: Cow<'a, str>,
         presentation_destination: i32,
     },
-    ClearText,
 }
 
 impl<'a> TryFrom<ProResponse<'a>> for Message {
@@ -202,6 +201,7 @@ pub fn start_server(
     );
     #[cfg(windows)]
     let file_name = format!("{}", dunce::canonicalize(&app.file_name).unwrap().display());
+    let mut current_presentation: Option<Message> = None;
 
     loop {
         let msg = websocket.read()?;
@@ -277,203 +277,211 @@ pub fn start_server(
                 presentation_destination,
                 ..
             } => {
-                let mut group_slides = Vec::new();
-                let slide_show = app.slide_show.load();
-                let slide_show = slide_show.read();
-                let used_fonts = slide_show.used_fonts(app.font_system.lock().deref_mut());
-                let size = Vec2::new(854.0, 480.0);
-                let export_ctx = eframe::egui::Context::default();
-                egui_extras::install_image_loaders(&export_ctx);
-                if !export_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
-                    export_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
-                }
+                let response = current_presentation.get_or_insert_with(|| {
+                    let mut group_slides = Vec::new();
+                    let slide_show = app.slide_show.load();
+                    let slide_show = slide_show.read();
+                    let used_fonts = slide_show.used_fonts(app.font_system.lock().deref_mut());
+                    let size = Vec2::new(854.0, 480.0);
+                    let export_ctx = eframe::egui::Context::default();
+                    egui_extras::install_image_loaders(&export_ctx);
+                    if !export_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
+                        export_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
+                    }
 
-                let ft = cairo::freetype::Library::init().unwrap();
+                    let ft = cairo::freetype::Library::init().unwrap();
 
-                let mut font_defs_ft =
-                    crate::cairo::fonts_to_ft(Arc::clone(&app.font_system), &used_fonts, &ft);
-                let mut textures: HashMap<TextureId, (ImageSurface, bool)> = HashMap::default();
-                let input = eframe::egui::RawInput {
-                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
-                    time: Some(25_849_200.0),
-                    ..Default::default()
-                };
-                let mut speaker_notes: Option<Arc<str>> = None;
-
-                for (index, (_, obj)) in slide_show.slide_show.iter().enumerate() {
-                    let slide_image = {
-                        let stride = cairo::Format::ARgb32
-                            .stride_for_width(size.x as u32)
-                            .unwrap();
-                        let mut image_data = vec![0; stride as usize * size.y as usize];
-                        let surface = unsafe {
-                            ImageSurface::create_for_data_unsafe(
-                                image_data.as_mut_ptr(),
-                                cairo::Format::ARgb32,
-                                size.x as i32,
-                                size.y as i32,
-                                stride,
-                            )
-                            .unwrap()
-                        };
-                        let cairo_ctx = cairo::Context::new(&surface).unwrap();
-
-                        let output = export_ctx.run(input.clone(), |ctx| {
-                            let color = match obj {
-                                AstObject::Slide { bg, .. } => {
-                                    if let Some(color) = bg.1 {
-                                        color.1
-                                    } else {
-                                        bg.0
-                                    }
-                                }
-                                AstObject::Action { slide_in_ast, .. } => {
-                                    let Some(AstObject::Slide { bg, .. }) =
-                                        slide_show.slide_show.get(slide_in_ast)
-                                    else {
-                                        unreachable!()
-                                    };
-                                    if let Some(color) = bg.1 {
-                                        color.1
-                                    } else {
-                                        bg.0
-                                    }
-                                }
-                            };
-                            eframe::egui::CentralPanel::default()
-                                .frame(eframe::egui::Frame::default().fill(color.into()))
-                                .show(ctx, |ui| {
-                                    let resolved = match obj {
-                                        AstObject::Slide {
-                                            objects: slide,
-                                            actions,
-                                            ..
-                                        } => {
-                                            let mut font_system = app.font_system.lock();
-                                            let resolved = Arc::new(Resolved::resolve(
-                                                slide,
-                                                (actions, None),
-                                                ui,
-                                                Rect::from_min_size(Pos2::ZERO, size),
-                                                &slide_show,
-                                                font_system.deref_mut(),
-                                                Arc::clone(&app.resolved_images),
-                                            ));
-                                            resolved
-                                        }
-                                        AstObject::Action {
-                                            actions,
-                                            slide_in_ast,
-                                            ..
-                                        } => {
-                                            let slide =
-                                                slide_show.slide_show.get(slide_in_ast).unwrap();
-                                            match slide {
-                                                AstObject::Slide {
-                                                    objects: slide,
-                                                    actions: slide_actions,
-                                                    ..
-                                                } => {
-                                                    let mut font_system = app.font_system.lock();
-                                                    let resolved = Arc::new(Resolved::resolve(
-                                                        slide,
-                                                        (slide_actions, Some(actions)),
-                                                        ui,
-                                                        Rect::from_min_size(Pos2::ZERO, size),
-                                                        &slide_show,
-                                                        font_system.deref_mut(),
-                                                        Arc::clone(&app.resolved_images),
-                                                    ));
-                                                    resolved
-                                                }
-                                                _ => Arc::new(Resolved::slideshow_end(
-                                                    Rect::from_min_size(Pos2::ZERO, size),
-                                                )),
-                                            }
-                                        }
-                                    };
-
-                                    let mut buffers = Vec::new();
-                                    resolved.draw_slide(
-                                        ui,
-                                        f32::MAX,
-                                        &mut buffers,
-                                        app.font_system.lock().deref_mut(),
-                                        true,
-                                    );
-                                    resolved.draw_actions(ui, f32::MAX, true);
-
-                                    ui.painter().add(PaintCallback {
-                                        rect: Rect::from_min_size(Pos2::ZERO, size),
-                                        callback: Arc::new(GlyphonRendererCallback { buffers }),
-                                    });
-
-                                    speaker_notes = resolved.speaker_notes.clone();
-                                });
-                        });
-
-                        crate::cairo::cairo_draw(
-                            output,
-                            &mut textures,
-                            &cairo_ctx,
-                            &ft,
-                            Arc::clone(&app.font_system),
-                            &mut font_defs_ft,
-                        );
-
-                        cairo_ctx.target().finish();
-
-                        image_data.chunks_mut(4).for_each(|chunk| {
-                            chunk.swap(0, 2);
-                        });
-                        let mut jpeg = Cursor::new(Vec::new());
-
-                        DynamicImage::ImageRgba8(
-                            RgbaImage::from_raw(size.x as u32, size.y as u32, image_data).unwrap(),
-                        )
-                        .to_rgb8()
-                        .write_to(&mut jpeg, ImageFormat::Jpeg)
-                        .unwrap();
-
-                        base64::prelude::BASE64_STANDARD.encode(jpeg.into_inner())
+                    let mut font_defs_ft =
+                        crate::cairo::fonts_to_ft(Arc::clone(&app.font_system), &used_fonts, &ft);
+                    let mut textures: HashMap<TextureId, (ImageSurface, bool)> = HashMap::default();
+                    let input = eframe::egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                        time: Some(25_849_200.0),
+                        ..Default::default()
                     };
+                    let mut speaker_notes: Option<Arc<str>> = None;
 
-                    group_slides.push(ProSlide {
-                        slide_enabled: true,
-                        slide_notes: speaker_notes
-                            .clone()
-                            .unwrap_or_else(|| String::new().into()),
-                        slide_attachment_mask: 0,
-                        slide_text: Cow::Borrowed(""),
-                        slide_image: Cow::Owned(slide_image),
-                        slide_index: index,
-                        slide_transition_type: -1,
-                        slide_label: Cow::Borrowed(""),
-                        slide_color: Cow::Borrowed(""),
-                    });
-                }
+                    for (index, (_, obj)) in slide_show.slide_show.iter().enumerate() {
+                        let slide_image = {
+                            let stride = cairo::Format::ARgb32
+                                .stride_for_width(size.x as u32)
+                                .unwrap();
+                            let mut image_data = vec![0; stride as usize * size.y as usize];
+                            let surface = unsafe {
+                                ImageSurface::create_for_data_unsafe(
+                                    image_data.as_mut_ptr(),
+                                    cairo::Format::ARgb32,
+                                    size.x as i32,
+                                    size.y as i32,
+                                    stride,
+                                )
+                                .unwrap()
+                            };
+                            let cairo_ctx = cairo::Context::new(&surface).unwrap();
 
-                let presentation_slide_groups = [PresentationSlideGroup {
-                    group_name: Cow::Borrowed("Group"),
-                    group_color: Cow::Borrowed(""),
-                    group_slides,
-                }];
+                            let output = export_ctx.run(input.clone(), |ctx| {
+                                let color = match obj {
+                                    AstObject::Slide { bg, .. } => {
+                                        if let Some(color) = bg.1 {
+                                            color.1
+                                        } else {
+                                            bg.0
+                                        }
+                                    }
+                                    AstObject::Action { slide_in_ast, .. } => {
+                                        let Some(AstObject::Slide { bg, .. }) =
+                                            slide_show.slide_show.get(slide_in_ast)
+                                        else {
+                                            unreachable!()
+                                        };
+                                        if let Some(color) = bg.1 {
+                                            color.1
+                                        } else {
+                                            bg.0
+                                        }
+                                    }
+                                };
+                                eframe::egui::CentralPanel::default()
+                                    .frame(eframe::egui::Frame::default().fill(color.into()))
+                                    .show(ctx, |ui| {
+                                        let resolved = match obj {
+                                            AstObject::Slide {
+                                                objects: slide,
+                                                actions,
+                                                ..
+                                            } => {
+                                                let mut font_system = app.font_system.lock();
+                                                let resolved = Arc::new(Resolved::resolve(
+                                                    slide,
+                                                    (actions, None),
+                                                    ui,
+                                                    Rect::from_min_size(Pos2::ZERO, size),
+                                                    &slide_show,
+                                                    font_system.deref_mut(),
+                                                    Arc::clone(&app.resolved_images),
+                                                ));
+                                                resolved
+                                            }
+                                            AstObject::Action {
+                                                actions,
+                                                slide_in_ast,
+                                                ..
+                                            } => {
+                                                let slide = slide_show
+                                                    .slide_show
+                                                    .get(slide_in_ast)
+                                                    .unwrap();
+                                                match slide {
+                                                    AstObject::Slide {
+                                                        objects: slide,
+                                                        actions: slide_actions,
+                                                        ..
+                                                    } => {
+                                                        let mut font_system =
+                                                            app.font_system.lock();
+                                                        let resolved = Arc::new(Resolved::resolve(
+                                                            slide,
+                                                            (slide_actions, Some(actions)),
+                                                            ui,
+                                                            Rect::from_min_size(Pos2::ZERO, size),
+                                                            &slide_show,
+                                                            font_system.deref_mut(),
+                                                            Arc::clone(&app.resolved_images),
+                                                        ));
+                                                        resolved
+                                                    }
+                                                    _ => Arc::new(Resolved::slideshow_end(
+                                                        Rect::from_min_size(Pos2::ZERO, size),
+                                                    )),
+                                                }
+                                            }
+                                        };
 
-                let o = app.file_name.rsplit_once('.').unwrap();
+                                        let mut buffers = Vec::new();
+                                        resolved.draw_slide(
+                                            ui,
+                                            f32::MAX,
+                                            &mut buffers,
+                                            app.font_system.lock().deref_mut(),
+                                            true,
+                                        );
+                                        resolved.draw_actions(ui, f32::MAX, true);
 
-                let response = ProResponse::PresentationCurrent {
-                    presentation_path: Cow::Borrowed(&file_name),
-                    presentation: Presentation {
-                        presentation_name: Cow::Borrowed(o.0),
+                                        ui.painter().add(PaintCallback {
+                                            rect: Rect::from_min_size(Pos2::ZERO, size),
+                                            callback: Arc::new(GlyphonRendererCallback { buffers }),
+                                        });
+
+                                        speaker_notes = resolved.speaker_notes.clone();
+                                    });
+                            });
+
+                            crate::cairo::cairo_draw(
+                                output,
+                                &mut textures,
+                                &cairo_ctx,
+                                &ft,
+                                Arc::clone(&app.font_system),
+                                &mut font_defs_ft,
+                            );
+
+                            cairo_ctx.target().finish();
+
+                            image_data.chunks_mut(4).for_each(|chunk| {
+                                chunk.swap(0, 2);
+                            });
+                            let mut jpeg = Cursor::new(Vec::new());
+
+                            DynamicImage::ImageRgba8(
+                                RgbaImage::from_raw(size.x as u32, size.y as u32, image_data)
+                                    .unwrap(),
+                            )
+                            .to_rgb8()
+                            .write_to(&mut jpeg, ImageFormat::Jpeg)
+                            .unwrap();
+
+                            base64::prelude::BASE64_STANDARD.encode(jpeg.into_inner())
+                        };
+
+                        group_slides.push(ProSlide {
+                            slide_enabled: true,
+                            slide_notes: speaker_notes
+                                .clone()
+                                .unwrap_or_else(|| String::new().into()),
+                            slide_attachment_mask: 0,
+                            slide_text: Cow::Borrowed(""),
+                            slide_image: Cow::Owned(slide_image),
+                            slide_index: index,
+                            slide_transition_type: -1,
+                            slide_label: Cow::Borrowed(""),
+                            slide_color: Cow::Borrowed(""),
+                        });
+                    }
+
+                    let presentation_slide_groups = [PresentationSlideGroup {
+                        group_name: Cow::Borrowed("Group"),
+                        group_color: Cow::Borrowed(""),
+                        group_slides,
+                    }];
+
+                    let o = app.file_name.rsplit_once('.').unwrap();
+
+                    ProResponse::PresentationCurrent {
                         presentation_path: Cow::Borrowed(&file_name),
-                        presentation_current_location: Cow::Borrowed(&file_name),
-                        presentation_has_timeline: false,
-                        presentation_slide_groups: Cow::Borrowed(&presentation_slide_groups),
-                        presentation_destination,
-                    },
-                };
+                        presentation: Presentation {
+                            presentation_name: Cow::Borrowed(o.0),
+                            presentation_path: Cow::Borrowed(&file_name),
+                            presentation_current_location: Cow::Borrowed(&file_name),
+                            presentation_has_timeline: false,
+                            presentation_slide_groups: Cow::Borrowed(&presentation_slide_groups),
+                            presentation_destination,
+                        },
+                    }
+                    .try_into()
+                    .unwrap()
+                });
 
-                websocket.write(response.try_into().unwrap())?;
+                websocket.write(response.clone())?;
                 app.resolved_images.lock().clear();
             }
             ProMessage::PresentationSlideIndex {
