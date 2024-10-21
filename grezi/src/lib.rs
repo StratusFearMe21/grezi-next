@@ -58,11 +58,13 @@ pub mod cairo;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod args;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod impress_server;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod lsp;
 pub mod parser;
-pub mod resolver;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod server;
+pub mod proremote_server;
+pub mod resolver;
 
 #[allow(dead_code)]
 #[derive(Clone)]

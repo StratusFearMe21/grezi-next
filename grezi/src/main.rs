@@ -295,22 +295,28 @@ fn main() -> miette::Result<()> {
                 let viewport = egui_glyphon::glyphon::Viewport::new(&render_state.device, &cache);
                 GlyphonRenderer::insert(render_state, Arc::clone(&font_system), &cache, viewport);
             }
-            if let Some(password) = args.server_password {
+            if let Some(password) = args.proremote_server_password {
                 let server_egui_ctx = cc.egui_ctx.clone();
-                egui_extras::install_image_loaders(&server_egui_ctx);
-                if !server_egui_ctx.is_loader_installed(egui_anim::AnimLoader::ID) {
-                    server_egui_ctx.add_image_loader(Arc::new(egui_anim::AnimLoader::default()));
-                }
-
                 let server_app = app.0.clone();
 
                 let password: Arc<str> = password.into();
 
                 std::thread::spawn(move || loop {
-                    let _ = grezi::server::start_server(
+                    let _ = grezi::proremote_server::start_server(
                         server_app.clone(),
                         server_egui_ctx.clone(),
                         Arc::clone(&password),
+                    );
+                });
+            }
+            if args.impress_server {
+                let server_egui_ctx = cc.egui_ctx.clone();
+                let server_app = app.0.clone();
+
+                std::thread::spawn(move || loop {
+                    let _ = grezi::impress_server::start_server(
+                        server_app.clone(),
+                        server_egui_ctx.clone(),
                     );
                 });
             }
