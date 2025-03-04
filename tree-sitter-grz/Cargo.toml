@@ -1,0 +1,36 @@
+[package]
+name = "tree-sitter-grz"
+description = "Parser for Grezi grz files"
+version = "0.1.0"
+authors = ["Isaac Mills"]
+license = "MIT"
+readme = "README.md"
+keywords = ["incremental", "parsing", "tree-sitter", "grz"]
+categories = ["parser-implementations", "parsing", "text-editors"]
+repository = "https://github.com/stratusfearme21/tree-sitter-grz"
+edition = "2021"
+autoexamples = false
+
+build = "bindings/rust/build.rs"
+include = [
+  "bindings/rust/*",
+  "grammar.js",
+  "queries/*",
+  "src/*",
+  "tree-sitter.json",
+  "LICENSE",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+num_enum = "0.7.3"
+tree-sitter-language = "0.1"
+
+[build-dependencies]
+case = "1.0.0"
+cc = "1.2"
+
+[dev-dependencies]
+tree-sitter = "0.25.1"

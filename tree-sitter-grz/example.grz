@@ -1,0 +1,36 @@
+ViewBox: Size[0] ^
+    1:2,
+    1:2,
+]
+
+Title: Header(
+    value: "*Hello \n World*",
+    font_family: "Allura",
+)
+
+Subtitle: Paragraph(
+    value: "By author",
+)
+
+TestRect: Rect(
+    height: 64.0,
+    color: #FF00FF,
+)
+
+{
+    Title: ViewBox[0]^^..,
+    Subtitle: ViewBox[1]__..,
+}[]
+
+{
+    Subtitle| ViewBox[0] ^
+        1:3,
+        1:3,
+    ][0]__,
+    Title: ()[1]{ViewBox[1]},
+}[]
+
+{
+    Subtitle~__|,
+    Title^^|,
+}[]

@@ -1,0 +1,11 @@
+[package]
+name = "grezi_font_serde"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+egui-glyphon = { version = "0.1.0", path = "../../egui-glyphon", default-features = false }
+egui.workspace = true
+serde = "1.0.218"
+indexmap = "2.7.1"
+tracing = "0.1.41"

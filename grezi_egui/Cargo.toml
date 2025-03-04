@@ -1,0 +1,15 @@
+[package]
+name = "grezi_egui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+egui = { workspace = true }
+egui-glyphon = { version = "0.1.0", path = "../../egui-glyphon", default-features = false }
+grezi_parser = { version = "0.1.0", path = "../grezi_parser", default-features = false }
+indexmap = "2.7.1"
+keyframe = { version = "1.1.1", default-features = false }
+smallvec = "1.14.0"
+smartstring = { version = "1.0.1", default-features = false }
+tracing = "0.1.41"
+unicode-segmentation = "1.12.0"

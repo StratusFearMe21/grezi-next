@@ -1,0 +1,9 @@
+[package]
+name = "grezi_lsp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lsp-server = "0.7.8"
+egui.workspace = true
+grezi_parser = { version = "0.1.0", path = "../grezi_parser" }
