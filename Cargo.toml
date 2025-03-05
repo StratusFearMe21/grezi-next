@@ -1,9 +1,9 @@
 [workspace]
-members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "grezi_parser", "GreziRemote", "tree-sitter-grz", "grezi_lsp"]
+members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "grezi_parser", "GreziRemote", "tree-sitter-grz", "grezi_lsp", "grezi_file_owner"]
 resolver = "2"
 
 [workspace.package]
-edition = "2024"
+edition = "2021"
 
 [profile.dev.package."*"]
 opt-level = 3

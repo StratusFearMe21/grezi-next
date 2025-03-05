@@ -32,7 +32,6 @@ pub fn resolve_text_job(
     alignment: Align,
     font_system: &mut FontSystem,
     max_width: f32,
-    scale_factor: f32,
 ) -> (Vec2, ResolvedObjInner) {
     let mut job: SmallVec<[ResolvedBuffer; 1]> = SmallVec::new();
     // First pass:
@@ -46,7 +45,6 @@ pub fn resolve_text_job(
         line_height,
         alignment,
         Vec2::ZERO,
-        scale_factor,
         max_width,
         0.0,
     );
@@ -97,8 +95,6 @@ pub fn resolve_text_job(
                 Vec2::new(size_x - buffer.buffer_rect.min.x, translation.y),
             ),
         );
-        // Scale factor is already applied to the buffer's font size
-        // no need to reapply it here
         last_margin = font_size * MARGIN_MULTIPLIER;
     }
 
@@ -115,7 +111,6 @@ pub fn resolve_text_job_first_pass(
     line_height: Option<f32>,
     alignment: Align,
     translation: Vec2,
-    scale_factor: f32,
     max_width: f32,
     mut size_x: f32,
 ) -> f32 {
@@ -128,7 +123,6 @@ pub fn resolve_text_job_first_pass(
                     alignment,
                     font_system,
                     max_width - translation.x,
-                    scale_factor,
                 );
                 size_x = size_x.max(buffer_size.width() + translation.x);
 
@@ -145,9 +139,8 @@ pub fn resolve_text_job_first_pass(
                     font_system,
                     line_height,
                     alignment,
-                    translation + Vec2::new(INDENT_AMOUNT * scale_factor, 0.0),
-                    scale_factor,
-                    max_width - (INDENT_AMOUNT * scale_factor),
+                    translation + Vec2::new(INDENT_AMOUNT, 0.0),
+                    max_width - INDENT_AMOUNT,
                     size_x,
                 ));
             }
@@ -159,7 +152,6 @@ pub fn resolve_text_job_first_pass(
                         alignment,
                         font_system,
                         max_width - translation.x,
-                        scale_factor,
                     );
                     size_x = size_x.max(buffer_size.width());
 
@@ -175,9 +167,8 @@ pub fn resolve_text_job_first_pass(
                         font_system,
                         line_height,
                         alignment,
-                        translation + Vec2::new(INDENT_AMOUNT * scale_factor, 0.0),
-                        scale_factor,
-                        max_width - (INDENT_AMOUNT * scale_factor),
+                        translation + Vec2::new(INDENT_AMOUNT, 0.0),
+                        max_width - INDENT_AMOUNT,
                         size_x,
                     ));
                 }
@@ -193,13 +184,12 @@ pub fn resolve_text_paragraph(
     alignment: Align,
     font_system: &mut FontSystem,
     max_width: f32,
-    scale_factor: f32,
 ) -> (Buffer, Rect) {
     let mut buffer = Buffer::new(
         font_system,
         Metrics::new(
-            paragraph.font_size * scale_factor,
-            line_height.unwrap_or(paragraph.font_size * LINE_HEIGHT_MULTIPLIER) * scale_factor,
+            paragraph.font_size,
+            line_height.unwrap_or(paragraph.font_size * LINE_HEIGHT_MULTIPLIER),
         ),
     );
 
@@ -253,7 +243,7 @@ pub fn resolve_text_paragraph(
     buffer.shape_until_scroll(font_system, false);
     // Expand the buffer_size keeping the top left at 0,0
     let mut buffer_size = measure_buffer(&buffer);
-    buffer_size.max += Vec2::splat(5.0 * scale_factor);
+    buffer_size.max += Vec2::splat(5.0);
     buffer.set_size(
         font_system,
         Some(buffer_size.width()),

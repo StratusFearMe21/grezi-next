@@ -7,3 +7,14 @@ edition = "2021"
 lsp-server = "0.7.8"
 egui.workspace = true
 grezi_parser = { version = "0.1.0", path = "../grezi_parser" }
+crossbeam-channel = "0.5.14"
+serde_json = "1.0.140"
+grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
+grezi_file_owner = { version = "0.1.0", path = "../grezi_file_owner" }
+miette = { version = "7.5.0", default-features = false }
+tree-sitter = "0.25.2"
+helix-lsp = { version = "25.1.1", path = "../../helix/helix-lsp" }
+helix-core = { version = "25.1.1", path = "../../helix/helix-core" }
+helix-lsp-types = { version = "0.95.1", path = "../../helix/helix-lsp-types" }
+percent-encoding = "2.3.1"
+smallvec = "1.14.0"

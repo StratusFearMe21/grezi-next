@@ -67,7 +67,7 @@ impl TextJobParams<'_> {
                             let list_item = format_textjob_djot(parser, Some(c), self);
                             list.push((
                                 TextParagraph {
-                                    rich_text: smallvec::smallvec_inline![(
+                                    rich_text: smallvec::smallvec![(
                                         number,
                                         self.default_attrs.clone()
                                     )],

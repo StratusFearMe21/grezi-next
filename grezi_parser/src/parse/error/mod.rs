@@ -70,7 +70,20 @@ pub enum ParseError {
 }
 
 impl ParseError {
-    fn char_range_mut(&mut self) -> Option<&mut super::CharRange> {
+    pub fn char_range_mut(&mut self) -> Option<&mut super::CharRange> {
+        match self {
+            Self::IoError(_) => None,
+            Self::Syntax(range, _) => Some(range),
+            Self::ColorSyntax { range, .. } => Some(range),
+            Self::Missing(range, _) => Some(range),
+            Self::NotFound(range, _) => Some(range),
+            Self::Viewbox(range, _) => Some(range),
+            Self::BadNode(range, _, _) => Some(range),
+            Self::LongName(range) => Some(range),
+        }
+    }
+
+    pub fn char_range(&self) -> Option<&super::CharRange> {
         match self {
             Self::IoError(_) => None,
             Self::Syntax(range, _) => Some(range),
@@ -92,7 +105,7 @@ impl From<io::Error> for ParseError {
 
 #[derive(Default)]
 pub struct ErrsWithSource {
-    errors: boxcar::Vec<(ParseError, SpanTrace)>,
+    pub errors: boxcar::Vec<(ParseError, SpanTrace)>,
     source_code_and_tree: OnceLock<(Rope, Tree)>,
 }
 

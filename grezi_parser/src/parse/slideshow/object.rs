@@ -1,4 +1,4 @@
-use std::{borrow::Cow, io, ops::DerefMut, path::Path, str::FromStr, sync::Arc};
+use std::{borrow::Cow, io, ops::DerefMut, str::FromStr, sync::Arc};
 
 use css_color::Srgb;
 use ecolor::Color32;
@@ -22,16 +22,14 @@ use super::{
 };
 
 impl Object {
+    /// Parse name before entering this function
     #[instrument(skip_all, fields(source = %cursor.parent_source()?, type = std::any::type_name::<Self>()))]
     pub fn parse(
         &mut self,
         mut cursor: GrzCursorGuard,
-        path_to_grz: &Path,
+        path_to_grz: &str,
         errors: Arc<ErrsWithSource>,
-    ) -> io::Result<smartstring::alias::String> {
-        let name = cursor.smartstring()?;
-        cursor.goto_next_sibling()?;
-
+    ) -> io::Result<()> {
         if let Some(obj_inner_cursor) = cursor.goto_first_child()? {
             self.parameters
                 .parse(obj_inner_cursor, path_to_grz, Arc::clone(&errors))?;
@@ -42,7 +40,7 @@ impl Object {
             );
         }
 
-        Ok(name)
+        Ok(())
     }
 
     pub fn apply_registers(&mut self, _registers: &Registers) {}
@@ -53,7 +51,7 @@ impl ObjInner {
     pub fn parse(
         &mut self,
         mut cursor: GrzCursorGuard,
-        path_to_grz: &Path,
+        path_to_grz: &str,
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<()> {
         let obj_type = cursor.rope_slice()?;

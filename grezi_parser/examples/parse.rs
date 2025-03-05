@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use color_eyre::{
     config::Theme,
     eyre::{self, Context, OptionExt},
@@ -32,16 +30,13 @@ fn main() -> eyre::Result<()> {
         .with(tracing_subscriber::fmt::layer().with_ansi(color))
         .init();
 
-    let path = Path::new(
-        &std::env::args()
-            .nth(1)
-            .ok_or_eyre("First argument was not passed")?,
-    )
-    .to_path_buf();
-    let file = std::fs::File::open(path.as_path()).wrap_err("Failed to open GRZ file")?;
+    let path = std::env::args()
+        .nth(1)
+        .ok_or_eyre("First argument was not passed")?;
+    let file = std::fs::File::open(&path).wrap_err("Failed to open GRZ file")?;
 
     let mut file = grezi_parser::parse::GrzFile::new(path, file)?;
-    let parse_result = file.parse()?;
+    let parse_result = file.parse(Vec::new())?;
     eprint!("{:?}", parse_result);
 
     if !parse_result.has_errors() {

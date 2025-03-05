@@ -50,9 +50,7 @@ impl Viewbox {
             ahash::RandomState,
         >,
         errors: Arc<ErrsWithSource>,
-    ) -> io::Result<smartstring::alias::String> {
-        let name = cursor.smartstring()?;
-        cursor.goto_next_sibling()?;
+    ) -> io::Result<()> {
         if let Some(vb_cursor) = cursor.goto_first_child()? {
             self.split_on
                 .parse(vb_cursor, viewboxes, Arc::clone(&errors))?;
@@ -77,7 +75,7 @@ impl Viewbox {
                 cursor.error_info(),
             );
         }
-        Ok(name)
+        Ok(())
     }
 
     fn get_split_rect(

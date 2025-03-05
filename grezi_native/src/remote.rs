@@ -6,11 +6,10 @@ use axum::{
     response::Response,
     routing::{any, Router},
 };
-use eframe::egui::{self, Modifiers};
 use serde::Deserialize;
 use std::{ops::Deref, sync::Arc};
 
-use crate::app::AppHandle;
+use crate::AppHandle;
 
 #[derive(Clone)]
 pub struct Remote {
@@ -51,33 +50,9 @@ async fn handle_socket(mut socket: WebSocket, remote: Remote) {
             Message::Index { index, reset_time } => {
                 remote
                     .app_handle
-                    .index
-                    .store(index, std::sync::atomic::Ordering::Relaxed);
-                remote
-                    .app_handle
-                    .custom_key_sender
-                    .send(egui::Event::Key {
-                        key: egui::Key::N,
-                        pressed: true,
-                        physical_key: None,
-                        repeat: false,
-                        modifiers: Modifiers::NONE,
-                    })
+                    .root_owner_sender
+                    .send(crate::FileOwnerMessage::Index { index, reset_time })
                     .unwrap();
-                if reset_time {
-                    remote
-                        .app_handle
-                        .custom_key_sender
-                        .send(egui::Event::Key {
-                            key: egui::Key::R,
-                            pressed: true,
-                            physical_key: None,
-                            repeat: false,
-                            modifiers: Modifiers::NONE,
-                        })
-                        .unwrap();
-                }
-                remote.app_handle.egui_ctx.request_repaint();
             }
             Message::Get => {
                 let file = std::fs::read(remote.cached_slideshow_file.deref()).unwrap();

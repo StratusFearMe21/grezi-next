@@ -1,10 +1,9 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::File,
     hash::BuildHasherDefault,
     io::{self, ErrorKind, Read},
     ops::Sub,
-    path::PathBuf,
     sync::Arc,
     time::Instant,
 };
@@ -16,7 +15,7 @@ use prehash::Passthru;
 use ropey::Rope;
 use slideshow::viewbox::Viewbox;
 use tracing::instrument;
-use tree_sitter::{Point, Tree};
+use tree_sitter::{InputEdit, Point, Tree};
 
 use crate::GrzRoot;
 
@@ -29,23 +28,49 @@ pub struct GrzFile {
     parser: tree_sitter::Parser,
     incremental_state: Option<IncrementalState>,
     pub tree: Option<Tree>,
+    pub version: i32,
     pub error_free_tree: Option<Tree>,
     pub source: Rope,
-    pub path_to_grz: PathBuf,
+    pub path_to_grz: String,
     pub slideshow: GrzRoot,
 }
 
 impl GrzFile {
     #[instrument(skip(file))]
-    pub fn new<R: Read>(path_to_grz: PathBuf, file: R) -> io::Result<Self> {
-        let source = Rope::from_reader(file)?;
+    pub fn new<R: Read>(path_to_grz: String, file: R) -> io::Result<Self> {
+        Ok(Self {
+            source: Rope::from_reader(file)?,
+            path_to_grz,
+            ..Self::empty()?
+        })
+    }
+
+    pub fn from_string(path_to_grz: String, file: &str) -> io::Result<Self> {
+        Ok(Self {
+            source: Rope::from_str(file),
+            path_to_grz,
+            ..Self::empty()?
+        })
+    }
+
+    #[instrument(skip(slideshow))]
+    pub fn wrap_root(path_to_grz: String, slideshow: GrzRoot) -> io::Result<Self> {
+        Ok(Self {
+            slideshow,
+            path_to_grz,
+            ..Self::empty()?
+        })
+    }
+
+    pub fn empty() -> io::Result<Self> {
         let mut parser = tree_sitter::Parser::new();
         parser
             .set_language(&tree_sitter_grz::LANGUAGE.into())
             .map_err(|e| io::Error::new(ErrorKind::Unsupported, e))?;
         Ok(Self {
-            source,
-            path_to_grz,
+            source: Rope::new(),
+            path_to_grz: String::new(),
+            version: 0,
             tree: None,
             error_free_tree: None,
             parser,
@@ -54,33 +79,22 @@ impl GrzFile {
         })
     }
 
-    pub fn update_file(&mut self) -> io::Result<Arc<ErrsWithSource>> {
-        self.source = Rope::from_reader(File::open(self.path_to_grz.as_path())?)?;
-        self.tree = None;
-        self.error_free_tree = None;
+    pub fn clear_incremental_state(&mut self) {
         self.incremental_state = None;
-        self.parse()
-    }
-
-    #[instrument(skip(slideshow))]
-    pub fn wrap_root(path_to_grz: PathBuf, slideshow: GrzRoot) -> io::Result<Self> {
-        let mut parser = tree_sitter::Parser::new();
-        parser
-            .set_language(&tree_sitter_grz::LANGUAGE.into())
-            .map_err(|e| io::Error::new(ErrorKind::Unsupported, e))?;
-        Ok(Self {
-            source: Rope::new(),
-            path_to_grz,
-            tree: None,
-            error_free_tree: None,
-            parser,
-            incremental_state: None,
-            slideshow,
-        })
     }
 
     #[instrument(skip_all)]
-    pub fn parse(&mut self) -> io::Result<Arc<ErrsWithSource>> {
+    pub fn update_file(&mut self) -> io::Result<Arc<ErrsWithSource>> {
+        self.source = Rope::from_reader(File::open(&self.path_to_grz)?)?;
+        self.tree = None;
+        self.error_free_tree = None;
+        self.incremental_state = None;
+        self.slideshow = GrzRoot::default();
+        self.parse(Vec::new())
+    }
+
+    #[instrument(skip_all)]
+    pub fn parse(&mut self, edits: Vec<InputEdit>) -> io::Result<Arc<ErrsWithSource>> {
         let time = Instant::now();
         let tree = self
             .parser
@@ -95,6 +109,12 @@ impl GrzFile {
                     }
                 },
                 self.error_free_tree.as_ref(),
+                // Some(tree_sitter::ParseOptions {
+                //     progress_callback: Some(&mut |state| {
+                //         dbg!(state.current_byte_offset());
+                //         true
+                //     }),
+                // }),
                 None,
             )
             .ok_or_else(|| {
@@ -104,7 +124,15 @@ impl GrzFile {
                 )
             })?;
         let tree_sitter_finished = time.elapsed();
-        let errors = self.update_slideshow(&tree)?;
+        let mut damaged_node_map = HashSet::default();
+        for edit in edits {
+            let new_node = tree.root_node().first_child_for_byte(edit.new_end_byte);
+
+            if let Some(new) = new_node {
+                damaged_node_map.insert(new.id() as u64);
+            }
+        }
+        let errors = self.update_slideshow(&tree, damaged_node_map)?;
         let total_time = time.elapsed();
         if !errors.has_errors() {
             self.error_free_tree = Some(tree.clone());
@@ -121,7 +149,11 @@ impl GrzFile {
     }
 
     #[instrument(skip_all)]
-    fn update_slideshow(&mut self, new_tree: &Tree) -> io::Result<Arc<ErrsWithSource>> {
+    fn update_slideshow(
+        &mut self,
+        new_tree: &Tree,
+        damaged_node_map: HashSet<u64, BuildHasherDefault<Passthru>>,
+    ) -> io::Result<Arc<ErrsWithSource>> {
         let errors = Arc::new(ErrsWithSource::default());
         let mut new_tree_cursor = GrzCursor::new(new_tree, &self.source, Arc::clone(&errors));
 
@@ -129,10 +161,11 @@ impl GrzFile {
         // Fatal errors propogate through the parser as an io::Error
         match self.slideshow.parse(
             self.incremental_state.take(),
+            damaged_node_map,
             new_tree_cursor
                 .goto_first_child()?
                 .ok_or_else(|| io::Error::new(ErrorKind::UnexpectedEof, "Source file is empty"))?,
-            self.path_to_grz.as_path(),
+            &self.path_to_grz,
             Arc::clone(&errors),
         ) {
             Ok(incremental_state) => self.incremental_state = Some(incremental_state),
@@ -147,9 +180,7 @@ impl GrzFile {
 
 #[derive(Debug, Default)]
 pub struct IncrementalState {
-    pub viewbox_nodes:
-        HashMap<u64, (smartstring::alias::String, Viewbox), BuildHasherDefault<Passthru>>,
-    pub object_nodes: HashMap<u64, smartstring::alias::String, BuildHasherDefault<Passthru>>,
+    pub viewbox_nodes: HashMap<smartstring::alias::String, Viewbox>,
 }
 
 #[derive(Debug, Clone)]
@@ -205,4 +236,19 @@ pub fn char_pos_from_byte_pos(byte_pos: Point, current_rope: &Rope) -> io::Resul
         line.try_byte_to_char(byte_pos.column)
             .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?,
     ))
+}
+
+pub fn byte_pos_from_char_pos(char_pos: (usize, usize), current_rope: &Rope) -> io::Result<Point> {
+    let line = current_rope.get_line(char_pos.0).ok_or_else(|| {
+        io::Error::new(
+            ErrorKind::NotFound,
+            format!("Line `{}` doesn't exist", char_pos.0),
+        )
+    })?;
+    Ok(Point {
+        row: line
+            .try_char_to_byte(char_pos.1)
+            .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?,
+        column: char_pos.0,
+    })
 }

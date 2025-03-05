@@ -89,6 +89,8 @@ impl ResolvedObject {
     pub fn draw<E: EasingFunction>(
         &self,
         ui: &mut egui::Ui,
+        size: Rect,
+        scale_factor: f32,
         time: f64,
         easing_function: &E,
         buffers: &mut Vec<egui_glyphon::BufferWithTextArea>,
@@ -105,10 +107,10 @@ impl ResolvedObject {
             1.0
         };
 
-        let obj_pos = self
-            .params
-            .min_pos
-            .lerp_towards(&self.params.max_pos, eased_time);
+        let min_pos = scale_rect(self.params.min_pos, size, scale_factor);
+        let max_pos = scale_rect(self.params.max_pos, size, scale_factor);
+
+        let obj_pos = min_pos.lerp_towards(&max_pos, eased_time);
 
         let opacity = match self.params.state {
             ObjState::Entering => eased_time,
@@ -119,20 +121,29 @@ impl ResolvedObject {
         match &self.inner {
             ResolvedObjInner::Text { job, .. } => {
                 for buffer in job {
-                    let buffer_rect = buffer.buffer_rect.translate(obj_pos.min.to_vec2());
-                    buffers.push(BufferWithTextArea::new(
+                    let buffer_rect =
+                        (buffer.buffer_rect * scale_factor).translate(obj_pos.min.to_vec2());
+                    let mut buffer = BufferWithTextArea::new(
                         Arc::clone(&buffer.buffer),
                         buffer_rect,
                         opacity,
                         Color32::WHITE,
                         ui.ctx(),
-                    ));
+                    );
+                    buffer.scale *= scale_factor;
                     // ui.painter().rect_stroke(
-                    //     buffer_rect,
+                    //     buffer.rect / ui.ctx().pixels_per_point(),
                     //     CornerRadius::default(),
                     //     Stroke::new(2.0, Color32::CYAN.gamma_multiply(opacity)),
                     //     egui::StrokeKind::Inside,
                     // );
+                    // ui.painter().rect_stroke(
+                    //     buffer_rect,
+                    //     CornerRadius::default(),
+                    //     Stroke::new(2.0, Color32::RED.gamma_multiply(opacity)),
+                    //     egui::StrokeKind::Inside,
+                    // );
+                    buffers.push(buffer);
                 }
                 // ui.painter().rect_stroke(
                 //     obj_pos,
@@ -156,10 +167,11 @@ impl ResolvedObject {
                 );
             }
             ResolvedObjInner::Highlight { rects, color } => {
-                let total_width: f32 = rects.iter().map(|r| r.width()).sum();
+                let total_width: f32 = rects.iter().map(|r| r.width() * scale_factor).sum();
                 let width_to_draw = total_width * eased_time;
                 let mut width_drawn = 0.0;
-                for mut rect in rects.iter().copied() {
+                for rect in rects.iter() {
+                    let mut rect = *rect * scale_factor;
                     let rect_width = rect.width();
                     if width_to_draw > (width_drawn + rect_width) {
                         width_drawn += rect_width;
@@ -195,9 +207,11 @@ impl ResolvedObject {
                 } else {
                     1.0
                 };
-                let first_obj_pos = objects[0]
-                    .min_pos
-                    .lerp_towards(&objects[0].max_pos, first_time);
+                let first_obj_pos = scale_rect(objects[0].min_pos, size, scale_factor)
+                    .lerp_towards(
+                        &scale_rect(objects[0].max_pos, size, scale_factor),
+                        first_time,
+                    );
                 let second_time = if objects[1].max_time > 0.0 {
                     keyframe::ease_with_scaled_time::<f32, f64, E>(
                         easing_function,
@@ -209,11 +223,14 @@ impl ResolvedObject {
                 } else {
                     1.0
                 };
-                let second_obj_pos = objects[1]
-                    .min_pos
-                    .lerp_towards(&objects[1].max_pos, second_time);
+                let second_obj_pos = scale_rect(objects[1].min_pos, size, scale_factor)
+                    .lerp_towards(
+                        &scale_rect(objects[1].max_pos, size, scale_factor),
+                        second_time,
+                    );
 
                 stroke.color = stroke.color.gamma_multiply(opacity);
+                stroke.width *= scale_factor;
                 let first_pos = origin_positions[0].pos_in_rect(&first_obj_pos);
                 let second_pos = origin_positions[1].pos_in_rect(&second_obj_pos);
 
@@ -231,4 +248,9 @@ impl ResolvedObject {
             }
         }
     }
+}
+
+#[inline(always)]
+fn scale_rect(viewbox: Rect, size: Rect, factor: f32) -> Rect {
+    (viewbox * factor).translate(size.min.to_vec2())
 }

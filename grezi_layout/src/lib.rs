@@ -1,5 +1,6 @@
 #![warn(clippy::missing_const_for_fn)]
 //! Provides types and traits for working with layout and positioning in the terminal.
+//! Code borrowed from <https://github.com/ratatui/ratatui>
 
 mod constraint;
 mod flex;

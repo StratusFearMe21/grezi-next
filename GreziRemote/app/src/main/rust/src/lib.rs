@@ -1,20 +1,16 @@
 // #![cfg(target_os = "android")]
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
-use arc_swap::ArcSwapOption;
 use color_eyre::{
     config::Theme,
     eyre::{self},
 };
-use eframe::{
-    egui::{mutex::Mutex, Rect},
-    NativeOptions,
-};
+use eframe::{egui::mutex::Mutex, NativeOptions};
 use egui_glyphon::{glyphon::FontSystem, GlyphonRenderer};
-use grezi_font_serde::FontSystemDeserializer;
-use grezi_parser::GrzRoot;
+#[cfg(debug_assertions)]
 use tracing_error::ErrorLayer;
+#[cfg(debug_assertions)]
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod app;

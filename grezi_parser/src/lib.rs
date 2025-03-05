@@ -1,9 +1,7 @@
-use std::{collections::HashMap, hash::BuildHasherDefault};
+use std::collections::HashMap;
 
 use emath::Rect;
-use indexmap::IndexMap;
 use object::Object;
-use prehash::Passthru;
 use serde::{Deserialize, Serialize};
 use slide::Slide;
 use smallvec::SmallVec;
@@ -23,5 +21,5 @@ pub struct GrzRoot {
         ahash::RandomState,
     >,
     pub objects: HashMap<smartstring::alias::String, Object, ahash::RandomState>,
-    pub slides: IndexMap<u64, Slide, BuildHasherDefault<Passthru>>,
+    pub slides: Vec<Slide>,
 }

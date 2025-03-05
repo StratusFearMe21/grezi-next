@@ -8,7 +8,7 @@ use egui_glyphon::{
 use grezi_parser::{
     actions::{DrawableAction, SlideParams},
     object::ObjInner,
-    slide::{SlideVb, VbIdentifier, ViewboxRef, BASE_SIZE},
+    slide::{ObjState, SlideVb, VbIdentifier, ViewboxRef, BASE_SIZE},
     GrzRoot,
 };
 use indexmap::IndexMap;
@@ -23,8 +23,6 @@ mod text;
 pub struct GrzResolvedSlide {
     objects: IndexMap<smartstring::alias::String, ResolvedObject>,
     pub params: SlideParams,
-    pub size: Rect,
-    pub factor: f32,
     pub max_time: f64,
 }
 
@@ -52,63 +50,41 @@ impl GrzResolvedSlide {
 impl GrzResolvedSlide {
     pub fn resolve_slide(
         root: &GrzRoot,
-        size: Rect,
         font_system: &mut FontSystem,
         ctx: &egui::Context,
         index: usize,
     ) -> Option<Self> {
-        let size = Align2::CENTER_CENTER.align_size_within_rect(
-            ImageSize {
-                max_size: size.size(),
-                ..Default::default()
-            }
-            .calc_size(size.size(), BASE_SIZE.max.to_vec2()),
-            size,
-        );
-        let (_, slide) = root.slides.get_index(index)?;
+        let slide = root.slides.get(index)?;
         let mut objects = IndexMap::new();
 
         let mut min_time = 0.0;
         let mut max_time = slide.slide_params.time;
 
-        let scale_factor = if size.width() > size.height() {
-            size.height() / BASE_SIZE.max.y
-        } else {
-            size.width() / BASE_SIZE.max.x
-        };
-
         for (obj_name, slide_obj) in &slide.objects {
-            let first_viewbox = match slide_obj.vb_from.as_ref().unwrap_or_else(|| {
+            let first_viewbox = *match slide_obj.vb_from.as_ref().unwrap_or_else(|| {
                 &SlideVb::Viewbox(ViewboxRef {
                     vb_name: VbIdentifier::Size,
                     subbox: 0,
                 })
             }) {
                 SlideVb::Viewbox(vb) => match &vb.vb_name {
-                    VbIdentifier::Named(n) => {
-                        root.viewboxes.get(n).unwrap().0.get(vb.subbox).unwrap()
-                    }
+                    VbIdentifier::Named(n) => root.viewboxes.get(n)?.0.get(vb.subbox)?,
                     VbIdentifier::Size => &BASE_SIZE,
                     VbIdentifier::Rect(r) => r,
                 },
-                SlideVb::InnerVb { split, subbox } => split.get(*subbox).unwrap(),
+                SlideVb::InnerVb { split, subbox } => split.get(*subbox)?,
             };
-            let second_viewbox = match slide_obj.viewbox.as_ref() {
+            let second_viewbox = *match slide_obj.viewbox.as_ref() {
                 Some(SlideVb::Viewbox(vb)) => match &vb.vb_name {
-                    VbIdentifier::Named(n) => {
-                        root.viewboxes.get(n).unwrap().0.get(vb.subbox).unwrap()
-                    }
+                    VbIdentifier::Named(n) => root.viewboxes.get(n)?.0.get(vb.subbox)?,
                     VbIdentifier::Size => &BASE_SIZE,
                     VbIdentifier::Rect(r) => r,
                 },
-                Some(SlideVb::InnerVb { split, subbox }) => split.get(*subbox).unwrap(),
+                Some(SlideVb::InnerVb { split, subbox }) => split.get(*subbox)?,
                 None => panic!("Second viewbox not present"),
             };
 
-            let first_viewbox = scale_viewbox(*first_viewbox, size, scale_factor);
-            let second_viewbox = scale_viewbox(*second_viewbox, size, scale_factor);
-
-            let obj = root.objects.get(obj_name).unwrap();
+            let obj = root.objects.get(obj_name)?;
 
             let mut min_size = first_viewbox.size();
             let mut max_size = second_viewbox.size();
@@ -137,12 +113,8 @@ impl GrzResolvedSlide {
                         }
                     }
 
-                    min_size = scale
-                        .map(|s: f32| Vec2::splat(s * scale_factor))
-                        .unwrap_or(min_size);
-                    max_size = scale
-                        .map(|s: f32| Vec2::splat(s * scale_factor))
-                        .unwrap_or(max_size);
+                    min_size = scale.map(|s: f32| Vec2::splat(s)).unwrap_or(min_size);
+                    max_size = scale.map(|s: f32| Vec2::splat(s)).unwrap_or(max_size);
 
                     min_size = ImageSize {
                         max_size: min_size,
@@ -175,7 +147,6 @@ impl GrzResolvedSlide {
                         },
                         font_system,
                         max_size.x,
-                        scale_factor,
                     );
                     min_size = size;
                     max_size = size;
@@ -208,6 +179,10 @@ impl GrzResolvedSlide {
 
             if first_viewbox != second_viewbox
                 || slide_obj.positions.to_alignment != slide_obj.positions.from_alignment
+                || matches!(
+                    slide_obj.positions.state,
+                    ObjState::Entering | ObjState::Exiting
+                )
             {
                 min_time += slide.slide_params.stagger;
                 max_time += slide.slide_params.stagger;
@@ -310,7 +285,7 @@ impl GrzResolvedSlide {
                             ResolvedObjInner::Line {
                                 objects: [first_obj.params, second_obj.params],
                                 origin_positions: *locations,
-                                stroke: Stroke::new(2.5 * scale_factor, *color),
+                                stroke: Stroke::new(2.5, *color),
                             },
                         ),
                     );
@@ -321,27 +296,42 @@ impl GrzResolvedSlide {
         Some(Self {
             objects,
             max_time,
-            size,
-            factor: scale_factor,
             params: slide.slide_params.clone(),
         })
     }
 }
 
-fn scale_viewbox(viewbox: Rect, size: Rect, factor: f32) -> Rect {
-    (viewbox * factor).translate(size.min.to_vec2())
+pub fn get_size_and_factor(size: Rect) -> (Rect, f32) {
+    let size = Align2::CENTER_CENTER.align_size_within_rect(
+        ImageSize {
+            max_size: size.size(),
+            ..Default::default()
+        }
+        .calc_size(size.size(), BASE_SIZE.max.to_vec2()),
+        size,
+    );
+
+    let scale_factor = if size.width() > size.height() {
+        size.height() / BASE_SIZE.max.y
+    } else {
+        size.width() / BASE_SIZE.max.x
+    };
+
+    (size, scale_factor)
 }
 
 impl GrzResolvedSlide {
     pub fn draw<E: EasingFunction>(
         &self,
+        size: Rect,
         ui: &mut egui::Ui,
         time: f64,
         easing_function: &E,
         buffers: &mut Vec<BufferWithTextArea>,
     ) {
+        let (size, scale_factor) = get_size_and_factor(size);
         for object in self.objects.values() {
-            object.draw(ui, time, easing_function, buffers);
+            object.draw(ui, size, scale_factor, time, easing_function, buffers);
         }
     }
 }

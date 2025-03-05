@@ -10,7 +10,7 @@ use std::{
 
 use arc_swap::ArcSwapOption;
 use eframe::{
-    egui::{self, mutex::Mutex, Modifiers, Rect, Vec2},
+    egui::{self, mutex::Mutex, Modifiers, Vec2},
     egui_wgpu,
 };
 use egui_glyphon::{glyphon::FontSystem, GlyphonRendererCallback};
@@ -49,8 +49,6 @@ pub enum App {
         custom_key_sender: Sender<egui::Event>,
         index: usize,
         time: f64,
-        max_rect: Rect,
-        speaker_rect: Rect,
         socket: WebSocket<MaybeTlsStream<TcpStream>>,
     },
 }
@@ -123,8 +121,6 @@ impl eframe::App for App {
                             custom_key_sender: key_tx,
                             index: 0,
                             time: 0.0,
-                            max_rect: Rect::ZERO,
-                            speaker_rect: Rect::ZERO,
                             socket: connection,
                         };
                     }
@@ -136,12 +132,12 @@ impl eframe::App for App {
                     font_system,
                     index,
                     time,
-                    max_rect,
-                    speaker_rect,
                     custom_key_events,
                     custom_key_sender,
                     socket,
                 } => {
+                    let max_rect = ui.max_rect();
+
                     ctx.input(|input| {
                         if resolved.load().is_none() || next_resolved.load().is_none() {
                             *time = input.time;
@@ -156,7 +152,7 @@ impl eframe::App for App {
                                 egui::Event::PointerButton {
                                     pressed: true, pos, ..
                                 } => {
-                                    let mut top_half_rect = *max_rect;
+                                    let mut top_half_rect = max_rect;
                                     top_half_rect.max.y /= 2.0;
 
                                     if top_half_rect.contains(*pos) {
@@ -181,8 +177,8 @@ impl eframe::App for App {
                                         // `next()` action
                                         while root
                                             .slides
-                                            .get_index(*index)
-                                            .map(|(_, s)| s.slide_params.next)
+                                            .get(*index)
+                                            .map(|s| s.slide_params.next)
                                             .unwrap_or_default()
                                         {
                                             *index = index.saturating_sub(1);
@@ -235,8 +231,8 @@ impl eframe::App for App {
                                     // `next()` action
                                     while root
                                         .slides
-                                        .get_index(*index)
-                                        .map(|(_, s)| s.slide_params.next)
+                                        .get(*index)
+                                        .map(|s| s.slide_params.next)
                                         .unwrap_or_default()
                                     {
                                         *index = index.saturating_sub(1);
@@ -275,29 +271,11 @@ impl eframe::App for App {
                         }
                     });
 
-                    if resolved.load().is_none() || *max_rect != ui.max_rect() {
-                        *max_rect = ui.max_rect();
+                    if resolved.load().is_none() {
                         let mut new_slide;
-                        let mut first_slide_rect = *max_rect;
-                        let mut second_slide_rect = *max_rect;
-                        *speaker_rect = *max_rect;
-                        if max_rect.height() > max_rect.width() {
-                            first_slide_rect.max.y /= 3.0;
-                            *speaker_rect =
-                                first_slide_rect.translate(Vec2::new(0.0, first_slide_rect.max.y));
-                            second_slide_rect =
-                                speaker_rect.translate(Vec2::new(0.0, first_slide_rect.max.y));
-                        } else {
-                            first_slide_rect.max.x /= 2.0;
-                            speaker_rect.min.x = first_slide_rect.max.x;
-                            second_slide_rect.min.x = first_slide_rect.max.x;
-                            second_slide_rect.max.y /= 2.0;
-                            speaker_rect.min.y = second_slide_rect.max.y;
-                        }
                         loop {
                             new_slide = GrzResolvedSlide::resolve_slide(
                                 &root,
-                                first_slide_rect,
                                 font_system.lock().deref_mut(),
                                 ui.ctx(),
                                 *index,
@@ -315,7 +293,6 @@ impl eframe::App for App {
                         resolved.store(new_slide.map(Arc::new));
                         let next_slide = GrzResolvedSlide::resolve_slide(
                             &root,
-                            second_slide_rect,
                             font_system.lock().deref_mut(),
                             ui.ctx(),
                             *index + 1,
@@ -326,22 +303,41 @@ impl eframe::App for App {
                     let mut buffers = Vec::new();
                     let time = ui.input(|i| i.time - *time);
 
+                    let mut first_slide_rect = max_rect;
+                    let mut second_slide_rect = max_rect;
+                    let mut speaker_rect = max_rect;
+
+                    if max_rect.height() > max_rect.width() {
+                        first_slide_rect.max.y /= 3.0;
+                        speaker_rect =
+                            first_slide_rect.translate(Vec2::new(0.0, first_slide_rect.max.y));
+                        second_slide_rect =
+                            speaker_rect.translate(Vec2::new(0.0, first_slide_rect.max.y));
+                    } else {
+                        first_slide_rect.max.x /= 2.0;
+                        speaker_rect.min.x = first_slide_rect.max.x;
+                        second_slide_rect.min.x = first_slide_rect.max.x;
+                        second_slide_rect.max.y /= 2.0;
+                        speaker_rect.min.y = second_slide_rect.max.y;
+                    }
                     if let Some(resolved) = resolved.load().deref() {
-                        resolved.draw(ui, time, &EaseOutCubic, &mut buffers);
+                        resolved.draw(first_slide_rect, ui, time, &EaseOutCubic, &mut buffers);
                         if resolved.max_time > time {
                             ctx.request_repaint();
                         } else if resolved.params.next {
                             ctx.request_repaint();
-                            custom_key_sender.send(egui::Event::Key {
-                                key: egui::Key::Space,
-                                pressed: true,
-                                physical_key: None,
-                                repeat: false,
-                                modifiers: Modifiers::CTRL,
-                            });
+                            custom_key_sender
+                                .send(egui::Event::Key {
+                                    key: egui::Key::Space,
+                                    pressed: true,
+                                    physical_key: None,
+                                    repeat: false,
+                                    modifiers: Modifiers::CTRL,
+                                })
+                                .unwrap();
                         }
                         egui::Window::new("Speaker Notes")
-                            .fixed_rect(*speaker_rect)
+                            .fixed_rect(speaker_rect)
                             .fixed_size(speaker_rect.size())
                             .fixed_pos(speaker_rect.min)
                             .min_size(speaker_rect.size())
@@ -358,14 +354,14 @@ impl eframe::App for App {
                     }
 
                     if let Some(resolved) = next_resolved.load().deref() {
-                        resolved.draw(ui, time, &EaseOutCubic, &mut buffers);
+                        resolved.draw(second_slide_rect, ui, time, &EaseOutCubic, &mut buffers);
                         if resolved.max_time > time {
                             ctx.request_repaint();
                         }
                     }
 
                     ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-                        *max_rect,
+                        max_rect,
                         GlyphonRendererCallback { buffers },
                     ));
                 }

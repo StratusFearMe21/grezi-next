@@ -16,11 +16,6 @@ pub struct Slide {
     pub slide_params: SlideParams,
     #[default(Color32::from_gray(27))]
     pub bg: Color32,
-    #[serde(skip)]
-    #[cfg(feature = "parse")]
-    // Used to remove slides that are no longer in the syntax tree
-    #[default = true]
-    pub present: bool,
     pub create_edges: bool,
 }
 

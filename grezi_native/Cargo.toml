@@ -8,11 +8,14 @@ arc-swap = "1.7.1"
 axum = { version = "0.8.1", optional = true, features = ["ws"] }
 clap = { version = "4.5.31", features = ["derive"] }
 color-eyre = "0.6.3"
+crossbeam-channel = "0.5.14"
 eframe = { path = "../../egui/crates/eframe", default-features = false, features = ["wgpu", "wayland"] }
 egui-glyphon = { version = "0.1.0", path = "../../egui-glyphon" }
 egui_extras = { workspace = true, features = ["gif", "image", "webp"] }
 grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
+grezi_file_owner = { version = "0.1.0", path = "../grezi_file_owner" }
 grezi_font_serde = { version = "0.1.0", path = "../grezi_font_serde" }
+grezi_lsp = { version = "0.1.0", path = "../grezi_lsp", optional = true }
 grezi_parser = { version = "0.1.0", path = "../grezi_parser" }
 image = "0.25.5"
 indexmap = { version = "2.7.1", features = ["serde"] }
@@ -26,5 +29,6 @@ tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [features]
-default = ["remote"]
+default = ["remote", "lsp"]
 remote = ["dep:tokio", "dep:axum"]
+lsp = ["dep:grezi_lsp"]
