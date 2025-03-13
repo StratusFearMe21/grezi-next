@@ -13,5 +13,5 @@ impl<'a> MathMLDoc<'a> {
         Ok(Self { tree })
     }
 
-    pub fn resolve(&mut self, buffers: buffers) {}
+    // pub fn resolve(&mut self, buffers: buffers) {}
 }

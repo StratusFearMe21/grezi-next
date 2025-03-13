@@ -1,4 +1,4 @@
-// #![cfg(target_os = "android")]
+#![cfg(target_os = "android")]
 
 use std::sync::Arc;
 
