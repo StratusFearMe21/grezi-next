@@ -116,7 +116,7 @@ module.exports = grammar({
     edge_parser: $ => seq($.edge, optional($.edge)),
     edge: $ => choice('|', seq($.direction, $.direction)),
 
-    _vb_identifier: $ => choice(alias('Size', $.size), alias('()', $.inherit), $.vb_rect, $.identifier),
+    _vb_identifier: $ => choice(alias(choice('Size', 'Screen'), $.size), alias('()', $.inherit), $.vb_rect, $.identifier),
 
     vb_rect: $ => seq('[', $.vb_rect_part, '-', $.vb_rect_part,  ']'),
     vb_rect_part: $ => seq('[', $.number_literal, $.number_literal, ']'),
@@ -151,8 +151,8 @@ module.exports = grammar({
     ),
 
 
-    slide_obj: $ => seq(
-      field('object', $.identifier),
+    slide_obj: $ =>  seq(
+      field('object', choice(alias('..', $.from_last_slide),  $.identifier)),
       optional(seq('[', field('range', $.range), ']')),
       optional($.slide_vb),
       optional($._slide_from),

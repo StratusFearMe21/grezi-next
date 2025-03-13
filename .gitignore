@@ -1,6 +1,9 @@
 /target
 .ccls-cache/
 jniLibs/
+*.pkg.tar.zst
+*.slideshow
+.SRCINFO
 
 
 # Added by cargo

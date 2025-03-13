@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 #[allow(unused_imports)]
 use crate::Constraint;
 
@@ -174,6 +176,22 @@ pub enum Flex {
     ///                               └──────────────────┘
     /// ```
     SpaceAround,
+}
+
+impl FromStr for Flex {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "legacy" => Ok(Flex::Legacy),
+            "start" => Ok(Flex::Start),
+            "end" => Ok(Flex::End),
+            "center" => Ok(Flex::Center),
+            "space-between" => Ok(Flex::SpaceBetween),
+            "space-around" => Ok(Flex::SpaceAround),
+            _ => Err(()),
+        }
+    }
 }
 
 #[cfg(test)]

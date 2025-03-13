@@ -38,5 +38,9 @@ pub enum ObjInner {
         tint: Color32,
     },
     #[default]
-    Rect { color: Color32, height: f32 },
+    Rect {
+        color: Color32,
+        stroke: Color32,
+        height: f32,
+    },
 }

@@ -1,7 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, io, ops::DerefMut, sync::Arc};
 
 use emath::{Pos2, Rect};
-use grezi_layout::{Constraint, Direction, Layout};
+use grezi_layout::{Constraint, Direction, Flex, Layout};
 use smallvec::SmallVec;
 use smart_default::SmartDefault;
 use tracing::instrument;
@@ -25,6 +25,7 @@ pub struct Viewbox {
     pub inner: ViewboxInner,
     pub margin: f32,
     pub margin_per: f32,
+    pub flex: Flex,
     #[cfg(feature = "parse")]
     // Used to remove viewboxes that are no longer in the syntax tree
     #[default = true]
@@ -51,7 +52,7 @@ impl Viewbox {
         >,
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<()> {
-        if let Some(vb_cursor) = cursor.goto_first_child()? {
+        if let Some(vb_cursor) = cursor.goto_first_child(NodeKind::SymVbRef)? {
             self.split_on
                 .parse(vb_cursor, viewboxes, Arc::clone(&errors))?;
         } else {
@@ -64,7 +65,7 @@ impl Viewbox {
             );
         }
         cursor.goto_next_sibling()?;
-        if let Some(vb_cursor) = cursor.goto_first_child_raw()? {
+        if let Some(vb_cursor) = cursor.goto_first_child_raw(NodeKind::SymViewboxInner)? {
             self.inner.parse(vb_cursor, Arc::clone(&errors))?;
         } else {
             errors.append_error(
@@ -115,6 +116,7 @@ impl Viewbox {
     ) -> bool {
         self.margin != registers.margin
             || self.margin_per != registers.margin_per
+            || self.flex != registers.flex
             || self.get_split_rect(viewboxes) != self.split_rect
     }
 
@@ -132,11 +134,14 @@ impl Viewbox {
         if let Some(registers) = registers {
             self.margin = registers.margin;
             self.margin_per = registers.margin_per;
+            self.flex = registers.flex;
         }
         let split_rect = self.get_split_rect(viewboxes);
         self.split_rect = split_rect;
         let layout = match Layout::new(self.inner.direction, &self.inner.constraints)
             .margin(self.margin)
+            .margin_per(self.margin_per)
+            .flex(self.flex)
             .try_split(self.split_rect)
         {
             Ok((layout, _)) => layout,
@@ -160,12 +165,12 @@ impl ViewboxInner {
         mut cursor: GrzCursorGuardRaw,
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<()> {
-        if let Some(direction_cursor) = cursor.goto_first_child_raw()? {
+        if let Some(direction_cursor) = cursor.goto_first_child_raw(NodeKind::SymDirection)? {
             self.direction = parse_direction(direction_cursor, Arc::clone(&errors))?;
         }
         cursor.goto_next_sibling()?;
         loop {
-            if let Some(vb_obj_cursor) = cursor.goto_first_child()? {
+            if let Some(vb_obj_cursor) = cursor.goto_first_child(NodeKind::SymViewboxObj)? {
                 let constraint = parse_constraint(vb_obj_cursor, Arc::clone(&errors))?;
                 self.constraints.push(constraint);
             }
@@ -196,7 +201,7 @@ pub fn parse_constraint(
     };
     cursor.goto_next_sibling_raw()?;
     match cursor
-        .goto_first_child_raw()?
+        .goto_first_child_raw(NodeKind::SymOperation)?
         .map(|c| NodeKind::from(c.node().kind_id()))
         .unwrap_or_else(|| NodeKind::from(cursor.node().kind_id()))
     {
@@ -289,7 +294,7 @@ impl VbIdentifier {
                 return Ok(false);
             }
             NodeKind::SymVbRect => {
-                if let Some(mut vb_rect_cursor) = cursor.goto_first_child()? {
+                if let Some(mut vb_rect_cursor) = cursor.goto_first_child(NodeKind::SymVbRect)? {
                     macro_rules! parse_pos2 {
                         ($cursor:expr) => {{
                             let x: Cow<'_, str> = $cursor.node_to_string_literal()?.into();
@@ -325,33 +330,35 @@ impl VbIdentifier {
                             Pos2::new(x, y)
                         }};
                     }
-                    let min =
-                        if let Some(mut rect_min_cursor) = vb_rect_cursor.goto_first_child()? {
-                            parse_pos2!(rect_min_cursor)
-                        } else {
-                            errors.append_error(
-                                ParseError::Missing(
-                                    vb_rect_cursor.char_range()?,
-                                    "Missing inner details of viewbox rect",
-                                ),
-                                vb_rect_cursor.error_info(),
-                            );
-                            Pos2::ZERO
-                        };
+                    let min = if let Some(mut rect_min_cursor) =
+                        vb_rect_cursor.goto_first_child(NodeKind::SymVbRectPart)?
+                    {
+                        parse_pos2!(rect_min_cursor)
+                    } else {
+                        errors.append_error(
+                            ParseError::Missing(
+                                vb_rect_cursor.char_range()?,
+                                "Missing inner details of viewbox rect",
+                            ),
+                            vb_rect_cursor.error_info(),
+                        );
+                        Pos2::ZERO
+                    };
                     vb_rect_cursor.goto_next_sibling()?;
-                    let max =
-                        if let Some(mut rect_max_cursor) = vb_rect_cursor.goto_first_child()? {
-                            parse_pos2!(rect_max_cursor)
-                        } else {
-                            errors.append_error(
-                                ParseError::Missing(
-                                    vb_rect_cursor.char_range()?,
-                                    "Missing inner details of viewbox rect",
-                                ),
-                                vb_rect_cursor.error_info(),
-                            );
-                            Pos2::ZERO
-                        };
+                    let max = if let Some(mut rect_max_cursor) =
+                        vb_rect_cursor.goto_first_child(NodeKind::SymVbRectPart)?
+                    {
+                        parse_pos2!(rect_max_cursor)
+                    } else {
+                        errors.append_error(
+                            ParseError::Missing(
+                                vb_rect_cursor.char_range()?,
+                                "Missing inner details of viewbox rect",
+                            ),
+                            vb_rect_cursor.error_info(),
+                        );
+                        Pos2::ZERO
+                    };
                     *self = Self::Rect(Rect::from_min_max(min, max));
                 } else {
                     errors.append_error(
@@ -408,7 +415,7 @@ pub fn parse_index(cursor: &mut GrzCursor, errors: Arc<ErrsWithSource>) -> io::R
             cursor.error_info(),
         );
     }
-    if let Some(idx_cursor) = cursor.goto_first_child()? {
+    if let Some(idx_cursor) = cursor.goto_first_child(NodeKind::SymIndexParser)? {
         let number: Cow<'_, str> = idx_cursor.rope_slice()?.into();
         match number.parse() {
             Ok(n) => Ok(n),

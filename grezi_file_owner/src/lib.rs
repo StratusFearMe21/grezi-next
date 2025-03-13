@@ -37,9 +37,12 @@ impl DefaultOwner {
                     self.slide_index = index;
                     reset_time = rt;
                 }
-                FileOwnerMessage::Next => {
+                FileOwnerMessage::Next(trigger_was_action) => {
                     self.slide_index += 1;
                     reset_time = true;
+                    if trigger_was_action && self.root.slideshow.slides.len() <= self.slide_index {
+                        self.slide_index = 0;
+                    }
                 }
                 FileOwnerMessage::Previous => {
                     self.slide_index = self.slide_index.saturating_sub(1);
@@ -99,7 +102,7 @@ impl DefaultOwner {
 pub enum FileOwnerMessage {
     Index { index: usize, reset_time: bool },
     ResetFile,
-    Next,
+    Next(bool),
     Previous,
 }
 

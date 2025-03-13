@@ -37,9 +37,13 @@ impl Slide {
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<()> {
         if cursor.node().kind_id() == NodeKind::SymSlideObjects as u16 {
-            if let Some(mut slide_objs_cursor) = cursor.goto_first_child()? {
+            if let Some(mut slide_objs_cursor) =
+                cursor.goto_first_child(NodeKind::SymSlideObjects)?
+            {
                 loop {
-                    if let Some(slide_obj_cursor) = slide_objs_cursor.goto_first_child()? {
+                    if let Some(slide_obj_cursor) =
+                        slide_objs_cursor.goto_first_child(NodeKind::SymSlideObj)?
+                    {
                         let mut slide_obj = SlideObj::default();
                         let name = slide_obj.parse(
                             slide_obj_cursor,
@@ -49,7 +53,26 @@ impl Slide {
                             self.create_edges,
                             Arc::clone(&errors),
                         )?;
-                        self.objects.insert(name, slide_obj);
+                        if let Some(name) = name {
+                            self.objects.insert(name, slide_obj);
+                        } else {
+                            // Name was `..`
+                            for (obj_name, object) in
+                                last_slide.objects.iter().filter(|(_, obj)| {
+                                    matches!(
+                                        obj.positions.state,
+                                        ObjState::Entering | ObjState::OnScreen
+                                    )
+                                })
+                            {
+                                if !self.objects.contains_key(obj_name) {
+                                    let mut new_object = slide_obj.clone();
+                                    new_object.resolve_from_other(Some(object));
+
+                                    self.objects.insert(obj_name.clone(), new_object);
+                                }
+                            }
+                        }
                     }
 
                     if !slide_objs_cursor.goto_next_sibling()? {
@@ -60,7 +83,7 @@ impl Slide {
             cursor.goto_next_sibling()?;
         }
 
-        if let Some(actions_block_cursor) = cursor.goto_first_child()? {
+        if let Some(actions_block_cursor) = cursor.goto_first_child(NodeKind::SymSlideFunctions)? {
             let drawable_actions = self
                 .slide_params
                 .parse(actions_block_cursor, Arc::clone(&errors))?;
@@ -101,12 +124,16 @@ impl SlideObj {
         last_obj: Option<&SlideObj>,
         create_edges: bool,
         errors: Arc<ErrsWithSource>,
-    ) -> io::Result<smartstring::alias::String> {
-        let name = cursor.smartstring()?;
+    ) -> io::Result<Option<smartstring::alias::String>> {
+        let name = if cursor.node().kind_id() == NodeKind::AliasSymFromLastSlide as u16 {
+            None
+        } else {
+            Some(cursor.smartstring()?)
+        };
         cursor.goto_next_sibling()?;
         self.viewbox = None;
         if cursor.node().kind_id() == NodeKind::SymSlideVb as u16 {
-            if let Some(vb_cursor) = cursor.goto_first_child_raw()? {
+            if let Some(vb_cursor) = cursor.goto_first_child_raw(NodeKind::SymSlideVb)? {
                 let mut slide_vb = SlideVb::default();
                 if slide_vb.parse(vb_cursor, viewboxes, last_obj, Arc::clone(&errors))? {
                     self.viewbox = Some(slide_vb);
@@ -126,7 +153,7 @@ impl SlideObj {
                 return Ok(name);
             }
 
-            if let Some(from_cursor) = cursor.goto_first_child()? {
+            if let Some(from_cursor) = cursor.goto_first_child(NodeKind::SymVbRef)? {
                 let mut vb_from = ViewboxRef::default();
                 if vb_from.parse(from_cursor, viewboxes, Arc::clone(&errors))? {
                     self.vb_from = Some(SlideVb::Viewbox(vb_from));
@@ -152,52 +179,31 @@ impl SlideObj {
             }
         }
 
-        let mut last_slide_obj = last_slide.objects.get(&name);
-        if last_slide_obj.is_none()
-            || matches!(
-                last_slide_obj.map(|o| o.positions.state),
-                Some(ObjState::Exiting)
-            )
-        {
-            self.positions.state = ObjState::Entering;
-            last_slide_obj = None;
-        }
-        if self.positions.to_alignment.is_none() {
-            self.positions.to_alignment = if matches!(self.positions.state, ObjState::Exiting) {
-                self.positions.from_alignment
-            } else {
-                last_slide_obj.and_then(|o| o.positions.to_alignment)
-            };
-        }
-        if self.positions.from_alignment.is_none()
-            || matches!(self.positions.state, ObjState::Exiting)
-        {
-            self.positions.from_alignment = last_slide_obj.and_then(|o| o.positions.to_alignment);
-        }
-        if self.viewbox.is_none() {
-            self.viewbox = last_slide_obj.and_then(|o| o.viewbox.clone());
-        }
-        if self.vb_from.is_none() {
-            match self.positions.state {
-                ObjState::Entering => self.vb_from = self.viewbox.clone(),
-                ObjState::OnScreen | ObjState::Exiting => {
-                    self.vb_from = last_slide_obj.and_then(|o| o.viewbox.clone())
-                }
+        if let Some(ref name) = name {
+            let last_slide_obj = last_slide.objects.get(name);
+            self.resolve_from_other(last_slide_obj);
+            if !create_edges
+                && (self.positions.from_alignment.is_none()
+                    || self.positions.to_alignment.is_none()
+                    || self.vb_from.is_none()
+                    || self.viewbox.is_none())
+            {
+                errors.append_error(
+                    ParseError::NotFound(
+                        cursor.char_range()?,
+                        "Implicit elements could not be resolved",
+                    ),
+                    cursor.error_info(),
+                );
             }
-        }
-        if !create_edges
-            && (self.positions.from_alignment.is_none()
-                || self.positions.to_alignment.is_none()
-                || self.vb_from.is_none()
-                || self.viewbox.is_none())
-        {
-            errors.append_error(
-                ParseError::NotFound(
-                    cursor.char_range()?,
-                    "Implicit elements could not be resolved",
-                ),
-                cursor.error_info(),
-            );
+        } else {
+            // Name was `..`
+            if matches!(
+                self.positions.state,
+                ObjState::Entering | ObjState::OnScreen
+            ) {
+                self.positions.state = ObjState::OnScreen;
+            }
         }
         Ok(name)
     }
@@ -221,7 +227,7 @@ impl SlideVb {
             NodeKind::AnonSymCOLON => {
                 cursor.goto_next_sibling()?;
                 let mut vb_ref = ViewboxRef::default();
-                if let Some(vb_cursor) = cursor.goto_first_child()? {
+                if let Some(vb_cursor) = cursor.goto_first_child(NodeKind::SymVbRef)? {
                     if vb_ref.parse(vb_cursor, viewboxes, Arc::clone(&errors))? {
                         *self = Self::Viewbox(vb_ref);
                     } else {
@@ -248,7 +254,7 @@ impl SlideVb {
             NodeKind::AnonSymPIPE => {
                 cursor.goto_next_sibling()?;
                 let mut split_on = ViewboxRef::default();
-                if let Some(vb_cursor) = cursor.goto_first_child()? {
+                if let Some(vb_cursor) = cursor.goto_first_child(NodeKind::SymVbRef)? {
                     split_on.parse(vb_cursor, viewboxes, Arc::clone(&errors))?;
                 } else {
                     errors.append_error(
@@ -262,7 +268,7 @@ impl SlideVb {
                 }
                 cursor.goto_next_sibling()?;
                 let mut viewbox = ViewboxInner::default();
-                if let Some(vb_cursor) = cursor.goto_first_child_raw()? {
+                if let Some(vb_cursor) = cursor.goto_first_child_raw(NodeKind::SymViewboxInner)? {
                     viewbox.parse(vb_cursor, Arc::clone(&errors))?;
                 } else {
                     errors.append_error(
@@ -312,8 +318,10 @@ impl ObjPositions {
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<bool> {
         let mut exiting = false;
-        if let Some(mut edge_parser) = cursor.goto_first_child()? {
-            if let Some(first_alignment_cursor) = edge_parser.goto_first_child_raw()? {
+        if let Some(mut edge_parser) = cursor.goto_first_child(NodeKind::SymEdgeParser)? {
+            if let Some(first_alignment_cursor) =
+                edge_parser.goto_first_child_raw(NodeKind::SymEdge)?
+            {
                 let (first_alignment, obj_exiting) =
                     parse_alignment(first_alignment_cursor, Arc::clone(&errors))?;
                 self.to_alignment = first_alignment;
@@ -326,7 +334,9 @@ impl ObjPositions {
                     return Ok(exiting);
                 }
 
-                if let Some(second_alignment_cursor) = edge_parser.goto_first_child_raw()? {
+                if let Some(second_alignment_cursor) =
+                    edge_parser.goto_first_child_raw(NodeKind::SymEdge)?
+                {
                     self.from_alignment = first_alignment;
                     let (second_alignment, obj_exiting) =
                         parse_alignment(second_alignment_cursor, Arc::clone(&errors))?;
@@ -492,12 +502,24 @@ pub fn parse_alignment(
             return Ok((None, true));
         }
         NodeKind::SymDirection => {
-            match NodeKind::from(cursor.goto_first_child_raw()?.unwrap().node().kind_id()) {
+            match NodeKind::from(
+                cursor
+                    .goto_first_child_raw(NodeKind::SymDirection)?
+                    .unwrap()
+                    .node()
+                    .kind_id(),
+            ) {
                 // ^
                 NodeKind::AnonSymCARET => {
                     let next_node = {
                         cursor.goto_next_sibling()?;
-                        NodeKind::from(cursor.goto_first_child_raw()?.unwrap().node().kind_id())
+                        NodeKind::from(
+                            cursor
+                                .goto_first_child_raw(NodeKind::SymDirection)?
+                                .unwrap()
+                                .node()
+                                .kind_id(),
+                        )
                     };
                     match next_node {
                         // ^^
@@ -527,7 +549,13 @@ pub fn parse_alignment(
                 NodeKind::AnonSym => {
                     let next_node = {
                         cursor.goto_next_sibling()?;
-                        NodeKind::from(cursor.goto_first_child_raw()?.unwrap().node().kind_id())
+                        NodeKind::from(
+                            cursor
+                                .goto_first_child_raw(NodeKind::SymDirection)?
+                                .unwrap()
+                                .node()
+                                .kind_id(),
+                        )
                     };
                     match next_node {
                         // _^
@@ -557,7 +585,13 @@ pub fn parse_alignment(
                 NodeKind::AnonSymLT => {
                     let next_node = {
                         cursor.goto_next_sibling()?;
-                        NodeKind::from(cursor.goto_first_child_raw()?.unwrap().node().kind_id())
+                        NodeKind::from(
+                            cursor
+                                .goto_first_child_raw(NodeKind::SymDirection)?
+                                .unwrap()
+                                .node()
+                                .kind_id(),
+                        )
                     };
                     match next_node {
                         // <^
@@ -587,7 +621,13 @@ pub fn parse_alignment(
                 NodeKind::AnonSymGT => {
                     let next_node = {
                         cursor.goto_next_sibling()?;
-                        NodeKind::from(cursor.goto_first_child_raw()?.unwrap().node().kind_id())
+                        NodeKind::from(
+                            cursor
+                                .goto_first_child_raw(NodeKind::SymDirection)?
+                                .unwrap()
+                                .node()
+                                .kind_id(),
+                        )
                     };
                     match next_node {
                         // >^
@@ -617,7 +657,13 @@ pub fn parse_alignment(
                 NodeKind::AnonSymDOT => {
                     let next_node = {
                         cursor.goto_next_sibling()?;
-                        NodeKind::from(cursor.goto_first_child_raw()?.unwrap().node().kind_id())
+                        NodeKind::from(
+                            cursor
+                                .goto_first_child_raw(NodeKind::SymDirection)?
+                                .unwrap()
+                                .node()
+                                .kind_id(),
+                        )
                     };
                     match next_node {
                         // .^

@@ -16,6 +16,7 @@
 (number_literal) @constant.numeric.integer
 (integer_literal) @constant.numeric.integer
 (string_literal) @string
+(from_last_slide) @operator
 (size) @variable.builtin
 
 (obj

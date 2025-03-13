@@ -4,6 +4,7 @@ use ecolor::Color32;
 use emath::Align2;
 use smallvec::SmallVec;
 use tracing::instrument;
+use tree_sitter_grz::NodeKind;
 
 use crate::{
     actions::{DrawableAction, SlideParams},
@@ -16,15 +17,19 @@ use crate::{
 
 use super::{object::parse_color, slide::parse_alignment_from_chars};
 
-pub const HIGHLIGHT_COLOR_DEFAULT: Color32 = {
-    let color = Color32::LIGHT_YELLOW;
-    Color32::from_rgba_premultiplied(
-        (color.r() as f32 * 0.5 + 0.5) as u8,
-        (color.g() as f32 * 0.5 + 0.5) as u8,
-        (color.b() as f32 * 0.5 + 0.5) as u8,
-        (color.a() as f32 * 0.5 + 0.5) as u8,
-    )
-};
+// Legacy
+//
+// pub const HIGHLIGHT_COLOR_DEFAULT: Color32 = {
+//     let color = Color32::LIGHT_YELLOW;
+//     Color32::from_rgba_premultiplied(
+//         (color.r() as f32 * 0.5 + 0.5) as u8,
+//         (color.g() as f32 * 0.5 + 0.5) as u8,
+//         (color.b() as f32 * 0.5 + 0.5) as u8,
+//         (color.a() as f32 * 0.5 + 0.5) as u8,
+//     )
+// };
+
+pub const HIGHLIGHT_COLOR_DEFAULT: Color32 = Color32::from_rgba_premultiplied(61, 61, 53, 12);
 
 macro_rules! goto_next_existing_sibling {
     ($cursor:ident, $errors:ident) => {
@@ -40,7 +45,7 @@ macro_rules! goto_next_existing_sibling {
 
 macro_rules! parse_alignment {
     ($cursor:ident, $errors:ident) => {
-        if let Some(mut alignment_cursor) = $cursor.goto_first_child()? {
+        if let Some(mut alignment_cursor) = $cursor.goto_first_child(NodeKind::SymStringLiteral)? {
             if let Some(alignment) =
                 parse_alignment_from_chars(alignment_cursor.deref_mut(), Arc::clone(&$errors))?.0
             {
@@ -76,7 +81,7 @@ impl SlideParams {
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<SmallVec<[DrawableAction; 2]>> {
         let mut drawable_actions = SmallVec::new();
-        while let Some(mut action_cursor) = cursor.goto_first_child()? {
+        while let Some(mut action_cursor) = cursor.goto_first_child(NodeKind::SymSlideFunction)? {
             let action = action_cursor.rope_slice()?;
 
             match action {
@@ -145,7 +150,9 @@ impl SlideParams {
                 }
                 x if x == "speaker_notes" => {
                     goto_next_existing_sibling!(action_cursor, errors);
-                    if let Some(notes_action_cursor) = action_cursor.goto_first_child()? {
+                    if let Some(notes_action_cursor) =
+                        action_cursor.goto_first_child(NodeKind::SymStringLiteral)?
+                    {
                         self.speaker_notes = Some(
                             StringLiteral::parse_from_cursor(
                                 notes_action_cursor,
@@ -156,7 +163,18 @@ impl SlideParams {
                     }
                 }
                 x if x == "next" => {
-                    self.next = true;
+                    if action_cursor.goto_next_sibling()? {
+                        let time_str: Cow<'_, str> = action_cursor.node_to_string_literal()?.into();
+                        match time_str.parse() {
+                            Ok(time) => self.next = Some(time),
+                            Err(_) => errors.append_error(
+                                ParseError::Syntax(action_cursor.char_range()?, "Not a integer"),
+                                action_cursor.error_info(),
+                            ),
+                        }
+                    } else {
+                        self.next = Some(0.0);
+                    }
                 }
                 x if x == "stagger" => {
                     goto_next_existing_sibling!(action_cursor, errors);

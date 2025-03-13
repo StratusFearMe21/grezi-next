@@ -109,7 +109,11 @@ impl<'a> GrzCursor<'a> {
     }
 
     #[instrument(skip(self))]
-    pub fn goto_first_child<'b>(&'b mut self) -> io::Result<Option<GrzCursorGuard<'a, 'b>>> {
+    pub fn goto_first_child<'b>(
+        &'b mut self,
+        expected_node: NodeKind,
+    ) -> io::Result<Option<GrzCursorGuard<'a, 'b>>> {
+        let current_node_kind = NodeKind::from(self.node().kind_id());
         let mut new_cursor =
             GrzCursor::from_node(self.node(), self.tree, self.rope, Arc::clone(&self.errors));
 
@@ -120,9 +124,24 @@ impl<'a> GrzCursor<'a> {
         while !new_cursor.tree_cursor.node().is_named() || new_cursor.tree_cursor.node().is_extra()
         {
             if !new_cursor.goto_next_impl()? {
-                self.tree_cursor.goto_parent();
                 return new_cursor.check_for_error(None);
             }
+        }
+
+        if current_node_kind != expected_node {
+            self.errors.append_error(
+                ParseError::BadNode(
+                    self.char_range()?,
+                    current_node_kind,
+                    "A bug in the parser was caught here",
+                ),
+                self.error_info(),
+            );
+
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Bad node encountered in cursor",
+            ));
         }
 
         match new_cursor.check_for_error(true) {
@@ -135,7 +154,12 @@ impl<'a> GrzCursor<'a> {
     }
 
     #[instrument(skip(self))]
-    pub fn goto_first_child_raw<'b>(&'b mut self) -> io::Result<Option<GrzCursorGuardRaw<'a, 'b>>> {
+    pub fn goto_first_child_raw<'b>(
+        &'b mut self,
+        expected_node: NodeKind,
+    ) -> io::Result<Option<GrzCursorGuardRaw<'a, 'b>>> {
+        let current_node_kind = NodeKind::from(self.node().kind_id());
+
         let mut new_cursor =
             GrzCursor::from_node(self.node(), self.tree, self.rope, Arc::clone(&self.errors));
 
@@ -148,6 +172,22 @@ impl<'a> GrzCursor<'a> {
                 self.tree_cursor.goto_parent();
                 return new_cursor.check_for_error(None);
             }
+        }
+
+        if current_node_kind != expected_node {
+            self.errors.append_error(
+                ParseError::BadNode(
+                    self.char_range()?,
+                    current_node_kind,
+                    "A bug in the parser was caught here",
+                ),
+                self.error_info(),
+            );
+
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Bad node encountered in cursor",
+            ));
         }
 
         match new_cursor.check_for_error(true) {
@@ -202,7 +242,9 @@ impl<'a> GrzCursor<'a> {
         match NodeKind::from(self.node().kind_id()) {
             NodeKind::SymStringLiteral => {
                 let errors = Arc::clone(&self.errors);
-                if let Some(string_literal_cursor) = self.goto_first_child()? {
+                if let Some(string_literal_cursor) =
+                    self.goto_first_child(NodeKind::SymStringLiteral)?
+                {
                     StringLiteral::parse_from_cursor(string_literal_cursor, errors)
                 } else {
                     Ok(StringLiteral::Escaped(String::new()))
@@ -222,6 +264,25 @@ impl<'a> GrzCursor<'a> {
                 );
                 Ok(StringLiteral::Escaped(String::new()))
             }
+        }
+    }
+
+    #[instrument(skip(self))]
+    pub fn id(&mut self, depth: usize, expected_node_kind: NodeKind) -> io::Result<u64> {
+        if let Some(mut child) = self.goto_first_child_raw(expected_node_kind)? {
+            let mut id: usize = 0;
+            for _ in 0..depth {
+                id = id.wrapping_add(child.node().id());
+                if !child.goto_next_sibling()? {
+                    break;
+                }
+            }
+            Ok(id as u64)
+        } else {
+            // A node ID of zero will never be inserted
+            // into the map because there are no children
+            // that a node would be parsed from
+            Ok(0)
         }
     }
 

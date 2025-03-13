@@ -36,7 +36,7 @@ fn main() -> eyre::Result<()> {
     let file = std::fs::File::open(&path).wrap_err("Failed to open GRZ file")?;
 
     let mut file = grezi_parser::parse::GrzFile::new(path, file)?;
-    let parse_result = file.parse(Vec::new())?;
+    let parse_result = file.parse(&[])?;
     eprint!("{:?}", parse_result);
 
     if !parse_result.has_errors() {

@@ -153,6 +153,7 @@ pub struct Layout<'a> {
     direction: Direction,
     constraints: &'a [Constraint],
     margin: Vec2,
+    margin_per: Vec2,
     flex: Flex,
     spacing: Spacing,
 }
@@ -366,6 +367,12 @@ impl<'a> Layout<'a> {
         self
     }
 
+    #[must_use = "method moves the value of self and returns the modified value"]
+    pub const fn margin_per(mut self, margin_per: f32) -> Self {
+        self.margin_per = Vec2::splat(margin_per);
+        self
+    }
+
     /// Sets the spacing between items in the layout.
     ///
     /// The `spacing` method sets the spacing between items in the layout. The spacing is applied
@@ -405,7 +412,54 @@ impl<'a> Layout<'a> {
         self
     }
 
+    pub fn all_ratios(&self) -> bool {
+        self.constraints.iter().all(|constraint| {
+            matches!(
+                constraint,
+                Constraint::Ratio(_, _) | Constraint::Percentage(_)
+            )
+        })
+    }
+
     pub fn try_split(&self, area: Rect) -> Result<(Segments, Spacers), AddConstraintError> {
+        let inner_area = area.shrink2(self.margin);
+        // This is the most common layout type used in slides
+        // (by me, the dev). If all the constrains are just ratios,
+        // we can just early-out and skip the overhead of the constraint
+        // solver
+        if self.all_ratios() && self.flex == Flex::Legacy && self.spacing == Spacing::Space(0.0) {
+            let mut segments: SmallVec<[Rect; 4]> = SmallVec::with_capacity(self.constraints.len());
+            let mut last_segment = Rect::from_min_size(inner_area.min, Vec2::ZERO);
+
+            for constraint in self.constraints {
+                let ratio = match constraint {
+                    Constraint::Ratio(num, den) => num / den,
+                    Constraint::Percentage(percentage) => percentage / 100.0,
+                    _ => unreachable!(),
+                };
+
+                match self.direction {
+                    Direction::Horizontal => {
+                        last_segment.max.y = inner_area.max.y;
+                        last_segment.set_width(inner_area.width() * ratio as f32);
+                        segments.push(last_segment.shrink2(self.margin_per));
+                        last_segment.min.x = last_segment.max.x;
+                    }
+                    Direction::Vertical => {
+                        last_segment.max.x = inner_area.max.x;
+                        last_segment.set_height(inner_area.height() * ratio as f32);
+                        segments.push(last_segment.shrink2(self.margin_per));
+                        last_segment.min.y = last_segment.max.y;
+                    }
+                }
+            }
+
+            if let Some(segment) = segments.last_mut() {
+                segment.max = inner_area.max;
+            }
+
+            return Ok((segments, SmallVec::new()));
+        }
         // To take advantage of all of cassowary features, we would want to store the `Solver` in
         // one of the fields of the Layout struct. And we would want to set it up such that we could
         // add or remove constraints as and when needed.
@@ -428,7 +482,6 @@ impl<'a> Layout<'a> {
         // This is equivalent to storing the solver in `Layout` and calling `solver.reset()` here.
         let mut solver = Solver::new();
 
-        let inner_area = area.shrink2(self.margin);
         let (area_start, area_end) = match self.direction {
             Direction::Horizontal => (f64::from(inner_area.min.x), f64::from(inner_area.right())),
             Direction::Vertical => (f64::from(inner_area.min.y), f64::from(inner_area.bottom())),
@@ -497,8 +550,20 @@ impl<'a> Layout<'a> {
         // debug_elements(&segments, &changes);
         // debug_elements(&spacers, &changes);
 
-        let segment_rects = changes_to_rects(&changes, &segments, inner_area, self.direction);
-        let spacer_rects = changes_to_rects(&changes, &spacers, inner_area, self.direction);
+        let segment_rects = changes_to_rects(
+            &changes,
+            &segments,
+            inner_area,
+            self.direction,
+            self.margin_per,
+        );
+        let spacer_rects = changes_to_rects(
+            &changes,
+            &spacers,
+            inner_area,
+            self.direction,
+            self.margin_per,
+        );
 
         Ok((segment_rects, spacer_rects))
     }
@@ -720,6 +785,7 @@ fn changes_to_rects(
     elements: &[Element],
     area: Rect,
     direction: Direction,
+    margin_per: Vec2,
 ) -> Rects {
     // convert to Rects
     elements
@@ -732,11 +798,13 @@ fn changes_to_rects(
                 Direction::Horizontal => Rect::from_min_size(
                     Pos2::new(*start as f32, area.min.y),
                     Vec2::new(size as f32, area.height()),
-                ),
+                )
+                .shrink2(margin_per),
                 Direction::Vertical => Rect::from_min_size(
                     Pos2::new(area.min.x, *start as f32),
                     Vec2::new(area.width(), size as f32),
-                ),
+                )
+                .shrink2(margin_per),
             }
         })
         .collect::<Rects>()

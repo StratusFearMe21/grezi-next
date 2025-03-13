@@ -1,30 +1,31 @@
 use std::{
     fs::File,
-    io::{self, BufReader, BufWriter, Write},
+    io::{self, BufReader},
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
 
+use args::{FitParser, RangeParser};
 use clap::Parser;
 use color_eyre::{
     config::Theme,
-    eyre::{self, bail, Context, OptionExt},
+    eyre::{self, bail, Context},
 };
 use eframe::{
-    egui::{self, ahash, mutex::Mutex, FontDefinitions},
+    egui::{mutex::Mutex, FontDefinitions, Vec2},
     NativeOptions,
 };
 use egui_glyphon::{glyphon::FontSystem, GlyphonRenderer};
-use grezi_egui::GrzResolvedSlide;
+use grezi_export::GrzExporter;
 use grezi_file_owner::{AppHandle, FileOwnerMessage};
-use grezi_font_serde::{FontRef, FontSystemDeserializer, IndexSliceSerializer};
+use grezi_font_serde::FontSystemDeserializer;
 use grezi_parser::{parse::GrzFile, GrzRoot};
-use indexmap::IndexSet;
 use tracing_error::ErrorLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 mod app;
+mod args;
 #[cfg(feature = "remote")]
 mod remote;
 
@@ -37,6 +38,12 @@ struct Args {
     output: Option<PathBuf>,
     #[clap(short, long)]
     lsp: bool,
+    #[clap(short, long)]
+    remote: bool,
+    #[clap(short, long, value_parser = RangeParser)]
+    pub index: Option<std::ops::Range<usize>>,
+    #[clap(short, long, value_parser = FitParser, default_value = "1920x1080")]
+    pub size: Vec2,
 }
 
 impl Args {
@@ -73,7 +80,7 @@ impl Args {
                     font_system = FontSystem::new();
                     font_definitions = FontDefinitions::default();
                     let mut file = grezi_parser::parse::GrzFile::new(input.clone(), file)?;
-                    let parse_result = file.parse(Vec::new())?;
+                    let parse_result = file.parse(&[])?;
                     eprint!("{:?}", parse_result);
 
                     if parse_result.has_errors() {
@@ -96,7 +103,7 @@ impl Args {
 }
 
 fn main() -> eyre::Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
     let color = supports_color::on(supports_color::Stream::Stderr)
         .map(|c| c.has_basic)
         .unwrap_or_default();
@@ -131,65 +138,25 @@ fn main() -> eyre::Result<()> {
         )
         .init();
 
-    let (mut font_system, font_definitions, slideshow) = args.open_grz_file()?;
+    let (font_system, font_definitions, slideshow) = args.open_grz_file()?;
 
-    let output_slideshow_path = args.output.clone().or_else(|| {
-        Some(
-            Path::new(args.input.as_ref()?)
-                .parent()
-                .unwrap()
-                .join("__cache.slideshow"),
-        )
-    });
-    let input_extension = args
-        .input
-        .as_ref()
-        .and_then(|i| Path::new(i).extension().and_then(|e| e.to_str()));
-    if args.output.is_some() || input_extension != Some("slideshow") {
-        if let Some(ref output_slideshow_path) = output_slideshow_path {
-            let mut output_file = BufWriter::new(
-                File::create(output_slideshow_path.as_path())
-                    .wrap_err("Failed to open output file")?,
-            );
-            let egui_ctx = egui::Context::default();
-            egui_extras::install_image_loaders(&egui_ctx);
-            let mut all_fonts_used: IndexSet<FontRef, ahash::RandomState> = IndexSet::default();
-            for i in 0..slideshow.slideshow.slides.len() {
-                let slide = GrzResolvedSlide::resolve_slide(
-                    &slideshow.slideshow,
-                    &mut font_system,
-                    &egui_ctx,
-                    i,
-                )
-                .ok_or_eyre("Failed to resolve slide during serialization")?;
-
-                let fonts = slide.fonts_used();
-
-                for font in fonts {
-                    all_fonts_used.insert(FontRef(unsafe {
-                        font_system.db_mut().make_shared_face_data(font).unwrap().0
-                    }));
-                }
-            }
-            postcard::to_io(
-                &(
-                    IndexSliceSerializer(all_fonts_used.as_slice()),
-                    &slideshow.slideshow,
-                ),
-                &mut output_file,
+    let font_system = Arc::new(Mutex::new(font_system));
+    if args.remote && args.output.is_none() {
+        args.output = args.input.and_then(|i| {
+            Some(Path::new(&format!("{}.slideshow", i.rsplit_once('.')?.0)).to_path_buf())
+        });
+    }
+    if let Some(ref output_slideshow_path) = args.output {
+        GrzExporter::new(&slideshow.slideshow, Arc::clone(&font_system))
+            .export(
+                output_slideshow_path,
+                args.size,
+                args.index
+                    .unwrap_or_else(|| 0..slideshow.slideshow.slides.len()),
             )
-            .wrap_err("Failed to write slideshow in binary format to file")?;
-            output_file
-                .flush()
-                .wrap_err("Failed to flush output file")?;
-            if args.output.is_some() {
-                return Ok(());
-            }
-        }
-    } else if input_extension == Some("slideshow") {
-        if let Some(ref input) = args.input {
-            std::fs::hard_link(input, output_slideshow_path.as_ref().unwrap())
-                .wrap_err("Failed to link slideshow to cache path")?;
+            .unwrap();
+        if !args.remote {
+            return Ok(());
         }
     }
 
@@ -197,7 +164,6 @@ fn main() -> eyre::Result<()> {
         "Grezi V3",
         NativeOptions::default(),
         Box::new(move |cc| {
-            let font_system = Arc::new(Mutex::new(font_system));
             if let Some(ref render_state) = cc.wgpu_render_state {
                 GlyphonRenderer::insert(render_state, Arc::clone(&font_system));
             }
@@ -218,20 +184,6 @@ fn main() -> eyre::Result<()> {
                 Arc::clone(&font_system),
             );
             #[cfg(feature = "remote")]
-            {
-                let app_shared_data = app_shared_data.clone();
-                std::thread::spawn(move || {
-                    remote::Remote {
-                        app_handle: app_shared_data,
-                        cached_slideshow_file: output_slideshow_path
-                            .as_ref()
-                            .map(|p| p.as_path())
-                            .unwrap_or_else(|| Path::new(""))
-                            .into(),
-                    }
-                    .run()
-                });
-            }
             if args.lsp {
                 #[cfg(feature = "lsp")]
                 {
@@ -245,12 +197,25 @@ fn main() -> eyre::Result<()> {
                     color_eyre::eyre::bail!("LSP feature is not enabled");
                 }
             } else {
-                let app_shared_data = app_shared_data.clone();
+                let t_app_shared_data = app_shared_data.clone();
+                std::thread::spawn(move || {
+                    remote::Remote {
+                        app_handle: t_app_shared_data,
+                        cached_slideshow_file: args
+                            .output
+                            .as_ref()
+                            .map(|p| p.as_path())
+                            .unwrap_or_else(|| Path::new(""))
+                            .into(),
+                    }
+                    .run()
+                });
+                let t_app_shared_data = app_shared_data.clone();
                 std::thread::spawn(move || {
                     grezi_file_owner::DefaultOwner {
                         root: slideshow,
                         message_receiver: owner_rx,
-                        shared_data: app_shared_data,
+                        shared_data: t_app_shared_data,
                         slide_index: 0,
                     }
                     .run()
@@ -265,5 +230,7 @@ fn main() -> eyre::Result<()> {
             }))
         }),
     )
-    .wrap_err("Failed to run eframe application")
+    .unwrap();
+
+    Ok(())
 }

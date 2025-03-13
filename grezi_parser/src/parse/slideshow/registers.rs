@@ -1,23 +1,27 @@
 use std::{borrow::Cow, io, sync::Arc};
 
-use ecolor::Color32;
+use grezi_layout::Flex;
 use smart_default::SmartDefault;
 use tracing::instrument;
 
-use crate::parse::{
-    cursor::GrzCursorGuardRaw,
-    error::{ErrsWithSource, ParseError},
+use crate::{
+    parse::{
+        cursor::GrzCursorGuardRaw,
+        error::{ErrsWithSource, ParseError},
+    },
+    slide::BgColor,
 };
 
-use super::object::{parse_color, ObjParamParser};
+use super::object::{parse_color_raw, ObjParamParser};
 
 #[derive(SmartDefault)]
 pub struct Registers {
     #[default = 15.0]
     pub margin: f32,
     pub margin_per: f32,
-    #[default(Color32::from_gray(27))]
-    pub bg: Color32,
+    #[default(Flex::Legacy)]
+    pub flex: Flex,
+    pub bg: BgColor,
     pub create_edges: bool,
 }
 
@@ -55,12 +59,23 @@ impl Registers {
                 }
                 x if x == "BACKGROUND" => {
                     let bg_str: Cow<'_, str> = param.1.into();
-                    self.bg = parse_color(
+                    let bg = parse_color_raw(
                         bg_str.as_ref(),
                         obj_params.char_range(),
                         obj_params.error_info(),
                         Arc::clone(&errors),
                     )?;
+                    let oklab_bg = oklab::srgb_f32_to_oklab(oklab::Rgb {
+                        r: bg.red,
+                        g: bg.green,
+                        b: bg.blue,
+                    });
+                    self.bg = BgColor {
+                        bg_l: oklab_bg.l,
+                        bg_a: oklab_bg.a,
+                        bg_b: oklab_bg.b,
+                        alpha: bg.alpha,
+                    };
                 }
                 x if x == "CREATE_EDGES" => {
                     let create_edges_str: Cow<'_, str> = param.1.into();
@@ -68,6 +83,16 @@ impl Registers {
                         Ok(c) => self.create_edges = c,
                         Err(_) => errors.append_error(
                             ParseError::Syntax(obj_params.char_range(), "Not a valid float"),
+                            obj_params.error_info(),
+                        ),
+                    }
+                }
+                x if x == "FLEX" => {
+                    let flex_str: Cow<'_, str> = param.1.into();
+                    match flex_str.parse() {
+                        Ok(c) => self.flex = c,
+                        Err(_) => errors.append_error(
+                            ParseError::Syntax(obj_params.char_range(), "Not a valid flex"),
                             obj_params.error_info(),
                         ),
                     }

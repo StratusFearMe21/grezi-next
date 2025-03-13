@@ -16,8 +16,9 @@ use ropey::Rope;
 use slideshow::viewbox::Viewbox;
 use tracing::instrument;
 use tree_sitter::{InputEdit, Point, Tree};
+use tree_sitter_grz::NodeKind;
 
-use crate::GrzRoot;
+use crate::{slide::ObjState, GrzRoot};
 
 pub mod cursor;
 pub mod error;
@@ -81,6 +82,8 @@ impl GrzFile {
 
     pub fn clear_incremental_state(&mut self) {
         self.incremental_state = None;
+        self.tree = None;
+        self.error_free_tree = None;
     }
 
     #[instrument(skip_all)]
@@ -90,11 +93,67 @@ impl GrzFile {
         self.error_free_tree = None;
         self.incremental_state = None;
         self.slideshow = GrzRoot::default();
-        self.parse(Vec::new())
+        self.parse(&[])
+    }
+
+    pub fn find_slide_index_for_edit(
+        &self,
+        edit: &InputEdit,
+        current_index: usize,
+    ) -> Option<usize> {
+        let tree = self.tree.as_ref()?;
+        let starting_node = tree
+            .root_node()
+            .first_named_child_for_byte(edit.new_end_byte)?;
+        let mut tree_walker = GrzCursor::from_node(
+            starting_node,
+            tree,
+            &self.source,
+            Arc::new(ErrsWithSource::default()),
+        );
+        match NodeKind::from(starting_node.kind_id()) {
+            NodeKind::SymSlide => {
+                let node_id = tree_walker.id(2, NodeKind::SymSlide).ok();
+                node_id.and_then(|nid| self.slideshow.slides.get_index_of(&nid))
+            }
+            NodeKind::SymViewbox => {
+                let (_, current_slide) = self.slideshow.slides.get_index(current_index)?;
+                let viewbox_name = tree_walker
+                    .goto_first_child(NodeKind::SymViewbox)
+                    .ok()??
+                    .smartstring()
+                    .ok()?;
+                if current_slide.uses_viewbox(&viewbox_name) {
+                    return Some(current_index);
+                }
+                self.slideshow
+                    .slides
+                    .iter()
+                    .position(|(_, slide)| slide.uses_viewbox(&viewbox_name))
+            }
+            NodeKind::SymObj => {
+                let (_, current_slide) = self.slideshow.slides.get_index(current_index)?;
+                let object_name = tree_walker
+                    .goto_first_child(NodeKind::SymObj)
+                    .ok()??
+                    .smartstring()
+                    .ok()?;
+                if let Some(obj) = current_slide.objects.get(&object_name) {
+                    if matches!(obj.positions.state, ObjState::Entering | ObjState::OnScreen) {
+                        return Some(current_index);
+                    }
+                }
+                self.slideshow
+                    .slides
+                    .iter()
+                    .position(|(_, slide)| slide.objects.contains_key(&object_name))
+            }
+            _ => None,
+        }
     }
 
     #[instrument(skip_all)]
-    pub fn parse(&mut self, edits: Vec<InputEdit>) -> io::Result<Arc<ErrsWithSource>> {
+    pub fn parse(&mut self, edits: &[InputEdit]) -> io::Result<Arc<ErrsWithSource>> {
         let time = Instant::now();
         let tree = self
             .parser
@@ -163,7 +222,7 @@ impl GrzFile {
             self.incremental_state.take(),
             damaged_node_map,
             new_tree_cursor
-                .goto_first_child()?
+                .goto_first_child(NodeKind::SymSourceFile)?
                 .ok_or_else(|| io::Error::new(ErrorKind::UnexpectedEof, "Source file is empty"))?,
             &self.path_to_grz,
             Arc::clone(&errors),
@@ -246,9 +305,9 @@ pub fn byte_pos_from_char_pos(char_pos: (usize, usize), current_rope: &Rope) -> 
         )
     })?;
     Ok(Point {
-        row: line
+        column: line
             .try_char_to_byte(char_pos.1)
             .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?,
-        column: char_pos.0,
+        row: char_pos.0,
     })
 }

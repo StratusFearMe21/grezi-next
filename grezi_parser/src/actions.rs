@@ -11,10 +11,10 @@ pub struct SlideParams {
     pub stagger: f64,
     #[default = 0.5]
     pub time: f64,
-    pub next: bool,
+    pub next: Option<f64>,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
 pub enum DrawableAction {
     Highlight {
         object: smartstring::alias::String,

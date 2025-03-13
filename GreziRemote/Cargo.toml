@@ -10,8 +10,8 @@ crate-type = ["cdylib"]
 [dependencies]
 arc-swap = "1.7.1"
 color-eyre = "0.6.3"
-eframe = { path = "../../egui/crates/eframe", features = ["android-native-activity", "default_fonts", "wgpu"], default-features = false }
-egui-glyphon = { version = "0.1.0", path = "../../egui-glyphon" }
+eframe = { workspace = true, features = ["android-native-activity", "default_fonts", "wgpu"] }
+egui-glyphon = { workspace = true, features = ["glyphon"] }
 egui_extras = { workspace = true, features = ["image", "webp", "gif"] }
 grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
 grezi_font_serde = { version = "0.1.0", path = "../grezi_font_serde" }
@@ -26,4 +26,5 @@ tracing-error = "0.2.1"
 tracing-panic = "0.1.2"
 tracing-subscriber = "0.3.19"
 tungstenite = "0.26.2"
+ureq = { version = "3.0.8", default-features = false }
 winit = "0.30.9"

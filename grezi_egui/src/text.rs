@@ -279,7 +279,10 @@ pub fn selection_rects(
                 let total = cluster.grapheme_indices(true).count();
                 let mut c_x = glyph.x;
                 let c_w = glyph.w / total as f32;
-                for (i, c) in cluster.grapheme_indices(true) {
+                for (i, c) in cluster
+                    .grapheme_indices(true)
+                    .skip_while(|g| g.1.split_whitespace().next().is_none())
+                {
                     let c_start = glyph.start + i;
                     let c_end = glyph.start + i + c.len();
                     if (start.line != line_i || c_end > start.index)

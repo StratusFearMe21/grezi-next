@@ -9,10 +9,11 @@ axum = { version = "0.8.1", optional = true, features = ["ws"] }
 clap = { version = "4.5.31", features = ["derive"] }
 color-eyre = "0.6.3"
 crossbeam-channel = "0.5.14"
-eframe = { path = "../../egui/crates/eframe", default-features = false, features = ["wgpu", "wayland"] }
-egui-glyphon = { version = "0.1.0", path = "../../egui-glyphon" }
+eframe = { workspace = true, features = ["wgpu", "wayland"] }
+egui-glyphon = { workspace = true, features = ["glyphon"] }
 egui_extras = { workspace = true, features = ["gif", "image", "webp"] }
 grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
+grezi_export = { version = "0.1.0", path = "../grezi_export" }
 grezi_file_owner = { version = "0.1.0", path = "../grezi_file_owner" }
 grezi_font_serde = { version = "0.1.0", path = "../grezi_font_serde" }
 grezi_lsp = { version = "0.1.0", path = "../grezi_lsp", optional = true }
@@ -20,15 +21,26 @@ grezi_parser = { version = "0.1.0", path = "../grezi_parser" }
 image = "0.25.5"
 indexmap = { version = "2.7.1", features = ["serde"] }
 keyframe = { version = "1.1.1", default-features = false }
+phf = "0.11.3"
 postcard = { version = "1.1.1", features = ["use-std"] }
 serde = "1.0.218"
 supports-color = "3.0.2"
 tokio = { version = "1.43.0", features = ["rt", "macros"], optional = true }
+tower-http = { version = "0.6.2", features = ["fs"], optional = true }
 tracing = "0.1.41"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
+[[bin]]
+name = "grezi"
+path = "src/main.rs"
+
 [features]
 default = ["remote", "lsp"]
-remote = ["dep:tokio", "dep:axum"]
+remote = ["dep:tokio", "dep:axum", "dep:tower-http"]
 lsp = ["dep:grezi_lsp"]
+
+[build-dependencies]
+phf_codegen = "0.11.3"
+serde = { version = "1.0.218", features = ["derive"] }
+serde_json = "1.0.140"

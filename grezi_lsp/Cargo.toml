@@ -13,8 +13,12 @@ grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
 grezi_file_owner = { version = "0.1.0", path = "../grezi_file_owner" }
 miette = { version = "7.5.0", default-features = false }
 tree-sitter = "0.25.2"
-helix-lsp = { version = "25.1.1", path = "../../helix/helix-lsp" }
-helix-core = { version = "25.1.1", path = "../../helix/helix-core" }
-helix-lsp-types = { version = "0.95.1", path = "../../helix/helix-lsp-types" }
+helix-lsp = { git = "https://github.com/StratusFearMe21/helix.git" }
+helix-core = { git = "https://github.com/StratusFearMe21/helix.git" }
+helix-lsp-types = { git = "https://github.com/StratusFearMe21/helix.git" }
 percent-encoding = "2.3.1"
 smallvec = "1.14.0"
+ropey = "1.6.1"
+tree-sitter-grz = { version = "0.1.0", path = "../tree-sitter-grz" }
+tracing = "0.1.41"
+nucleo-matcher = "0.3.1"

@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 arc-swap = "1.7.1"
 crossbeam-channel = "0.5.14"
-egui-glyphon = { version = "0.1.0", path = "../../egui-glyphon", default-features = false }
+egui-glyphon.workspace = true
 grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
 egui.workspace = true
 grezi_parser = { version = "0.1.0", path = "../grezi_parser" }

@@ -8,6 +8,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::{ops::Deref, sync::Arc};
+use tower_http::services::ServeFile;
 
 use crate::AppHandle;
 
@@ -28,6 +29,10 @@ impl Remote {
     pub async fn run(self) {
         let app = Router::new()
             .route("/subscribe", any(subscribe))
+            .route_service(
+                "/slideshow",
+                ServeFile::new(self.cached_slideshow_file.deref()),
+            )
             .with_state(self);
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

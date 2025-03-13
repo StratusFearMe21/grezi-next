@@ -4,6 +4,7 @@ use css_color::Srgb;
 use ecolor::Color32;
 use ropey::RopeSlice;
 use tracing::instrument;
+use tree_sitter_grz::NodeKind;
 use url::Url;
 
 use crate::{
@@ -30,7 +31,7 @@ impl Object {
         path_to_grz: &str,
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<()> {
-        if let Some(obj_inner_cursor) = cursor.goto_first_child()? {
+        if let Some(obj_inner_cursor) = cursor.goto_first_child(NodeKind::SymObjInner)? {
             self.parameters
                 .parse(obj_inner_cursor, path_to_grz, Arc::clone(&errors))?;
         } else {
@@ -59,6 +60,7 @@ impl ObjInner {
         match obj_type {
             x if x == "Rect" => {
                 let mut color = Color32::WHITE;
+                let mut stroke = Color32::TRANSPARENT;
                 let mut height = 0.0;
                 while let Some(param) = obj_params.next() {
                     let param = param?;
@@ -68,6 +70,15 @@ impl ObjInner {
                             let color_str: Cow<'_, str> = param.1.into();
                             color = parse_color(
                                 color_str.as_ref(),
+                                obj_params.char_range(),
+                                obj_params.error_info(),
+                                Arc::clone(&errors),
+                            )?;
+                        }
+                        x if x == "stroke" => {
+                            let stroke_str: Cow<'_, str> = param.1.into();
+                            stroke = parse_color(
+                                stroke_str.as_ref(),
                                 obj_params.char_range(),
                                 obj_params.error_info(),
                                 Arc::clone(&errors),
@@ -90,7 +101,11 @@ impl ObjInner {
                     }
                 }
 
-                *self = Self::Rect { color, height };
+                *self = Self::Rect {
+                    color,
+                    stroke,
+                    height,
+                };
             }
             x if x == "Image" => {
                 let mut tint = Color32::WHITE;
@@ -298,7 +313,7 @@ impl<'a> Iterator for ObjParamParser<'a, '_> {
             )
             .entered(),
         );
-        match self.cursor.goto_first_child() {
+        match self.cursor.goto_first_child(NodeKind::SymObjParam) {
             Ok(c) => match parse_obj_param(c?) {
                 Ok(params) => {
                     self.char_range = params.0;
@@ -323,19 +338,14 @@ pub fn parse_obj_param<'a>(
 }
 
 #[instrument(skip_all, fields(source = color))]
-pub fn parse_color<'a>(
+pub fn parse_color_raw<'a>(
     color: &str,
     mut range: CharRange,
     error_info: ErrorInfo,
     errors: Arc<ErrsWithSource>,
-) -> io::Result<Color32> {
+) -> io::Result<Srgb> {
     match Srgb::from_str(color) {
-        Ok(c) => Ok(Color32::from_rgba_unmultiplied(
-            (c.red * 255.0) as u8,
-            (c.green * 255.0) as u8,
-            (c.blue * 255.0) as u8,
-            (c.alpha * 255.0) as u8,
-        )),
+        Ok(c) => Ok(c),
         Err(e) => {
             range.byte_range.start += e.span.start;
             range.byte_range.end = range.byte_range.start + e.span.len();
@@ -351,7 +361,28 @@ pub fn parse_color<'a>(
                 },
                 error_info,
             );
-            Ok(Color32::default())
+            Ok(Srgb {
+                red: 0.0,
+                green: 0.0,
+                blue: 0.0,
+                alpha: 0.0,
+            })
         }
     }
+}
+
+#[instrument(skip_all, fields(source = color))]
+pub fn parse_color<'a>(
+    color: &str,
+    range: CharRange,
+    error_info: ErrorInfo,
+    errors: Arc<ErrsWithSource>,
+) -> io::Result<Color32> {
+    let c = parse_color_raw(color, range, error_info, errors)?;
+    Ok(Color32::from_rgba_unmultiplied(
+        (c.red * 255.0) as u8,
+        (c.green * 255.0) as u8,
+        (c.blue * 255.0) as u8,
+        (c.alpha * 255.0) as u8,
+    ))
 }

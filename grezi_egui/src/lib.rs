@@ -1,6 +1,6 @@
 use std::{ops::Deref, sync::Arc};
 
-use egui::{load::TexturePoll, Align2, ImageSize, Pos2, Rect, Stroke, Vec2};
+use egui::{load::TexturePoll, Align2, Color32, CornerRadius, ImageSize, Pos2, Rect, Stroke, Vec2};
 use egui_glyphon::{
     cosmic_text::{fontdb::ID, Affinity, Align, Cursor, FontSystem},
     BufferWithTextArea,
@@ -8,7 +8,7 @@ use egui_glyphon::{
 use grezi_parser::{
     actions::{DrawableAction, SlideParams},
     object::ObjInner,
-    slide::{ObjState, SlideVb, VbIdentifier, ViewboxRef, BASE_SIZE},
+    slide::{BgColor, ObjState, SlideVb, VbIdentifier, ViewboxRef, BASE_SIZE},
     GrzRoot,
 };
 use indexmap::IndexMap;
@@ -23,6 +23,7 @@ mod text;
 pub struct GrzResolvedSlide {
     objects: IndexMap<smartstring::alias::String, ResolvedObject>,
     pub params: SlideParams,
+    pub bg: ResolvedBgColor,
     pub max_time: f64,
 }
 
@@ -54,7 +55,13 @@ impl GrzResolvedSlide {
         ctx: &egui::Context,
         index: usize,
     ) -> Option<Self> {
-        let slide = root.slides.get(index)?;
+        let slide = root.slides.get_index(index)?.1;
+        let last_slide = root.slides.get_index(index.saturating_sub(1));
+        let bg = if let Some((_, last_slide)) = last_slide {
+            ResolvedBgColor::new(last_slide.bg, slide.bg)
+        } else {
+            ResolvedBgColor::NoChange(slide.bg.into())
+        };
         let mut objects = IndexMap::new();
 
         let mut min_time = 0.0;
@@ -90,10 +97,17 @@ impl GrzResolvedSlide {
             let mut max_size = second_viewbox.size();
 
             let inner = match &obj.parameters {
-                ObjInner::Rect { color, height } => {
+                ObjInner::Rect {
+                    color,
+                    stroke,
+                    height,
+                } => {
                     min_size.y *= *height;
                     max_size.y *= *height;
-                    ResolvedObjInner::Rect { color: *color }
+                    ResolvedObjInner::Rect {
+                        color: *color,
+                        stroke: Stroke::new(2.5, *stroke),
+                    }
                 }
                 ObjInner::Image {
                     data,
@@ -249,13 +263,26 @@ impl GrzResolvedSlide {
                                 tracing::warn!("Highlight locations only apply to text objects");
                             }
                         }
-                        let mut name = smartstring::alias::String::from("__highlight__");
-                        name.push_str(obj_name.as_str());
+                        let mut name = smartstring::alias::String::from("__hl__");
+                        std::fmt::write(
+                            &mut name,
+                            format_args!("{}{:?}{:?}", obj_name, locations, color),
+                        )
+                        .unwrap();
+                        let state = if last_slide
+                            .map(|(_, s)| s.actions.iter().any(|a| a == action))
+                            .unwrap_or_default()
+                        {
+                            ObjState::OnScreen
+                        } else {
+                            ObjState::Entering
+                        };
                         objects.insert(
                             name,
                             object.new_based_on_this(ResolvedObjInner::Highlight {
                                 rects,
                                 color: *color,
+                                state,
                             }),
                         );
                     }
@@ -296,20 +323,44 @@ impl GrzResolvedSlide {
         Some(Self {
             objects,
             max_time,
+            bg,
             params: slide.slide_params.clone(),
         })
     }
 }
 
-pub fn get_size_and_factor(size: Rect) -> (Rect, f32) {
-    let size = Align2::CENTER_CENTER.align_size_within_rect(
-        ImageSize {
-            max_size: size.size(),
-            ..Default::default()
+pub enum ResolvedBgColor {
+    Interpolate(BgColor, BgColor),
+    NoChange(Color32),
+}
+
+impl ResolvedBgColor {
+    fn new(from: BgColor, to: BgColor) -> Self {
+        if from == to {
+            Self::NoChange(to.into())
+        } else {
+            Self::Interpolate(from, to)
         }
-        .calc_size(size.size(), BASE_SIZE.max.to_vec2()),
-        size,
-    );
+    }
+
+    pub fn interpolate(&self, time: f32) -> Color32 {
+        match self {
+            Self::Interpolate(from, to) => from.interpolate_bg(to, time),
+            Self::NoChange(color) => *color,
+        }
+    }
+}
+
+pub fn get_size(size: Vec2) -> Vec2 {
+    ImageSize {
+        max_size: size,
+        ..Default::default()
+    }
+    .calc_size(size, BASE_SIZE.max.to_vec2())
+}
+
+pub fn get_size_and_factor(size: Rect) -> (Rect, f32) {
+    let size = Align2::CENTER_CENTER.align_size_within_rect(get_size(size.size()), size);
 
     let scale_factor = if size.width() > size.height() {
         size.height() / BASE_SIZE.max.y
@@ -329,6 +380,19 @@ impl GrzResolvedSlide {
         easing_function: &E,
         buffers: &mut Vec<BufferWithTextArea>,
     ) {
+        let bg_eased_time = if self.max_time > 0.0 {
+            keyframe::ease_with_scaled_time::<_, _, E>(
+                easing_function,
+                0.0,
+                1.0,
+                time,
+                self.max_time,
+            )
+        } else {
+            1.0
+        };
+        let bg = self.bg.interpolate(bg_eased_time as f32);
+        ui.painter().rect_filled(size, CornerRadius::default(), bg);
         let (size, scale_factor) = get_size_and_factor(size);
         for object in self.objects.values() {
             object.draw(ui, size, scale_factor, time, easing_function, buffers);

@@ -1,0 +1,88 @@
+{
+	"name": "grezi-lsp",
+	"description": "The Grezi language server",
+	"author": "Isaac Mills",
+	"license": "MIT",
+	"version": "1.0.15",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/StratusFearMe21/grezi-next"
+	},
+	"categories": [],
+	"engines": {
+		"vscode": "^1.75.0"
+	},
+	"main": "./client/out/extension",
+	"contributes": {
+		"configuration": {
+			"type": "object",
+			"title": "Example configuration",
+			"properties": {
+				"greziLanguageServer.maxNumberOfProblems": {
+					"scope": "resource",
+					"type": "number",
+					"default": 100,
+					"description": "Controls the maximum number of problems produced by the server."
+				},
+				"greziLanguageServer.trace.server": {
+					"scope": "window",
+					"type": "string",
+					"enum": [
+						"off",
+						"messages",
+						"verbose"
+					],
+					"default": "off",
+					"description": "Traces the communication between VS Code and the language server."
+				},
+				"greziLanguageServer.bin": {
+					"scope": "resource",
+					"type": "string",
+					"description": "The location of the Grezi binary"
+				}
+			}
+		},
+		"languages": [
+			{
+				"id": "grezi",
+				"extensions": [
+					".grz"
+				],
+				"aliases": [
+					"grz",
+					"grezi",
+					"Grezi"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+      {
+        "language": "grezi",
+        "path": "./grezi.tmLanguage.json",
+        "scopeName": "source.grezi"
+      }
+    ]
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint ./client/src --ext .ts,.tsx",
+		"postinstall": "cd client && npm install && cd ..",
+		"test": "sh ./scripts/e2e.sh",
+		"package": "vsce package"
+	},
+	"devDependencies": {
+		"@types/mocha": "^10.0.6",
+		"@types/node": "^18.14.6",
+		"@typescript-eslint/eslint-plugin": "^6.14.0",
+		"@typescript-eslint/parser": "^6.14.0",
+		"eslint": "^8.56.0",
+		"mocha": "^10.2.0",
+		"typescript": "^5.3.3"
+	},
+	"dependencies": {
+		"@vscode/vsce": "^2.23.0"
+	}
+}

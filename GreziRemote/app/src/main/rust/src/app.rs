@@ -61,17 +61,30 @@ impl eframe::App for App {
                     ui.label("Enter IP address for presentation:");
                     ui.text_edit_singleline(ip);
                     if ui.button("Connect").clicked() {
-                        let (mut connection, _) =
+                        let (connection, _) =
                             tungstenite::connect(format!("ws://{}:3000/subscribe", ip)).unwrap();
 
-                        connection.send(Message::Get.try_into().unwrap()).unwrap();
+                        // connection.send(Message::Get.try_into().unwrap()).unwrap();
 
-                        let slideshow = connection.read().unwrap().into_data();
+                        // let slideshow = connection.read().unwrap().into_data();
+                        let slideshow = ureq::get(format!("http://{}:3000/slideshow", ip))
+                            .call()
+                            .unwrap()
+                            .into_body()
+                            .with_config()
+                            .limit(u64::MAX)
+                            .read_to_vec()
+                            .unwrap();
 
-                        let result: (FontSystemDeserializer, GrzRoot) =
+                        let mut result: (FontSystemDeserializer, GrzRoot) =
                             postcard::from_bytes(&slideshow).unwrap();
 
+                        result.0 .0.db_mut().set_sans_serif_family("Ubuntu");
+                        result.0 .0.db_mut().set_monospace_family("Fira Code");
+                        result.0 .0.db_mut().set_serif_family("DejaVu Serif");
+
                         *font_system.lock() = result.0 .0;
+                        // ctx.set_fonts(result.0 .1);
 
                         let (key_tx, key_rx) = std::sync::mpsc::channel();
 
@@ -177,8 +190,8 @@ impl eframe::App for App {
                                         // `next()` action
                                         while root
                                             .slides
-                                            .get(*index)
-                                            .map(|s| s.slide_params.next)
+                                            .get_index(*index)
+                                            .map(|s| s.1.slide_params.next.is_some())
                                             .unwrap_or_default()
                                         {
                                             *index = index.saturating_sub(1);
@@ -231,8 +244,8 @@ impl eframe::App for App {
                                     // `next()` action
                                     while root
                                         .slides
-                                        .get(*index)
-                                        .map(|s| s.slide_params.next)
+                                        .get_index(*index)
+                                        .map(|s| s.1.slide_params.next.is_some())
                                         .unwrap_or_default()
                                     {
                                         *index = index.saturating_sub(1);
@@ -324,17 +337,20 @@ impl eframe::App for App {
                         resolved.draw(first_slide_rect, ui, time, &EaseOutCubic, &mut buffers);
                         if resolved.max_time > time {
                             ctx.request_repaint();
-                        } else if resolved.params.next {
-                            ctx.request_repaint();
-                            custom_key_sender
-                                .send(egui::Event::Key {
-                                    key: egui::Key::Space,
-                                    pressed: true,
-                                    physical_key: None,
-                                    repeat: false,
-                                    modifiers: Modifiers::CTRL,
-                                })
-                                .unwrap();
+                        } else if let Some(next) = resolved.params.next {
+                            if next > time {
+                                ctx.request_repaint_after_secs((next - time) as f32);
+                            } else {
+                                custom_key_sender
+                                    .send(egui::Event::Key {
+                                        key: egui::Key::Space,
+                                        pressed: true,
+                                        physical_key: None,
+                                        repeat: false,
+                                        modifiers: Modifiers::CTRL,
+                                    })
+                                    .unwrap();
+                            }
                         }
                         egui::Window::new("Speaker Notes")
                             .fixed_rect(speaker_rect)

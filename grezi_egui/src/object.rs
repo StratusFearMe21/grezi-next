@@ -73,10 +73,12 @@ pub enum ResolvedObjInner {
     },
     Rect {
         color: Color32,
+        stroke: Stroke,
     },
     Highlight {
         rects: SmallVec<[Rect; 2]>,
         color: Color32,
+        state: ObjState,
     },
     Line {
         objects: [ResolvedObjPositions; 2],
@@ -117,6 +119,10 @@ impl ResolvedObject {
             ObjState::OnScreen => 1.0,
             ObjState::Exiting => 1.0 - eased_time,
         };
+
+        if opacity <= 0.0 {
+            return;
+        }
 
         match &self.inner {
             ResolvedObjInner::Text { job, .. } => {
@@ -159,16 +165,28 @@ impl ResolvedObject {
                     .tint(tint.gamma_multiply(opacity));
                 img.paint_at(ui, obj_pos);
             }
-            ResolvedObjInner::Rect { color } => {
-                ui.painter().rect_filled(
+            ResolvedObjInner::Rect { color, mut stroke } => {
+                stroke.color = stroke.color.gamma_multiply(opacity);
+                stroke.width *= scale_factor;
+                ui.painter().rect(
                     obj_pos,
                     CornerRadius::default(),
                     color.gamma_multiply(opacity),
+                    stroke,
+                    egui::StrokeKind::Middle,
                 );
             }
-            ResolvedObjInner::Highlight { rects, color } => {
+            ResolvedObjInner::Highlight {
+                rects,
+                color,
+                state,
+            } => {
                 let total_width: f32 = rects.iter().map(|r| r.width() * scale_factor).sum();
-                let width_to_draw = total_width * eased_time;
+                let width_to_draw = match state {
+                    ObjState::Entering => total_width * eased_time,
+                    ObjState::OnScreen => total_width,
+                    ObjState::Exiting => total_width * (1.0 - eased_time),
+                };
                 let mut width_drawn = 0.0;
                 for rect in rects.iter() {
                     let mut rect = *rect * scale_factor;

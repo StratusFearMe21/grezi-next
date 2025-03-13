@@ -40,6 +40,7 @@ grezi_layout = { version = "0.1.0", path = "../grezi_layout", optional = true }
 url = { version = "2.5.4", features = ["serde"] }
 bitcode = "0.6.5"
 serde = { version = "1.0.218", features = ["derive", "rc"] }
+oklab = "1.1.2"
 
 [features]
 default = ["parse"]

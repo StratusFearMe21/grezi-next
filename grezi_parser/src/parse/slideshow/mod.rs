@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use indexmap::IndexMap;
 use prehash::Passthru;
 use registers::Registers;
 use tracing::instrument;
@@ -33,10 +34,17 @@ impl GrzRoot {
         path_to_grz: &str,
         errors: Arc<ErrsWithSource>,
     ) -> io::Result<IncrementalState> {
+        if incremental_state.is_none() {
+            self.slides.clear();
+        }
         let mut incremental_state = incremental_state.unwrap_or_default();
         let mut registers = Registers::default();
+        let mut current_slides: IndexMap<u64, Slide, BuildHasherDefault<Passthru>> =
+            IndexMap::with_capacity_and_hasher(
+                self.slides.capacity(),
+                BuildHasherDefault::default(),
+            );
 
-        self.slides.clear();
         // If viewbox isn't present, it gets deleted
         for (_, viewbox) in self.viewboxes.iter_mut() {
             viewbox.1 = false;
@@ -46,35 +54,48 @@ impl GrzRoot {
             object.present = false;
         }
 
+        let mut reused_slides = 0;
         let mut slide_time = Duration::from_secs(0);
         let mut viewbox_time = Duration::from_secs(0);
         let mut object_time = Duration::from_secs(0);
         let mut register_time = Duration::from_secs(0);
 
         let default_slide = Slide::default();
+        let mut last_slide_changed = false;
 
         loop {
             let node = cursor.node();
             match NodeKind::from(node.kind_id()) {
                 NodeKind::SymSlide => {
                     let slide_instant = Instant::now();
-                    if let Some(slide_tree_cursor) = cursor.goto_first_child()? {
+                    let id = cursor.id(2, NodeKind::SymSlide)?;
+                    if let Some(mut slide) = self.slides.swap_remove(&id) {
+                        reused_slides += 1;
+                        slide.apply_registers(&registers);
+                        current_slides.insert(id, slide);
+                        last_slide_changed = false;
+                    } else if let Some(slide_tree_cursor) =
+                        cursor.goto_first_child(NodeKind::SymSlide)?
+                    {
                         let mut slide = Slide::default();
                         slide.apply_registers(&registers);
                         slide.parse(
                             slide_tree_cursor,
                             &self.viewboxes,
-                            self.slides.last().unwrap_or(&default_slide),
+                            current_slides.last().map(|s| s.1).unwrap_or(&default_slide),
                             Arc::clone(&errors),
                         )?;
-                        self.slides.push(slide);
+                        current_slides.insert(id, slide);
+                        last_slide_changed = true;
                     }
                     slide_time += slide_instant.elapsed();
                 }
                 NodeKind::SymViewbox => {
                     let viewbox_instant = Instant::now();
                     let id = cursor.node().id() as u64;
-                    if let Some(mut viewbox_tree_cursor) = cursor.goto_first_child()? {
+                    if let Some(mut viewbox_tree_cursor) =
+                        cursor.goto_first_child(NodeKind::SymViewbox)?
+                    {
                         let viewbox_name = viewbox_tree_cursor.smartstring()?;
                         viewbox_tree_cursor.goto_next_sibling()?;
                         if let Some(viewbox) =
@@ -130,7 +151,9 @@ impl GrzRoot {
                 NodeKind::SymObj => {
                     let object_instant = Instant::now();
                     let id = cursor.node().id() as u64;
-                    if let Some(mut object_tree_cursor) = cursor.goto_first_child()? {
+                    if let Some(mut object_tree_cursor) =
+                        cursor.goto_first_child(NodeKind::SymObj)?
+                    {
                         let object_name = object_tree_cursor.smartstring()?;
                         object_tree_cursor.goto_next_sibling()?;
                         if let Some(object) = self.objects.get_mut(&object_name) {
@@ -157,20 +180,36 @@ impl GrzRoot {
                 }
                 NodeKind::SymRegister => {
                     let register_instant = Instant::now();
-                    if let Some(register_cursor) = cursor.goto_first_child_raw()? {
+                    if let Some(register_cursor) =
+                        cursor.goto_first_child_raw(NodeKind::SymRegister)?
+                    {
                         registers.parse(register_cursor, Arc::clone(&errors))?;
                     }
                     register_time += register_instant.elapsed();
                 }
                 NodeKind::SymActions => {
                     let action_instant = Instant::now();
-                    if let Some(action_tree_cursor) = cursor.goto_first_child()? {
+                    let id = cursor.id(1, NodeKind::SymActions)?;
+                    if let Some(mut action) = self.slides.swap_remove(&id).and_then(|action| {
+                        if last_slide_changed {
+                            None
+                        } else {
+                            Some(action)
+                        }
+                    }) {
+                        reused_slides += 1;
+                        action.apply_registers(&registers);
+                        current_slides.insert(id, action);
+                    } else if let Some(action_tree_cursor) =
+                        cursor.goto_first_child(NodeKind::SymActions)?
+                    {
                         // Actions draw the objects from the previous
                         // slide
                         let mut action = Slide::default();
                         action.apply_registers(&registers);
-                        let last_slide = self.slides.last().unwrap_or(&default_slide);
                         // TODO: Borrow instead of clone
+                        let last_slide =
+                            current_slides.last().map(|s| s.1).unwrap_or(&default_slide);
                         action.objects = last_slide.objects.clone();
                         action.parse(
                             action_tree_cursor,
@@ -180,7 +219,7 @@ impl GrzRoot {
                         )?;
                         action.make_action();
                         action.actions.extend(last_slide.actions.iter().cloned());
-                        self.slides.push(action);
+                        current_slides.insert(id, action);
                     }
                     slide_time += action_instant.elapsed();
                 }
@@ -195,10 +234,19 @@ impl GrzRoot {
             }
         }
 
-        tracing::warn!(?slide_time, ?register_time, ?object_time, ?viewbox_time);
+        tracing::warn!(
+            ?slide_time,
+            ?register_time,
+            ?object_time,
+            ?viewbox_time,
+            reused_slides
+        );
 
-        self.objects.retain(|_, object| object.present);
-        self.viewboxes.retain(|_, viewbox| viewbox.1);
+        if !errors.has_errors() {
+            self.objects.retain(|_, object| object.present);
+            self.viewboxes.retain(|_, viewbox| viewbox.1);
+            self.slides = current_slides;
+        }
 
         Ok(incremental_state)
     }

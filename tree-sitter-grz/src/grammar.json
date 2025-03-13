@@ -649,8 +649,17 @@
         {
           "type": "ALIAS",
           "content": {
-            "type": "STRING",
-            "value": "Size"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "STRING",
+                "value": "Size"
+              },
+              {
+                "type": "STRING",
+                "value": "Screen"
+              }
+            ]
           },
           "named": true,
           "value": "size"
@@ -881,8 +890,22 @@
           "type": "FIELD",
           "name": "object",
           "content": {
-            "type": "SYMBOL",
-            "name": "identifier"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "ALIAS",
+                "content": {
+                  "type": "STRING",
+                  "value": ".."
+                },
+                "named": true,
+                "value": "from_last_slide"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "identifier"
+              }
+            ]
           }
         },
         {

@@ -1,5 +1,5 @@
 [workspace]
-members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "grezi_parser", "GreziRemote", "tree-sitter-grz", "grezi_lsp", "grezi_file_owner"]
+members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "grezi_parser", "GreziRemote", "tree-sitter-grz", "grezi_lsp", "grezi_file_owner", "grezi_mathml", "grezi_export"]
 resolver = "2"
 
 [workspace.package]
@@ -22,10 +22,12 @@ panic = "abort"
 # ecolor = { version = "0.31.0" }
 # emath = { version = "0.31.0" }
 # egui_extras = { version = "0.31.0" }
-egui = { path = "../egui/crates/egui", default-features = false }
-ecolor = { path = "../egui/crates/ecolor" }
-emath = { path = "../egui/crates/emath" }
-egui_extras = { path = "../egui/crates/egui_extras" }
+egui = { git = "https://github.com/StratusFearMe21/egui.git", default-features = false }
+eframe = { git = "https://github.com/StratusFearMe21/egui.git", default-features = false }
+ecolor = { git = "https://github.com/StratusFearMe21/egui.git" }
+emath = { git = "https://github.com/StratusFearMe21/egui.git" }
+egui_extras = { git = "https://github.com/StratusFearMe21/egui.git" }
+egui-glyphon = { git = "https://github.com/StratusFearMe21/egui-glyphon.git", branch = "grezi", default-features = false }
 
 
 [patch.crates-io]

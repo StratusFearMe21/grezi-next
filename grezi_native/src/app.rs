@@ -1,7 +1,7 @@
 use std::{borrow::Cow, ops::Deref, sync::mpsc::Receiver};
 
 use eframe::{
-    egui::{self, Modifiers, Pos2, Rect},
+    egui::{self, Modifiers, Pos2, Rect, Spinner},
     egui_wgpu,
 };
 use egui_glyphon::GlyphonRendererCallback;
@@ -46,7 +46,7 @@ impl eframe::App for App {
                         } => {
                             self.shared_data
                                 .root_owner_sender
-                                .send(FileOwnerMessage::Next)
+                                .send(FileOwnerMessage::Next(false))
                                 .unwrap();
                         }
                         egui::Event::PointerButton {
@@ -134,12 +134,19 @@ impl eframe::App for App {
                 resolved.draw(max_rect, ui, time, &EaseOutCubic, &mut buffers);
                 if resolved.max_time > time {
                     ctx.request_repaint();
-                } else if resolved.params.next {
-                    self.shared_data
-                        .root_owner_sender
-                        .send(FileOwnerMessage::Next)
-                        .unwrap();
+                } else if let Some(next) = resolved.params.next {
+                    if resolved.max_time + next > time {
+                        ctx.request_repaint_after_secs(((resolved.max_time + next) - time) as f32);
+                    } else {
+                        self.shared_data
+                            .root_owner_sender
+                            .send(FileOwnerMessage::Next(true))
+                            .unwrap();
+                    }
                 }
+            } else {
+                let (size, factor) = get_size_and_factor(max_rect);
+                Spinner::new().paint_at(&ui, size.shrink(25.0 * factor));
             }
 
             ui.painter().add(egui_wgpu::Callback::new_paint_callback(

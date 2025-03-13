@@ -33,23 +33,6 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) -> eyre::Re
         .with(tracing_android::layer("com.grezi").unwrap())
         .init();
 
-    // let mut font_system;
-    // let font_definitions;
-    // let slideshow = {
-    //     let deserialize_instant = Instant::now();
-    //     let mut buffer = vec![0; SLIDESHOW_FILE.len()];
-    //     let result: (FontSystemDeserializer, GrzRoot) =
-    //         postcard::from_bytes(SLIDESHOW_FILE).unwrap();
-    //     tracing::warn!(time = ?deserialize_instant.elapsed(), "Deserializing finished");
-    //     font_system = result.0 .0;
-    //     font_definitions = result.0 .1;
-    //     result.1
-    // };
-
-    // font_system.db_mut().set_sans_serif_family("Ubuntu");
-    // font_system.db_mut().set_monospace_family("Fira Code");
-    // font_system.db_mut().set_serif_family("DejaVu Serif");
-
     eframe::run_native(
         "Grezi V3",
         NativeOptions {
@@ -58,6 +41,7 @@ fn android_main(app: winit::platform::android::activity::AndroidApp) -> eyre::Re
         },
         Box::new(move |cc| {
             let font_system = Arc::new(Mutex::new(FontSystem::new()));
+
             if let Some(ref render_state) = cc.wgpu_render_state {
                 GlyphonRenderer::insert(render_state, Arc::clone(&font_system));
             }

@@ -277,6 +277,10 @@
         "required": true,
         "types": [
           {
+            "type": "from_last_slide",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           }
@@ -684,6 +688,10 @@
   },
   {
     "type": "escape_sequence",
+    "named": true
+  },
+  {
+    "type": "from_last_slide",
     "named": true
   },
   {
