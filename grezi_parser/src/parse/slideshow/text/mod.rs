@@ -12,19 +12,21 @@ use crate::{
         cursor::GrzCursorGuard,
         error::{ErrsWithSource, ParseError},
     },
-    text::{Attrs, TextParagraph, TextSection},
+    text::{Attrs, TextParagraph, TextSection, TextTag},
 };
 
 mod dark_plus_theme;
 mod format_djot;
 mod syntax_highlighting;
 
-#[derive(Default)]
+#[derive(SmartDefault)]
 pub struct TextJobParams<'a> {
     pub default_attrs: Attrs,
     pub default_font_size: f32,
     pub language: StringLiteral<'a>,
     pub value: StringLiteral<'a>,
+    #[default = true]
+    pub tagged: bool,
 }
 
 impl From<TextJobParams<'_>> for SmallVec<[TextSection; 1]> {
@@ -43,6 +45,11 @@ impl From<TextJobParams<'_>> for SmallVec<[TextSection; 1]> {
                     .rich_text
                     .push((value.into(), val.default_attrs.clone()));
             }
+            if val.tagged {
+                text_job.tag = Some(TextTag::Code);
+            } else {
+                text_job.tag = None;
+            }
             smallvec::smallvec![TextSection::Paragraph(text_job)]
         } else {
             val.format_djot()
@@ -54,6 +61,11 @@ impl TextJobParams<'_> {
     fn new_paragraph(&self) -> TextParagraph {
         TextParagraph {
             font_size: self.default_font_size,
+            tag: if self.tagged {
+                Some(TextTag::Paragraph)
+            } else {
+                None
+            },
             ..Default::default()
         }
     }

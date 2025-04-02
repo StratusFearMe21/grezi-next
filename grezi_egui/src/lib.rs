@@ -17,6 +17,8 @@ use object::{ResolvedObjInner, ResolvedObject};
 use smallvec::SmallVec;
 use text::{resolve_text_job, selection_rects};
 
+pub use text::ResolvedTextTag;
+
 mod object;
 mod text;
 
@@ -379,6 +381,7 @@ impl GrzResolvedSlide {
         time: f64,
         easing_function: &E,
         buffers: &mut Vec<BufferWithTextArea>,
+        mut buffer_tags: Option<&mut Vec<ResolvedTextTag>>,
     ) {
         let bg_eased_time = if self.max_time > 0.0 {
             keyframe::ease_with_scaled_time::<_, _, E>(
@@ -395,7 +398,15 @@ impl GrzResolvedSlide {
         ui.painter().rect_filled(size, CornerRadius::default(), bg);
         let (size, scale_factor) = get_size_and_factor(size);
         for object in self.objects.values() {
-            object.draw(ui, size, scale_factor, time, easing_function, buffers);
+            object.draw(
+                ui,
+                size,
+                scale_factor,
+                time,
+                easing_function,
+                buffers,
+                &mut buffer_tags,
+            );
         }
     }
 }

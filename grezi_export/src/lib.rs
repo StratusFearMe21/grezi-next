@@ -18,7 +18,7 @@ use egui_glyphon::{
     BufferWithTextArea,
 };
 use eyre::{bail, Context, ContextCompat, OptionExt};
-use grezi_egui::GrzResolvedSlide;
+use grezi_egui::{GrzResolvedSlide, ResolvedTextTag};
 use grezi_font_serde::{FontRef, IndexSliceSerializer};
 use grezi_parser::{parse::slideshow::actions::HIGHLIGHT_COLOR_DEFAULT, GrzRoot};
 use image::ImageFormat;
@@ -159,6 +159,7 @@ impl<'a> GrzExporter<'a> {
                 resolved_slide.fonts_used(),
                 &self.ft,
             );
+            let mut tags = Vec::new();
             let output = egui_ctx.run(input.clone(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     resolved_slide.draw(
@@ -167,6 +168,7 @@ impl<'a> GrzExporter<'a> {
                         f64::MAX,
                         &EaseOutCubic,
                         &mut text_buffers,
+                        Some(&mut tags),
                     )
                 });
             });
@@ -179,6 +181,7 @@ impl<'a> GrzExporter<'a> {
                 Arc::clone(&self.font_system),
                 &mut self.used_faces,
                 text_buffers,
+                tags,
             );
 
             cairo_ctx.show_page().unwrap();
@@ -252,6 +255,7 @@ pub fn cairo_draw(
     font_system: Arc<Mutex<FontSystem>>,
     fonts: &mut HashMap<ID, (freetype::Face, cairo::FontFace)>,
     buffers: Vec<BufferWithTextArea>,
+    tags: Vec<ResolvedTextTag>,
 ) {
     for (id, tex) in output.textures_delta.set {
         let surface = match tex.image {
@@ -295,6 +299,8 @@ pub fn cairo_draw(
         }
     }
 
+    ctx.tag_begin("Document", "");
+
     for shape in output.shapes {
         ctx.reset_clip();
 
@@ -318,7 +324,9 @@ pub fn cairo_draw(
     }
 
     ctx.reset_clip();
-    cairo_draw_text(ctx, ft, Arc::clone(&font_system), fonts, buffers);
+    cairo_draw_text(ctx, ft, Arc::clone(&font_system), fonts, buffers, tags);
+
+    ctx.tag_end("Document");
 
     for id in output.textures_delta.free {
         textures.remove(&id);
@@ -535,6 +543,91 @@ fn cairo_draw_text(
     font_system: Arc<Mutex<FontSystem>>,
     fonts: &mut HashMap<ID, (freetype::Face, cairo::FontFace)>,
     buffers: Vec<BufferWithTextArea>,
+    tags: Vec<ResolvedTextTag>,
+) {
+    for tag in tags {
+        match tag {
+            ResolvedTextTag::SectStart => {
+                ctx.tag_begin("Sect", "");
+                continue;
+            }
+            ResolvedTextTag::SectEnd => {
+                ctx.tag_end("Sect");
+                continue;
+            }
+            ResolvedTextTag::ListStart => {
+                ctx.tag_begin("L", "");
+                continue;
+            }
+            ResolvedTextTag::ListEnd => {
+                ctx.tag_end("L");
+                continue;
+            }
+            ResolvedTextTag::ListBodyStart => {
+                ctx.tag_begin("LBody", "");
+                continue;
+            }
+            ResolvedTextTag::ListBodyEnd => {
+                ctx.tag_end("LBody");
+                continue;
+            }
+            ResolvedTextTag::ListItemStart => {
+                ctx.tag_begin("LI", "");
+                continue;
+            }
+            ResolvedTextTag::ListItemEnd => {
+                ctx.tag_end("LI");
+                continue;
+            }
+            ResolvedTextTag::BlockquoteStart => {
+                ctx.tag_begin("BlockQuote", "");
+                continue;
+            }
+            ResolvedTextTag::BlockquoteEnd => {
+                ctx.tag_end("BlockQuote");
+                continue;
+            }
+            ResolvedTextTag::Paragraph(p) => {
+                ctx.tag_begin("P", "");
+                let buffer = buffers.get(p).unwrap();
+                cairo_draw_buffer(ctx, buffer, ft, Arc::clone(&font_system), fonts);
+                ctx.tag_end("P");
+            }
+            ResolvedTextTag::Code(p) => {
+                ctx.tag_begin("Code", "");
+                let buffer = buffers.get(p).unwrap();
+                cairo_draw_buffer(ctx, buffer, ft, Arc::clone(&font_system), fonts);
+                ctx.tag_end("Code");
+            }
+            ResolvedTextTag::Label(lbl) => {
+                ctx.tag_begin("Lbl", "");
+                let buffer = buffers.get(lbl).unwrap();
+                cairo_draw_buffer(ctx, buffer, ft, Arc::clone(&font_system), fonts);
+                ctx.tag_end("Lbl");
+            }
+            ResolvedTextTag::Heading(level, h) => {
+                let header_tag = format!("H{}", level);
+                ctx.tag_begin(&header_tag, "");
+                let buffer = buffers.get(h).unwrap();
+                cairo_draw_buffer(ctx, buffer, ft, Arc::clone(&font_system), fonts);
+                ctx.tag_end(&header_tag);
+            }
+            ResolvedTextTag::Untagged(p) => {
+                ctx.tag_begin("Figure", "");
+                let buffer = buffers.get(p).unwrap();
+                cairo_draw_buffer(ctx, buffer, ft, Arc::clone(&font_system), fonts);
+                ctx.tag_end("Figure");
+            }
+        }
+    }
+}
+
+pub fn cairo_draw_buffer(
+    ctx: &cairo::Context,
+    buffer: &BufferWithTextArea,
+    ft: &freetype::Library,
+    font_system: Arc<Mutex<FontSystem>>,
+    fonts: &mut HashMap<ID, (freetype::Face, cairo::FontFace)>,
 ) {
     struct RunIter<'a> {
         run: Rc<LayoutRun<'a>>,
@@ -564,92 +657,77 @@ fn cairo_draw_text(
         }
     }
 
-    for buffer in buffers.iter() {
-        let buffer_read = buffer.buffer.read();
-        ctx.set_font_size((buffer_read.metrics().font_size * buffer.scale) as f64);
-        let mut glyphs = RunIter::new(buffer_read.layout_runs()).peekable();
+    let buffer_read = buffer.buffer.read();
+    ctx.set_font_size((buffer_read.metrics().font_size * buffer.scale) as f64);
+    let mut glyphs = RunIter::new(buffer_read.layout_runs()).peekable();
 
-        while glyphs.peek().is_some() {
-            let color;
-            let orig_color;
-            let font_id;
-            let rtl;
-            if let Some(glyph) = glyphs.peek() {
-                orig_color = glyph.1.color_opt.unwrap_or(buffer.default_color);
-                color = egui_glyphon::cosmic_text::Color::rgba(
-                    orig_color.r(),
-                    orig_color.g(),
-                    orig_color.b(),
-                    (buffer.opacity * orig_color.a() as f32) as u8,
-                );
-                font_id = glyph.1.font_id;
-                rtl = glyph.0.rtl;
-            } else {
-                glyphs.next();
-                continue;
-            }
-            let color_rgba = color.as_rgba();
-            let color_rgba = Color32::from_rgba_unmultiplied(
-                color_rgba[0],
-                color_rgba[1],
-                color_rgba[2],
-                color_rgba[3],
-            )
-            .to_normalized_gamma_f32();
-            let font = fonts.entry(font_id).or_insert_with(|| {
-                let mut font_system = font_system.lock();
-                let data = unsafe { font_system.db_mut().make_shared_face_data(font_id) }.unwrap();
-                let face = ft
-                    .new_memory_face(Rc::new(data.0.deref().as_ref().to_owned()), data.1 as isize)
-                    .unwrap();
-                let cairo_face = FontFace::create_from_ft(&face).unwrap();
-                (face, cairo_face)
-            });
-
-            ctx.set_source_rgba(
-                color_rgba[0] as f64,
-                color_rgba[1] as f64,
-                color_rgba[2] as f64,
-                color_rgba[3] as f64,
+    while glyphs.peek().is_some() {
+        let color;
+        let orig_color;
+        let font_id;
+        if let Some(glyph) = glyphs.peek() {
+            orig_color = glyph.1.color_opt.unwrap_or(buffer.default_color);
+            color = egui_glyphon::cosmic_text::Color::rgba(
+                orig_color.r(),
+                orig_color.g(),
+                orig_color.b(),
+                (buffer.opacity * orig_color.a() as f32) as u8,
             );
-            ctx.set_font_face(&font.1);
+            font_id = glyph.1.font_id;
+        } else {
+            glyphs.next();
+            continue;
+        }
+        let color_rgba = color.as_rgba();
+        let color_rgba = Color32::from_rgba_unmultiplied(
+            color_rgba[0],
+            color_rgba[1],
+            color_rgba[2],
+            color_rgba[3],
+        )
+        .to_normalized_gamma_f32();
+        let font = fonts.entry(font_id).or_insert_with(|| {
+            let mut font_system = font_system.lock();
+            let data = unsafe { font_system.db_mut().make_shared_face_data(font_id) }.unwrap();
+            let face = ft
+                .new_memory_face(Rc::new(data.0.deref().as_ref().to_owned()), data.1 as isize)
+                .unwrap();
+            let cairo_face = FontFace::create_from_ft(&face).unwrap();
+            (face, cairo_face)
+        });
 
-            let mut new_glyphs = Vec::new();
-            let mut text = String::new();
-            let mut clusters = Vec::new();
-            while let Some(g) = glyphs.peek() {
-                if g.1.color_opt.unwrap_or(buffer.default_color) != orig_color
-                    || g.1.font_id != font_id
-                    || g.0.rtl != rtl
-                {
-                    break;
-                }
+        ctx.set_source_rgba(
+            color_rgba[0] as f64,
+            color_rgba[1] as f64,
+            color_rgba[2] as f64,
+            color_rgba[3] as f64,
+        );
+        ctx.set_font_face(&font.1);
 
-                let t = &g.0.text[g.1.start..g.1.end];
-                text.push_str(&t);
-                clusters.push(TextCluster::new(t.len() as i32, 1));
-                let glyph =
-                    g.1.physical((buffer.rect.left(), buffer.rect.top()), buffer.scale);
-                let glyph = cairo::Glyph::new(
-                    g.1.glyph_id as _,
-                    glyph.x as f64,
-                    ((g.0.line_y * buffer.scale).round() as i32 + glyph.y) as f64,
-                );
-                new_glyphs.push(glyph);
-                glyphs.next();
+        let mut new_glyphs = Vec::new();
+        let mut text = String::new();
+        let mut clusters = Vec::new();
+        while let Some(g) = glyphs.peek() {
+            if g.1.color_opt.unwrap_or(buffer.default_color) != orig_color || g.1.font_id != font_id
+            {
+                break;
             }
 
-            ctx.show_text_glyphs(
-                &text,
-                &new_glyphs,
-                &clusters,
-                if rtl {
-                    TextClusterFlags::Backward
-                } else {
-                    TextClusterFlags::None
-                },
-            )
-            .unwrap();
+            let t = &g.0.text[g.1.start..g.1.end];
+            text.push_str(&t);
+            clusters.push(TextCluster::new(t.len() as i32, 1));
+            let glyph =
+                g.1.physical((buffer.rect.left(), buffer.rect.top()), buffer.scale);
+            let glyph = cairo::Glyph::new(
+                g.1.glyph_id as _,
+                glyph.x as f64,
+                ((g.0.line_y * buffer.scale).round() as i32 + glyph.y) as f64,
+            );
+            new_glyphs.push(glyph);
+            glyphs.next();
         }
+
+        ctx.show_text_glyphs(&text, &new_glyphs, &clusters, TextClusterFlags::None)
+            .unwrap();
     }
 }

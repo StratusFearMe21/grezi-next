@@ -6,7 +6,7 @@ use grezi_parser::{actions::SlideParams, slide::ObjState};
 use keyframe::EasingFunction;
 use smallvec::SmallVec;
 
-use crate::text::ResolvedBuffer;
+use crate::text::{ResolvedBuffer, ResolvedTextTag};
 
 #[derive(Clone, Copy)]
 pub struct ResolvedObjPositions {
@@ -65,6 +65,7 @@ impl ResolvedObject {
 pub enum ResolvedObjInner {
     Text {
         job: SmallVec<[ResolvedBuffer; 1]>,
+        tags: SmallVec<[ResolvedTextTag; 3]>,
         fonts: SmallVec<[ID; 8]>,
     },
     Image {
@@ -96,6 +97,7 @@ impl ResolvedObject {
         time: f64,
         easing_function: &E,
         buffers: &mut Vec<egui_glyphon::BufferWithTextArea>,
+        buffer_tags: &mut Option<&mut Vec<ResolvedTextTag>>,
     ) {
         let eased_time = if self.params.max_time > 0.0 {
             keyframe::ease_with_scaled_time::<_, _, E>(
@@ -125,7 +127,8 @@ impl ResolvedObject {
         }
 
         match &self.inner {
-            ResolvedObjInner::Text { job, .. } => {
+            ResolvedObjInner::Text { job, tags, .. } => {
+                let buffer_tag_offset = buffers.len();
                 for buffer in job {
                     let buffer_rect =
                         (buffer.buffer_rect * scale_factor).translate(obj_pos.min.to_vec2());
@@ -150,6 +153,9 @@ impl ResolvedObject {
                     //     egui::StrokeKind::Inside,
                     // );
                     buffers.push(buffer);
+                }
+                if let Some(ref mut buffer_tags) = buffer_tags {
+                    buffer_tags.extend(tags.iter().map(|tag| tag.offset(buffer_tag_offset)));
                 }
                 // ui.painter().rect_stroke(
                 //     obj_pos,

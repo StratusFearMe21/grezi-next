@@ -7,6 +7,15 @@ use smart_default::SmartDefault;
 
 pub type TextJob = Vec<TextSection>;
 
+#[derive(Clone, Copy, Serialize, Deserialize, Default, Debug)]
+pub enum TextTag {
+    #[default]
+    Paragraph,
+    Heading(u16),
+    Label,
+    Code,
+}
+
 #[derive(SmartDefault, Serialize, Deserialize, Debug)]
 pub enum TextSection {
     #[default]
@@ -19,6 +28,7 @@ pub enum TextSection {
 pub struct TextParagraph {
     pub rich_text: SmallVec<[(smartstring::alias::String, Attrs); 1]>,
     pub font_size: f32,
+    pub tag: Option<TextTag>,
 }
 
 #[derive(SmartDefault, Deserialize, Serialize, Debug, Clone)]

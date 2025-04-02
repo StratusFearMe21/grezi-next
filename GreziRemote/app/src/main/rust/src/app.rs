@@ -334,7 +334,14 @@ impl eframe::App for App {
                         speaker_rect.min.y = second_slide_rect.max.y;
                     }
                     if let Some(resolved) = resolved.load().deref() {
-                        resolved.draw(first_slide_rect, ui, time, &EaseOutCubic, &mut buffers);
+                        resolved.draw(
+                            first_slide_rect,
+                            ui,
+                            time,
+                            &EaseOutCubic,
+                            &mut buffers,
+                            None,
+                        );
                         if resolved.max_time > time {
                             ctx.request_repaint();
                         } else if let Some(next) = resolved.params.next {
@@ -370,7 +377,14 @@ impl eframe::App for App {
                     }
 
                     if let Some(resolved) = next_resolved.load().deref() {
-                        resolved.draw(second_slide_rect, ui, time, &EaseOutCubic, &mut buffers);
+                        resolved.draw(
+                            second_slide_rect,
+                            ui,
+                            time,
+                            &EaseOutCubic,
+                            &mut buffers,
+                            None,
+                        );
                         if resolved.max_time > time {
                             ctx.request_repaint();
                         }

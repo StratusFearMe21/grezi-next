@@ -8,7 +8,7 @@ use egui_glyphon::{
     },
     measure_buffer,
 };
-use grezi_parser::text::{TextParagraph, TextSection};
+use grezi_parser::text::{TextParagraph, TextSection, TextTag};
 use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -17,6 +17,39 @@ use crate::object::ResolvedObjInner;
 const INDENT_AMOUNT: f32 = 75.0;
 const MARGIN_MULTIPLIER: f32 = 0.5;
 const LINE_HEIGHT_MULTIPLIER: f32 = 1.5;
+
+#[derive(Clone, Copy)]
+pub enum ResolvedTextTag {
+    SectStart,
+    SectEnd,
+    ListStart,
+    ListEnd,
+    ListItemStart,
+    ListItemEnd,
+    ListBodyStart,
+    ListBodyEnd,
+    BlockquoteStart,
+    BlockquoteEnd,
+    Paragraph(usize),
+    Untagged(usize),
+    Code(usize),
+    Heading(u16, usize),
+    Label(usize),
+}
+
+impl ResolvedTextTag {
+    pub fn offset(mut self, amount: usize) -> Self {
+        match &mut self {
+            Self::Paragraph(buffer_index)
+            | Self::Untagged(buffer_index)
+            | Self::Heading(_, buffer_index)
+            | Self::Label(buffer_index) => *buffer_index += amount,
+            _ => {}
+        }
+
+        self
+    }
+}
 
 pub struct ResolvedBuffer {
     pub buffer: Arc<RwLock<Buffer>>,
@@ -34,6 +67,7 @@ pub fn resolve_text_job(
     max_width: f32,
 ) -> (Vec2, ResolvedObjInner) {
     let mut job: SmallVec<[ResolvedBuffer; 1]> = SmallVec::new();
+    let mut tags: SmallVec<[ResolvedTextTag; 3]> = SmallVec::new();
     // First pass:
     //
     // Translates text on X axis and creates
@@ -41,6 +75,7 @@ pub fn resolve_text_job(
     let size_x = resolve_text_job_first_pass(
         sections,
         &mut job,
+        &mut tags,
         font_system,
         line_height,
         alignment,
@@ -100,13 +135,14 @@ pub fn resolve_text_job(
 
     (
         Vec2::new(size_x, translation.y),
-        ResolvedObjInner::Text { job, fonts },
+        ResolvedObjInner::Text { job, tags, fonts },
     )
 }
 
 pub fn resolve_text_job_first_pass(
     sections: &[TextSection],
     job: &mut SmallVec<[ResolvedBuffer; 1]>,
+    tags: &mut SmallVec<[ResolvedTextTag; 3]>,
     font_system: &mut FontSystem,
     line_height: Option<f32>,
     alignment: Align,
@@ -114,6 +150,9 @@ pub fn resolve_text_job_first_pass(
     max_width: f32,
     mut size_x: f32,
 ) -> f32 {
+    if translation.x == 0.0 {
+        tags.push(ResolvedTextTag::SectStart);
+    }
     for section in sections {
         match section {
             TextSection::Paragraph(p) => {
@@ -126,6 +165,15 @@ pub fn resolve_text_job_first_pass(
                 );
                 size_x = size_x.max(buffer_size.width() + translation.x);
 
+                match p.tag {
+                    Some(TextTag::Paragraph) => tags.push(ResolvedTextTag::Paragraph(job.len())),
+                    Some(TextTag::Heading(hl)) => {
+                        tags.push(ResolvedTextTag::Heading(hl, job.len()))
+                    }
+                    Some(TextTag::Label) => tags.push(ResolvedTextTag::Label(job.len())),
+                    Some(TextTag::Code) => tags.push(ResolvedTextTag::Code(job.len())),
+                    None => tags.push(ResolvedTextTag::Untagged(job.len())),
+                }
                 job.push(ResolvedBuffer {
                     buffer: Arc::new(RwLock::new(paragraph)),
                     buffer_rect: buffer_size.translate(translation),
@@ -133,9 +181,11 @@ pub fn resolve_text_job_first_pass(
                 });
             }
             TextSection::Blockquote(bq) => {
+                tags.push(ResolvedTextTag::BlockquoteStart);
                 size_x = size_x.max(resolve_text_job_first_pass(
                     bq,
                     job,
+                    tags,
                     font_system,
                     line_height,
                     alignment,
@@ -143,9 +193,12 @@ pub fn resolve_text_job_first_pass(
                     max_width - INDENT_AMOUNT,
                     size_x,
                 ));
+                tags.push(ResolvedTextTag::BlockquoteEnd);
             }
             TextSection::List(list) => {
+                tags.push(ResolvedTextTag::ListStart);
                 for (list_number, list_item) in list {
+                    tags.push(ResolvedTextTag::ListItemStart);
                     let (paragraph, buffer_size) = resolve_text_paragraph(
                         list_number,
                         line_height,
@@ -155,15 +208,22 @@ pub fn resolve_text_job_first_pass(
                     );
                     size_x = size_x.max(buffer_size.width());
 
+                    match list_number.tag {
+                        Some(TextTag::Label) => tags.push(ResolvedTextTag::Label(job.len())),
+                        Some(t) => tracing::warn!("Wacky tag `{:?}` on list label", t),
+                        None => tags.push(ResolvedTextTag::Untagged(job.len())),
+                    }
                     job.push(ResolvedBuffer {
                         buffer: Arc::new(RwLock::new(paragraph)),
                         buffer_rect: buffer_size.translate(translation),
                         marker: true,
                     });
 
+                    tags.push(ResolvedTextTag::ListBodyStart);
                     size_x = size_x.max(resolve_text_job_first_pass(
                         list_item,
                         job,
+                        tags,
                         font_system,
                         line_height,
                         alignment,
@@ -171,9 +231,15 @@ pub fn resolve_text_job_first_pass(
                         max_width - INDENT_AMOUNT,
                         size_x,
                     ));
+                    tags.push(ResolvedTextTag::ListBodyEnd);
+                    tags.push(ResolvedTextTag::ListItemEnd);
                 }
+                tags.push(ResolvedTextTag::ListEnd);
             }
         }
+    }
+    if translation.x == 0.0 {
+        tags.push(ResolvedTextTag::SectEnd);
     }
     size_x
 }

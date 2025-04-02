@@ -131,7 +131,7 @@ impl eframe::App for App {
                     ui.set_clip_rect(get_size_and_factor(max_rect).0);
                 }
                 let time = ui.input(|i| i.time - self.time);
-                resolved.draw(max_rect, ui, time, &EaseOutCubic, &mut buffers);
+                resolved.draw(max_rect, ui, time, &EaseOutCubic, &mut buffers, None);
                 if resolved.max_time > time {
                     ctx.request_repaint();
                 } else if let Some(next) = resolved.params.next {

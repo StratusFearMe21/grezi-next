@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-cairo-rs = { version = "0.20.7", features = ["freetype", "pdf", "ps", "svg"] }
+cairo-rs = { version = "0.20.7", features = ["freetype", "pdf", "ps", "svg", "v1_16"] }
 grezi_parser = { version = "0.1.0", path = "../grezi_parser", default-features = false }
 egui.workspace = true
 egui-glyphon.workspace = true

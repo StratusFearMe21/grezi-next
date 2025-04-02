@@ -2,14 +2,16 @@ use std::borrow::Cow;
 
 use ecolor::Color32;
 use jotdown::{Container, ListKind, OrderedListNumbering, OrderedListStyle, Parser};
-use nominals::{Decimal, LetterLower, LetterUpper, Nominal, RomanLower, RomanUpper};
+use nominals::{
+    Decimal, DigitCollection, LetterLower, LetterUpper, Nominal, RomanLower, RomanUpper,
+};
 use smallvec::SmallVec;
 
 use crate::{
     parse::slideshow::{
         actions::HIGHLIGHT_COLOR_DEFAULT, text::syntax_highlighting::format_highlighted,
     },
-    text::{Family, Style, TextParagraph, TextSection, Weight},
+    text::{Family, Style, TextParagraph, TextSection, TextTag, Weight},
 };
 
 use super::TextJobParams;
@@ -72,6 +74,11 @@ impl TextJobParams<'_> {
                                         self.default_attrs.clone()
                                     )],
                                     font_size: self.default_font_size,
+                                    tag: if self.tagged {
+                                        Some(TextTag::Label)
+                                    } else {
+                                        None
+                                    },
                                 },
                                 list_item.into_vec(),
                             ));
@@ -136,6 +143,9 @@ impl TextParagraph {
             | Container::RawBlock { .. } => {}
 
             Container::Heading { level, .. } => {
+                if params.tagged {
+                    self.tag = Some(TextTag::Heading(level));
+                }
                 let l = match level {
                     1 => 2.0,
                     2 => 1.5,
@@ -148,6 +158,9 @@ impl TextParagraph {
             }
             Container::CodeBlock { language } => {
                 attrs.family = Family::Monospace;
+                if params.tagged {
+                    self.tag = Some(TextTag::Code);
+                }
                 if !language.is_empty() {
                     match parser.next() {
                         Some(jotdown::Event::Str(code)) => {
@@ -331,9 +344,9 @@ impl ListNumberer {
             } => {
                 let number = start + self.at;
                 let nominal = match numbering {
-                    OrderedListNumbering::Decimal => number.to_nominal(&Decimal),
-                    OrderedListNumbering::AlphaLower => number.to_nominal(&LetterLower),
-                    OrderedListNumbering::AlphaUpper => number.to_nominal(&LetterUpper),
+                    OrderedListNumbering::Decimal => number.to_nominal(&Decimal.one_based()),
+                    OrderedListNumbering::AlphaLower => number.to_nominal(&LetterLower.one_based()),
+                    OrderedListNumbering::AlphaUpper => number.to_nominal(&LetterUpper.one_based()),
                     OrderedListNumbering::RomanLower => number.to_nominal(&RomanLower),
                     OrderedListNumbering::RomanUpper => number.to_nominal(&RomanUpper),
                 };

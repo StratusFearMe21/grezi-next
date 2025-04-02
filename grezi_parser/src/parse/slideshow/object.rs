@@ -237,6 +237,19 @@ impl ObjInner {
                                 ),
                             }
                         }
+                        x if x == "tagged" => {
+                            let tagged_str: Cow<'_, str> = param.1.into();
+                            match tagged_str.parse() {
+                                Ok(c) => text_job_params.tagged = c,
+                                Err(_) => errors.append_error(
+                                    ParseError::Syntax(
+                                        obj_params.char_range(),
+                                        "Not a valid boolean",
+                                    ),
+                                    obj_params.error_info(),
+                                ),
+                            }
+                        }
                         x if x == "line_height" => {
                             let line_height_str: Cow<'_, str> = param.1.into();
                             match line_height_str.parse() {
