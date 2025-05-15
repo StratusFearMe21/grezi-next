@@ -218,7 +218,10 @@ module.exports = grammar({
         field('body', $.viewbox_inner)
       ),
 
-    obj_param: $ => seq(optional(seq(field('key', $.identifier), ':')), field('value', choice($._text_ident, $.obj_other))),
+    obj_param: $ => choice(
+      field('value', $._text_ident),
+      seq(field('key', $.identifier), ':', field('value', choice($._text_ident, $.obj_other)))
+      ),
 
     obj_inner: $ => seq(
       field('ty', $.identifier),

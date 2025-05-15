@@ -102,7 +102,7 @@ pub fn format_obj_param(
 
     //     <identifier field="key" srow="40" scol="4" erow="40" ecol="9">value</identifier>
     cursor.goto_next_sibling(super::WhitespaceEdit::Delete, current_rope)?;
-    if cursor.node().id() == NodeKind::AnonSymCOLON as usize {
+    if cursor.node().kind_id() == NodeKind::AnonSymCOLON as u16 {
         //     :
         cursor.goto_next_sibling(super::WhitespaceEdit::Assert(" "), current_rope)?;
     }

@@ -1,11 +1,5 @@
 ((obj_param
   key: (identifier) @value_key
-  value: (string_literal (_) @injection.content))
-  (#set! injection.language "djot")
-  (#eq? @value_key "value"))
-
-((obj_param
-  key: (identifier) @value_key
   value: (obj_other)) @injection.content
   (#set! injection.include-children)
   (#set! injection.language "css"))
@@ -31,3 +25,7 @@
   (#eq? @value_key "code")
   (#eq? @lang_key "language")
 )
+
+((obj_param
+  value: (string_literal (_) @injection.content))
+  (#set! injection.language "djot"))
