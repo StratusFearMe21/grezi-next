@@ -1,0 +1,32 @@
+[package]
+name = "grezi_web"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+arc-swap = "1.7.1"
+color-eyre = "0.6.3"
+eframe = { workspace = true, features = ["wgpu"] }
+egui-glyphon = { workspace = true, features = ["glyphon"] }
+egui_extras = { workspace = true, features = ["gif", "image", "webp"] }
+ehttp = "0.5.0"
+getrandom = { version = "0.2.16", features = ["js"] }
+grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
+grezi_font_serde = { version = "0.1.0", path = "../grezi_font_serde" }
+grezi_parser = { version = "0.1.0", path = "../grezi_parser", default-features = false }
+image = "0.25.5"
+indexmap = { version = "2.7.1", features = ["serde"] }
+keyframe = { version = "1.1.1", default-features = false }
+log = "0.4.27"
+postcard = { version = "1.1.1", features = ["use-std"] }
+serde = "1.0.218"
+tracing = "0.1.41"
+tracing-error = "0.2.1"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+wasm-bindgen-futures = "0.4.50"
+web-sys = { version = "0.3.77", features = ["HtmlCanvasElement"] }
+wgpu = { version = "24", features = ["webgl"] }
+
+[[bin]]
+name = "grezi"
+path = "src/main.rs"

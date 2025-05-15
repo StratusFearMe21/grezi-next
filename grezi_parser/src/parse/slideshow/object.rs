@@ -1,10 +1,10 @@
-use std::{borrow::Cow, io, ops::DerefMut, str::FromStr, sync::Arc};
+use std::{borrow::Cow, io, num::NonZeroU16, ops::DerefMut, str::FromStr, sync::Arc};
 
 use css_color::Srgb;
 use ecolor::Color32;
 use ropey::RopeSlice;
 use tracing::instrument;
-use tree_sitter_grz::NodeKind;
+use tree_sitter_grz::{FieldName, NodeKind};
 use url::Url;
 
 use crate::{
@@ -66,7 +66,7 @@ impl ObjInner {
                     let param = param?;
 
                     match param.0 {
-                        x if x == "color" => {
+                        x if x.map(|x| x == "color").unwrap_or_default() => {
                             let color_str: Cow<'_, str> = param.1.into();
                             color = parse_color(
                                 color_str.as_ref(),
@@ -75,7 +75,7 @@ impl ObjInner {
                                 Arc::clone(&errors),
                             )?;
                         }
-                        x if x == "stroke" => {
+                        x if x.map(|x| x == "stroke").unwrap_or_default() => {
                             let stroke_str: Cow<'_, str> = param.1.into();
                             stroke = parse_color(
                                 stroke_str.as_ref(),
@@ -84,7 +84,7 @@ impl ObjInner {
                                 Arc::clone(&errors),
                             )?;
                         }
-                        x if x == "height" => {
+                        x if x.map(|x| x == "height").unwrap_or_default() || x.is_none() => {
                             let height_str: Cow<'_, str> = param.1.into();
                             match height_str.parse() {
                                 Ok(c) => height = c,
@@ -116,7 +116,7 @@ impl ObjInner {
                     let param = param?;
 
                     match param.0 {
-                        x if x == "tint" => {
+                        x if x.map(|x| x == "tint").unwrap_or_default() => {
                             let tint_str: Cow<'_, str> = param.1.into();
                             tint = parse_color(
                                 tint_str.as_ref(),
@@ -125,7 +125,7 @@ impl ObjInner {
                                 Arc::clone(&errors),
                             )?;
                         }
-                        x if x == "scale" => {
+                        x if x.map(|x| x == "scale").unwrap_or_default() => {
                             let scale_str: Cow<'_, str> = param.1.into();
                             match scale_str.parse() {
                                 Ok(c) => scale = Some(c),
@@ -138,7 +138,7 @@ impl ObjInner {
                                 ),
                             }
                         }
-                        x if x == "value" => {
+                        x if x.map(|x| x == "value").unwrap_or_default() || x.is_none() => {
                             let url_str: Cow<'_, str> = param.1.into();
                             match dunce::canonicalize(path_to_grz)
                                 .or(Err(()))
@@ -190,9 +190,16 @@ impl ObjInner {
                     let param = param?;
 
                     match param.0 {
-                        x if x == "value" || x == "code" => text_job_params.value = param.1,
-                        x if x == "language" => text_job_params.language = param.1,
-                        x if x == "align" => {
+                        x if x.map(|x| x == "value").unwrap_or_default()
+                            || x.map(|x| x == "code").unwrap_or_default()
+                            || x.is_none() =>
+                        {
+                            text_job_params.value = param.1
+                        }
+                        x if x.map(|x| x == "language").unwrap_or_default() => {
+                            text_job_params.language = param.1
+                        }
+                        x if x.map(|x| x == "align").unwrap_or_default() => {
                             align = match param.1.as_rope_slice() {
                                 x if x == "left" => Align::Left,
                                 x if x == "center" => Align::Center,
@@ -211,7 +218,7 @@ impl ObjInner {
                                 }
                             }
                         }
-                        x if x == "color" => {
+                        x if x.map(|x| x == "color").unwrap_or_default() => {
                             let color_str: Cow<'_, str> = param.1.into();
                             text_job_params.default_attrs.color = parse_color(
                                 color_str.as_ref(),
@@ -220,11 +227,11 @@ impl ObjInner {
                                 Arc::clone(&errors),
                             )?;
                         }
-                        x if x == "font_family" => {
+                        x if x.map(|x| x == "font_family").unwrap_or_default() => {
                             let family: Cow<'_, str> = param.1.into();
                             text_job_params.default_attrs.apply_fontstr(family.as_ref());
                         }
-                        x if x == "font_size" => {
+                        x if x.map(|x| x == "font_size").unwrap_or_default() => {
                             let font_size_str: Cow<'_, str> = param.1.into();
                             match font_size_str.parse() {
                                 Ok(c) => text_job_params.default_font_size = c,
@@ -237,7 +244,7 @@ impl ObjInner {
                                 ),
                             }
                         }
-                        x if x == "tagged" => {
+                        x if x.map(|x| x == "tagged").unwrap_or_default() => {
                             let tagged_str: Cow<'_, str> = param.1.into();
                             match tagged_str.parse() {
                                 Ok(c) => text_job_params.tagged = c,
@@ -250,7 +257,7 @@ impl ObjInner {
                                 ),
                             }
                         }
-                        x if x == "line_height" => {
+                        x if x.map(|x| x == "line_height").unwrap_or_default() => {
                             let line_height_str: Cow<'_, str> = param.1.into();
                             match line_height_str.parse() {
                                 Ok(c) => line_height = Some(c),
@@ -307,7 +314,7 @@ impl<'a, 'b> ObjParamParser<'a, 'b> {
 }
 
 impl<'a> Iterator for ObjParamParser<'a, '_> {
-    type Item = io::Result<(RopeSlice<'a>, StringLiteral<'a>)>;
+    type Item = io::Result<(Option<RopeSlice<'a>>, StringLiteral<'a>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.span = None;
@@ -342,9 +349,14 @@ impl<'a> Iterator for ObjParamParser<'a, '_> {
 #[instrument(skip_all, fields(source = %cursor.parent_source()?))]
 pub fn parse_obj_param<'a>(
     mut cursor: GrzCursorGuard<'a, '_>,
-) -> io::Result<(CharRange, (RopeSlice<'a>, StringLiteral<'a>))> {
-    let key = cursor.rope_slice()?;
-    cursor.goto_next_sibling()?;
+) -> io::Result<(CharRange, (Option<RopeSlice<'a>>, StringLiteral<'a>))> {
+    let key = if cursor.field_id() == NonZeroU16::new(FieldName::FieldKey as u16) {
+        let key = cursor.rope_slice()?;
+        cursor.goto_next_sibling()?;
+        Some(key)
+    } else {
+        None
+    };
     let char_range = cursor.char_range()?;
     let value = cursor.node_to_string_literal()?;
     Ok((char_range, (key, value)))

@@ -1,5 +1,5 @@
 [workspace]
-members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "grezi_parser", "GreziRemote", "tree-sitter-grz", "grezi_lsp", "grezi_file_owner", "grezi_mathml", "grezi_export"]
+members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "grezi_parser", "GreziRemote", "tree-sitter-grz", "grezi_lsp", "grezi_file_owner", "grezi_mathml", "grezi_export", "grezi_web"]
 resolver = "2"
 
 [workspace.package]

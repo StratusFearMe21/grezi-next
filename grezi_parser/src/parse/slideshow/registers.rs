@@ -37,7 +37,7 @@ impl Registers {
             let param = param?;
 
             match param.0 {
-                x if x == "MARGIN" => {
+                x if x.map(|x| x == "MARGIN").unwrap_or_default() => {
                     let margin_str: Cow<'_, str> = param.1.into();
                     match margin_str.parse() {
                         Ok(c) => self.margin = c,
@@ -47,7 +47,7 @@ impl Registers {
                         ),
                     }
                 }
-                x if x == "MARGIN_PER" => {
+                x if x.map(|x| x == "MARGIN_PER").unwrap_or_default() => {
                     let margin_per_str: Cow<'_, str> = param.1.into();
                     match margin_per_str.parse() {
                         Ok(c) => self.margin_per = c,
@@ -57,7 +57,7 @@ impl Registers {
                         ),
                     }
                 }
-                x if x == "BACKGROUND" => {
+                x if x.map(|x| x == "BACKGROUND").unwrap_or_default() => {
                     let bg_str: Cow<'_, str> = param.1.into();
                     let bg = parse_color_raw(
                         bg_str.as_ref(),
@@ -77,7 +77,7 @@ impl Registers {
                         alpha: bg.alpha,
                     };
                 }
-                x if x == "CREATE_EDGES" => {
+                x if x.map(|x| x == "CREATE_EDGES").unwrap_or_default() => {
                     let create_edges_str: Cow<'_, str> = param.1.into();
                     match create_edges_str.parse() {
                         Ok(c) => self.create_edges = c,
@@ -87,7 +87,7 @@ impl Registers {
                         ),
                     }
                 }
-                x if x == "FLEX" => {
+                x if x.map(|x| x == "FLEX").unwrap_or_default() => {
                     let flex_str: Cow<'_, str> = param.1.into();
                     match flex_str.parse() {
                         Ok(c) => self.flex = c,
@@ -97,8 +97,18 @@ impl Registers {
                         ),
                     }
                 }
-                x if x == "INVERT" => {
+                x if x.map(|x| x == "INVERT").unwrap_or_default() => {
                     // unimplemented
+                }
+                x if x == None => {
+                    // unimplemented
+                    errors.append_error(
+                        ParseError::NotFound(
+                            cursor.char_range()?,
+                            "Registers need a key, not just a value",
+                        ),
+                        cursor.error_info(),
+                    )
                 }
                 _ => errors.append_error(
                     ParseError::NotFound(cursor.char_range()?, "That register does not exist"),
