@@ -260,7 +260,19 @@ impl ObjInner {
                         x if x.map(|x| x == "line_height").unwrap_or_default() => {
                             let line_height_str: Cow<'_, str> = param.1.into();
                             match line_height_str.parse() {
-                                Ok(c) => line_height = Some(c),
+                                Ok(c) => {
+                                    if c <= 0.0 {
+                                        errors.append_error(
+                                            ParseError::Syntax(
+                                                obj_params.char_range(),
+                                                "Line height must be greater than 0",
+                                            ),
+                                            obj_params.error_info(),
+                                        );
+                                    } else {
+                                        line_height = Some(c)
+                                    }
+                                }
                                 Err(_) => errors.append_error(
                                     ParseError::Syntax(
                                         obj_params.char_range(),

@@ -78,7 +78,7 @@ pub fn format_viewbox(current_rope: &Rope, cursor: &mut super::FormattingCursor)
     cursor.goto_next_sibling(super::WhitespaceEdit::Assert(" "), current_rope)?;
     format_vb_ref(current_rope, cursor)?;
     cursor.goto_next_sibling(super::WhitespaceEdit::Assert(" "), current_rope)?;
-    format_viewbox_inner(current_rope, cursor)?;
+    format_viewbox_inner(current_rope, cursor, "\n    ", "\n")?;
 
     cursor.goto_parent();
     Ok(())
@@ -121,6 +121,8 @@ pub fn format_vb_ref(current_rope: &Rope, cursor: &mut super::FormattingCursor) 
 pub fn format_viewbox_inner(
     current_rope: &Rope,
     cursor: &mut super::FormattingCursor,
+    one_tab: &'static str,
+    zero_tab: &'static str,
 ) -> Result<(), ()> {
     // <viewbox_inner field="body" srow="2" scol="17" erow="5" ecol="1">
     cursor.goto_first_child(
@@ -131,7 +133,7 @@ pub fn format_viewbox_inner(
     //   <direction field="direction" srow="2" scol="17" erow="2" ecol="18">
     //     ^
     //   </direction>
-    cursor.goto_next_sibling(super::WhitespaceEdit::Assert("\n    "), current_rope)?;
+    cursor.goto_next_sibling(super::WhitespaceEdit::Assert(one_tab), current_rope)?;
     while cursor.node().kind_id() == NodeKind::SymViewboxObj as u16 {
         //   <viewbox_obj srow="3" scol="4" erow="3" ecol="7">
         cursor.goto_first_child(
@@ -144,9 +146,9 @@ pub fn format_viewbox_inner(
         cursor.goto_parent();
         //   ,
         cursor.goto_next_sibling(super::WhitespaceEdit::Trailing(","), current_rope)?;
-        cursor.goto_next_sibling(super::WhitespaceEdit::Assert("\n    "), current_rope)?;
+        cursor.goto_next_sibling(super::WhitespaceEdit::Assert(one_tab), current_rope)?;
     }
-    cursor.revisit(super::WhitespaceEdit::Assert("\n"), current_rope)?;
+    cursor.revisit(super::WhitespaceEdit::Assert(zero_tab), current_rope)?;
 
     cursor.goto_parent();
     Ok(())

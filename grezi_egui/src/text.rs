@@ -42,6 +42,7 @@ impl ResolvedTextTag {
         match &mut self {
             Self::Paragraph(buffer_index)
             | Self::Untagged(buffer_index)
+            | Self::Code(buffer_index)
             | Self::Heading(_, buffer_index)
             | Self::Label(buffer_index) => *buffer_index += amount,
             _ => {}

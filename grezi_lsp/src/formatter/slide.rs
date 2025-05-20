@@ -203,7 +203,7 @@ pub fn format_slide_vb(
             cursor.goto_next_sibling(super::WhitespaceEdit::Assert(" "), current_rope)?;
             format_vb_ref(current_rope, cursor)?;
             cursor.goto_next_sibling(super::WhitespaceEdit::Assert(" "), current_rope)?;
-            format_viewbox_inner(current_rope, cursor)?;
+            format_viewbox_inner(current_rope, cursor, "\n        ", "\n    ")?;
             cursor.goto_next_sibling(super::WhitespaceEdit::Delete, current_rope)?;
             //   <index_parser field="viewbox_index" srow="2" scol="13" erow="2" ecol="16">
             cursor.goto_first_child(
