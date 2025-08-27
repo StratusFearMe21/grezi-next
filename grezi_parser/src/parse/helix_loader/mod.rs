@@ -8,7 +8,7 @@
 pub mod grammar;
 pub mod path;
 
-use etcetera::base_strategy::{choose_base_strategy, BaseStrategy};
+use etcetera::base_strategy::{BaseStrategy, choose_base_strategy};
 use std::{
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -82,11 +82,7 @@ pub fn runtime_dirs() -> &'static [PathBuf] {
 fn find_runtime_file(rel_path: &Path) -> Option<PathBuf> {
     RUNTIME_DIRS.iter().find_map(|rt_dir| {
         let path = rt_dir.join(rel_path);
-        if path.exists() {
-            Some(path)
-        } else {
-            None
-        }
+        if path.exists() { Some(path) } else { None }
     })
 }
 

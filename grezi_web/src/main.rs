@@ -3,7 +3,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwapOption;
 use color_eyre::{config::Theme, eyre};
 use eframe::{egui::mutex::Mutex, wasm_bindgen::JsCast};
-use egui_glyphon::{glyphon::FontSystem, GlyphonRenderer};
+use egui_glyphon::{GlyphonRenderer, glyphon::FontSystem};
 use grezi_font_serde::FontSystemDeserializer;
 use grezi_parser::GrzRoot;
 // use tracing_error::ErrorLayer;
@@ -72,8 +72,8 @@ fn main() -> eyre::Result<()> {
                             let result: (FontSystemDeserializer, GrzRoot) =
                                 postcard::from_bytes(&res.bytes).unwrap();
                             let mut font_system = fetch_shared_data.font_system.lock();
-                            *font_system = result.0 .0;
-                            fetch_shared_data.egui_ctx.set_fonts(result.0 .1);
+                            *font_system = result.0.0;
+                            fetch_shared_data.egui_ctx.set_fonts(result.0.1);
                             fetch_shared_data.slideshow.store(Some(Arc::new(result.1)));
 
                             font_system.db_mut().set_sans_serif_family("Ubuntu");

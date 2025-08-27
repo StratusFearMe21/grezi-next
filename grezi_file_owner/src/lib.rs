@@ -1,10 +1,10 @@
 use std::{
     ops::DerefMut,
-    sync::{mpsc::Sender, Arc},
+    sync::{Arc, mpsc::Sender},
 };
 
 use arc_swap::ArcSwapOption;
-use egui::{self, mutex::Mutex, Modifiers};
+use egui::{self, Modifiers, mutex::Mutex};
 use egui_glyphon::cosmic_text::FontSystem;
 use grezi_egui::GrzResolvedSlide;
 use grezi_parser::parse::GrzFile;

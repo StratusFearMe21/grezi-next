@@ -1,10 +1,10 @@
 use std::{ops::Deref, sync::Arc};
 
-use egui::{mutex::RwLock, Align2, Pos2, Rect, Vec2};
+use egui::{Align2, Pos2, Rect, Vec2, mutex::RwLock};
 use egui_glyphon::{
     cosmic_text::{
-        fontdb::ID, Align, Attrs, Buffer, CacheKeyFlags, Color, Cursor, Family, FontSystem,
-        Metrics, Stretch, Style, Weight,
+        Align, Attrs, Buffer, CacheKeyFlags, Color, Cursor, Family, FontSystem, Metrics, Stretch,
+        Style, Weight, fontdb::ID,
     },
     measure_buffer,
 };

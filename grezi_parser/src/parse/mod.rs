@@ -18,7 +18,7 @@ use tracing::instrument;
 use tree_sitter::{InputEdit, Point, Tree};
 use tree_sitter_grz::NodeKind;
 
-use crate::{slide::ObjState, GrzRoot};
+use crate::{GrzRoot, slide::ObjState};
 
 pub mod cursor;
 pub mod error;

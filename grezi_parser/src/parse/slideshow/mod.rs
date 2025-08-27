@@ -13,9 +13,9 @@ use tracing::instrument;
 use tree_sitter_grz::NodeKind;
 use viewbox::Viewbox;
 
-use crate::{object::Object, parse::error::ErrsWithSource, slide::Slide, GrzRoot};
+use crate::{GrzRoot, object::Object, parse::error::ErrsWithSource, slide::Slide};
 
-use super::{cursor::GrzCursorGuard, error::ParseError, IncrementalState};
+use super::{IncrementalState, cursor::GrzCursorGuard, error::ParseError};
 
 pub mod actions;
 pub mod object;

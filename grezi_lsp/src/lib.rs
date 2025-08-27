@@ -4,30 +4,22 @@ use crossbeam_channel::Receiver;
 use egui::Modifiers;
 use grezi_egui::GrzResolvedSlide;
 use grezi_file_owner::{AppHandle, FileOwnerMessage};
-use grezi_parser::parse::{error::ErrsWithSource, GrzFile};
+use grezi_parser::parse::{GrzFile, error::ErrsWithSource};
 use helix_core::syntax::generate_edits;
 use helix_lsp::{Position, Url};
 use helix_lsp_types::{
-    self as lsp_types,
+    self as lsp_types, DeclarationCapability, DocumentSymbolParams, DocumentSymbolResponse,
+    FoldingRangeParams, GotoDefinitionParams, Location, ReferenceParams, RenameParams,
+    SemanticTokenModifier, SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend,
+    SemanticTokensOptions, SemanticTokensParams, SemanticTokensServerCapabilities,
+    TextDocumentPositionParams, WorkspaceSymbolParams, WorkspaceSymbolResponse,
     request::{
         DocumentSymbolRequest, FoldingRangeRequest, GotoDeclaration, References,
         SemanticTokensFullRequest, WorkspaceSymbolRequest,
     },
-    DeclarationCapability, DocumentSymbolParams, DocumentSymbolResponse, FoldingRangeParams,
-    GotoDefinitionParams, Location, ReferenceParams, RenameParams, SemanticTokenModifier,
-    SemanticTokenType, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensParams, SemanticTokensServerCapabilities, TextDocumentPositionParams,
-    WorkspaceSymbolParams, WorkspaceSymbolResponse,
 };
 use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    notification::DidSaveTextDocument,
-    notification::{
-        DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
-        Notification, PublishDiagnostics,
-    },
-    request::{ApplyWorkspaceEdit, Formatting, PrepareRenameRequest, Rename},
-    request::{RegisterCapability, Request},
     ApplyWorkspaceEditParams, DidChangeWatchedFilesRegistrationOptions, DocumentChanges,
     DocumentFormattingParams, FileSystemWatcher, GlobPattern, OneOf,
     OptionalVersionedTextDocumentIdentifier, PositionEncodingKind, PublishDiagnosticsParams,
@@ -35,11 +27,18 @@ use lsp_types::{
     TextDocumentContentChangeEvent, TextDocumentEdit, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, VersionedTextDocumentIdentifier,
     WorkDoneProgressOptions, WorkspaceEdit,
+    notification::DidSaveTextDocument,
+    notification::{
+        DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+        Notification, PublishDiagnostics,
+    },
+    request::{ApplyWorkspaceEdit, Formatting, PrepareRenameRequest, Rename},
+    request::{RegisterCapability, Request},
 };
 use miette::Diagnostic;
 use nucleo_matcher::{
-    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
     Matcher,
+    pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 use ropey::Rope;
 use tree_sitter::{Query, QueryCursor};
@@ -333,7 +332,7 @@ impl GrzLsp {
                                 AtomKind::Fuzzy,
                             )
                             .match_list(symbols, &mut matcher);
-                            let symbols = matches.into_iter().map(|s| s.0 .0).collect::<Vec<_>>();
+                            let symbols = matches.into_iter().map(|s| s.0.0).collect::<Vec<_>>();
                             connection
                                 .sender
                                 .send(Message::Response(Response::new_ok(

@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     registers::Registers,
-    viewbox::{parse_index, Viewbox, ViewboxInner},
+    viewbox::{Viewbox, ViewboxInner, parse_index},
 };
 
 impl Slide {

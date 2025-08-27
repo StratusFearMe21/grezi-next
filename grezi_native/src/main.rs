@@ -10,19 +10,19 @@ use args::{FitParser, RangeParser};
 use clap::Parser;
 use color_eyre::{
     config::Theme,
-    eyre::{self, bail, Context},
+    eyre::{self, Context, bail},
 };
 use eframe::{
-    egui::{mutex::Mutex, FontDefinitions, Vec2},
     NativeOptions,
+    egui::{FontDefinitions, Vec2, mutex::Mutex},
 };
-use egui_glyphon::{glyphon::FontSystem, GlyphonRenderer};
+use egui_glyphon::{GlyphonRenderer, glyphon::FontSystem};
 use grezi_export::GrzExporter;
 use grezi_file_owner::{AppHandle, FileOwnerMessage};
 use grezi_font_serde::FontSystemDeserializer;
-use grezi_parser::{parse::GrzFile, GrzRoot};
+use grezi_parser::{GrzRoot, parse::GrzFile};
 use tracing_error::ErrorLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod app;
 mod args;
@@ -72,8 +72,8 @@ impl Args {
                     let result: (FontSystemDeserializer, GrzRoot) =
                         postcard::from_io((file, &mut buffer)).unwrap().0;
                     tracing::warn!(time = ?deserialize_instant.elapsed(), "Deserializing finished");
-                    font_system = result.0 .0;
-                    font_definitions = result.0 .1;
+                    font_system = result.0.0;
+                    font_definitions = result.0.1;
                     GrzFile::wrap_root(input.clone(), result.1)
                         .wrap_err("Failed to wrap slideshow root in GrzFile")?
                 } else {

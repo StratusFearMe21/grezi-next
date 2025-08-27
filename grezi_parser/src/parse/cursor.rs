@@ -12,9 +12,9 @@ use tree_sitter::{Node, Tree, TreeCursor};
 use tree_sitter_grz::NodeKind;
 
 use super::{
+    CharRange,
     error::{ErrsWithSource, ParseError},
     slideshow::text::StringLiteral,
-    CharRange,
 };
 
 trait IsNot {

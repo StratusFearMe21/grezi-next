@@ -12,7 +12,7 @@ use crate::{
     slide::BgColor,
 };
 
-use super::object::{parse_color_raw, ObjParamParser};
+use super::object::{ObjParamParser, parse_color_raw};
 
 #[derive(SmartDefault)]
 pub struct Registers {

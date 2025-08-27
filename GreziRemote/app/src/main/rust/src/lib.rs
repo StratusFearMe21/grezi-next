@@ -6,8 +6,8 @@ use color_eyre::{
     config::Theme,
     eyre::{self},
 };
-use eframe::{egui::mutex::Mutex, NativeOptions};
-use egui_glyphon::{glyphon::FontSystem, GlyphonRenderer};
+use eframe::{NativeOptions, egui::mutex::Mutex};
+use egui_glyphon::{GlyphonRenderer, glyphon::FontSystem};
 #[cfg(debug_assertions)]
 use tracing_error::ErrorLayer;
 #[cfg(debug_assertions)]

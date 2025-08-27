@@ -3,8 +3,8 @@
 use std::{borrow::Cow, hash::Hash, ops::Deref, sync::Arc};
 
 use egui::{FontData, FontDefinitions, FontTweak};
-use egui_glyphon::cosmic_text::{fontdb::Source, FontSystem};
-use serde::{de::Visitor, ser::SerializeSeq, Deserialize, Serialize};
+use egui_glyphon::cosmic_text::{FontSystem, fontdb::Source};
+use serde::{Deserialize, Serialize, de::Visitor, ser::SerializeSeq};
 
 pub struct FontRef(pub Arc<dyn AsRef<[u8]> + Send + Sync>);
 

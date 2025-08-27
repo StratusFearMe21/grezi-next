@@ -84,11 +84,7 @@ impl TypedValueParser for FitParser {
                 eframe::egui::vec2(start, start)
             };
 
-            if keep_size {
-                fit
-            } else {
-                get_size(fit)
-            }
+            if keep_size { fit } else { get_size(fit) }
         };
 
         Ok(fit)

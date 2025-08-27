@@ -12,7 +12,7 @@ use crate::{
         cursor::{GrzCursor, GrzCursorGuard, GrzCursorGuardRaw},
         error::{ErrsWithSource, ParseError},
     },
-    slide::{VbIdentifier, ViewboxRef, BASE_SIZE},
+    slide::{BASE_SIZE, VbIdentifier, ViewboxRef},
 };
 
 use super::registers::Registers;

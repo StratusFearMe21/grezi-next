@@ -3,23 +3,23 @@ use std::{
     net::TcpStream,
     ops::{Deref, DerefMut},
     sync::{
-        mpsc::{Receiver, Sender},
         Arc,
+        mpsc::{Receiver, Sender},
     },
 };
 
 use arc_swap::ArcSwapOption;
 use eframe::{
-    egui::{self, mutex::Mutex, Modifiers, Vec2},
+    egui::{self, Modifiers, Vec2, mutex::Mutex},
     egui_wgpu,
 };
-use egui_glyphon::{glyphon::FontSystem, GlyphonRendererCallback};
+use egui_glyphon::{GlyphonRendererCallback, glyphon::FontSystem};
 use grezi_egui::GrzResolvedSlide;
 use grezi_font_serde::FontSystemDeserializer;
 use grezi_parser::GrzRoot;
 use keyframe::functions::EaseOutCubic;
 use serde::{Deserialize, Serialize};
-use tungstenite::{stream::MaybeTlsStream, WebSocket};
+use tungstenite::{WebSocket, stream::MaybeTlsStream};
 
 #[derive(Serialize, Deserialize)]
 enum Message {
@@ -79,11 +79,11 @@ impl eframe::App for App {
                         let mut result: (FontSystemDeserializer, GrzRoot) =
                             postcard::from_bytes(&slideshow).unwrap();
 
-                        result.0 .0.db_mut().set_sans_serif_family("Ubuntu");
-                        result.0 .0.db_mut().set_monospace_family("Fira Code");
-                        result.0 .0.db_mut().set_serif_family("DejaVu Serif");
+                        result.0.0.db_mut().set_sans_serif_family("Ubuntu");
+                        result.0.0.db_mut().set_monospace_family("Fira Code");
+                        result.0.0.db_mut().set_serif_family("DejaVu Serif");
 
-                        *font_system.lock() = result.0 .0;
+                        *font_system.lock() = result.0.0;
                         // ctx.set_fonts(result.0 .1);
 
                         let (key_tx, key_rx) = std::sync::mpsc::channel();

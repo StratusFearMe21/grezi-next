@@ -1,10 +1,10 @@
 use axum::{
     extract::{
-        ws::{WebSocket, WebSocketUpgrade},
         State,
+        ws::{WebSocket, WebSocketUpgrade},
     },
     response::Response,
-    routing::{any, Router},
+    routing::{Router, any},
 };
 use serde::Deserialize;
 use std::{ops::Deref, sync::Arc};

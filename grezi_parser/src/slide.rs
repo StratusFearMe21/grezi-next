@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use ecolor::Color32;
-use emath::{lerp, Align2, Pos2, Rect};
+use emath::{Align2, Pos2, Rect, lerp};
 use indexmap::IndexMap;
 use oklab::Oklab;
 use serde::{Deserialize, Serialize};

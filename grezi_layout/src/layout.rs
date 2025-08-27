@@ -1,9 +1,9 @@
 use std::{collections::HashMap, iter};
 
 use cassowary::{
-    strength::REQUIRED,
     AddConstraintError, Expression, Solver, Variable,
     WeightedRelation::{EQ, GE, LE},
+    strength::REQUIRED,
 };
 use emath::{Pos2, Rect, Vec2};
 use itertools::Itertools;
@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 use self::strengths::{
     ALL_SEGMENT_GROW, FILL_GROW, GROW, LENGTH_SIZE_EQ, MAX_SIZE_EQ, MAX_SIZE_LE, MIN_SIZE_EQ,
-    MIN_SIZE_GE, PERCENTAGE_SIZE_EQ, RATIO_SIZE_EQ, SPACER_SIZE_EQ, SPACE_GROW,
+    MIN_SIZE_GE, PERCENTAGE_SIZE_EQ, RATIO_SIZE_EQ, SPACE_GROW, SPACER_SIZE_EQ,
 };
 use crate::{Constraint, Direction, Flex};
 

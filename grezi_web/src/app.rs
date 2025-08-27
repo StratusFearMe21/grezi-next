@@ -8,7 +8,7 @@ use eframe::{
     egui_wgpu,
 };
 use egui_glyphon::GlyphonRendererCallback;
-use grezi_egui::{get_size_and_factor, GrzResolvedSlide};
+use grezi_egui::{GrzResolvedSlide, get_size_and_factor};
 use keyframe::functions::EaseOutCubic;
 
 use crate::AppHandle;

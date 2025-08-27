@@ -3,7 +3,7 @@ use color_eyre::{
     eyre::{self, Context, OptionExt},
 };
 use tracing_error::ErrorLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() -> eyre::Result<()> {
     let color = supports_color::on(supports_color::Stream::Stderr)

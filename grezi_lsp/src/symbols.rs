@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use grezi_parser::parse::{cursor::GrzCursor, error::ErrsWithSource};
 use helix_core::{
+    Rope,
     syntax::RopeProvider,
     tree_sitter::{Point, Query, QueryCursor, Tree},
-    Rope,
 };
 use helix_lsp_types as lsp_types;
 use lsp_types::{

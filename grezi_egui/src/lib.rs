@@ -1,15 +1,15 @@
 use std::{ops::Deref, sync::Arc};
 
-use egui::{load::TexturePoll, Align2, Color32, CornerRadius, ImageSize, Pos2, Rect, Stroke, Vec2};
+use egui::{Align2, Color32, CornerRadius, ImageSize, Pos2, Rect, Stroke, Vec2, load::TexturePoll};
 use egui_glyphon::{
-    cosmic_text::{fontdb::ID, Affinity, Align, Cursor, FontSystem},
     BufferWithTextArea,
+    cosmic_text::{Affinity, Align, Cursor, FontSystem, fontdb::ID},
 };
 use grezi_parser::{
+    GrzRoot,
     actions::{DrawableAction, SlideParams},
     object::ObjInner,
-    slide::{BgColor, ObjState, SlideVb, VbIdentifier, ViewboxRef, BASE_SIZE},
-    GrzRoot,
+    slide::{BASE_SIZE, BgColor, ObjState, SlideVb, VbIdentifier, ViewboxRef},
 };
 use indexmap::IndexMap;
 use keyframe::EasingFunction;

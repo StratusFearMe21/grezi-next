@@ -10,9 +10,9 @@ use url::Url;
 use crate::{
     object::{ObjInner, Object},
     parse::{
+        CharRange,
         cursor::{ErrorInfo, GrzCursor, GrzCursorGuard},
         error::{ErrsWithSource, ParseError},
-        CharRange,
     },
     text::Align,
 };
