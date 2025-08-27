@@ -41,6 +41,7 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
     Matcher,
 };
+use ropey::Rope;
 use tree_sitter::{Query, QueryCursor};
 use tree_sitter_grz::NodeKind;
 
@@ -111,7 +112,7 @@ impl GrzLsp {
                     change: Some(TextDocumentSyncKind::INCREMENTAL),
                     save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
                         lsp_types::SaveOptions {
-                            include_text: Some(false),
+                            include_text: Some(true),
                         },
                     )),
                     ..Default::default()
@@ -502,30 +503,36 @@ impl GrzLsp {
                     self.grz_files.remove(&doc.text_document.uri);
                 }
                 DidSaveTextDocument::METHOD | DidChangeWatchedFiles::METHOD => {
-                    let saved_doc_uri = match not.method.as_str() {
+                    let saved_doc_uri;
+                    let text;
+
+                    match not.method.as_str() {
                         DidSaveTextDocument::METHOD => {
-                            serde_json::from_value::<lsp_types::DidSaveTextDocumentParams>(
-                                not.params,
-                            )
-                            .unwrap()
-                            .text_document
-                            .uri
+                            let params = serde_json::from_value::<
+                                lsp_types::DidSaveTextDocumentParams,
+                            >(not.params)
+                            .unwrap();
+                            saved_doc_uri = params.text_document.uri;
+                            text = params.text.map(|s| Rope::from_str(&s));
                         }
                         DidChangeWatchedFiles::METHOD => {
-                            serde_json::from_value::<lsp_types::DidChangeWatchedFilesParams>(
-                                not.params,
-                            )
-                            .unwrap()
-                            .changes
-                            .remove(0)
-                            .uri
+                            let mut params = serde_json::from_value::<
+                                lsp_types::DidChangeWatchedFilesParams,
+                            >(not.params)
+                            .unwrap();
+                            saved_doc_uri = params.changes.remove(0).uri;
+                            text = None;
                         }
                         _ => unreachable!(),
-                    };
+                    }
 
                     self.shared_data.egui_ctx.forget_all_images();
                     let doc = self.grz_files.get_mut(&saved_doc_uri).unwrap();
                     doc.clear_incremental_state();
+
+                    if let Some(text) = text {
+                        doc.source = text;
+                    }
 
                     let version = doc.version;
                     self.last_edited_uri = saved_doc_uri.clone();

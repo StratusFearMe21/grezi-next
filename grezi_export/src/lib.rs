@@ -9,18 +9,18 @@ use std::{
 };
 
 use cairo::{
-    freetype, FontFace, ImageSurface, PdfSurface, PsSurface, SurfacePattern, SvgSurface,
-    TextCluster, TextClusterFlags,
+    FontFace, ImageSurface, PdfSurface, PsSurface, SurfacePattern, SvgSurface, TextCluster,
+    TextClusterFlags, freetype,
 };
-use egui::{mutex::Mutex, Color32, Pos2, Rect, TextureId, Vec2};
+use egui::{Color32, Pos2, Rect, TextureId, Vec2, mutex::Mutex};
 use egui_glyphon::{
-    cosmic_text::{fontdb::ID, FontSystem},
     BufferWithTextArea,
+    cosmic_text::{FontSystem, fontdb::ID},
 };
-use eyre::{bail, Context, ContextCompat, OptionExt};
+use eyre::{Context, ContextCompat, OptionExt, bail};
 use grezi_egui::{GrzResolvedSlide, ResolvedTextTag};
 use grezi_font_serde::{FontRef, IndexSliceSerializer};
-use grezi_parser::{parse::slideshow::actions::HIGHLIGHT_COLOR_DEFAULT, GrzRoot};
+use grezi_parser::{GrzRoot, parse::slideshow::actions::HIGHLIGHT_COLOR_DEFAULT};
 use image::ImageFormat;
 use indexmap::IndexSet;
 use keyframe::functions::EaseOutCubic;
@@ -209,8 +209,8 @@ impl<'a> GrzExporter<'a> {
                 let stride = cairo::Format::ARgb32
                     .stride_for_width(size.x as u32)
                     .unwrap();
-                cairo_ctx = cairo::Context::new(unsafe {
-                    &ImageSurface::create_for_data_unsafe(
+                let image_surface = unsafe {
+                    ImageSurface::create_for_data_unsafe(
                         image_data.as_mut_ptr(),
                         cairo::Format::ARgb32,
                         size.x as i32,
@@ -218,8 +218,8 @@ impl<'a> GrzExporter<'a> {
                         stride,
                     )
                     .unwrap()
-                })
-                .unwrap();
+                };
+                cairo_ctx = cairo::Context::new(&image_surface).unwrap();
             }
         }
         cairo_ctx.target().finish();

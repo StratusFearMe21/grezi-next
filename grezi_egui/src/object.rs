@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use egui::{Align2, Color32, CornerRadius, Image, Rect, Stroke};
-use egui_glyphon::{cosmic_text::fontdb::ID, BufferWithTextArea};
+use egui_glyphon::{BufferWithTextArea, cosmic_text::fontdb::ID};
 use grezi_parser::{actions::SlideParams, slide::ObjState};
 use keyframe::EasingFunction;
 use smallvec::SmallVec;
@@ -154,7 +154,7 @@ impl ResolvedObject {
                     // );
                     buffers.push(buffer);
                 }
-                if let Some(ref mut buffer_tags) = buffer_tags {
+                if let Some(buffer_tags) = buffer_tags {
                     buffer_tags.extend(tags.iter().map(|tag| tag.offset(buffer_tag_offset)));
                 }
                 // ui.painter().rect_stroke(
@@ -171,7 +171,8 @@ impl ResolvedObject {
                     .tint(tint.gamma_multiply(opacity));
                 img.paint_at(ui, obj_pos);
             }
-            ResolvedObjInner::Rect { color, mut stroke } => {
+            ResolvedObjInner::Rect { color, stroke } => {
+                let mut stroke = *stroke;
                 stroke.color = stroke.color.gamma_multiply(opacity);
                 stroke.width *= scale_factor;
                 ui.painter().rect(
@@ -218,8 +219,9 @@ impl ResolvedObject {
             ResolvedObjInner::Line {
                 objects,
                 origin_positions,
-                mut stroke,
+                stroke,
             } => {
+                let mut stroke = *stroke;
                 let first_time = if objects[0].max_time > 0.0 {
                     keyframe::ease_with_scaled_time::<f32, f64, E>(
                         easing_function,

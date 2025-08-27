@@ -3,7 +3,7 @@ members = ["grezi_egui", "grezi_font_serde", "grezi_layout", "grezi_native", "gr
 resolver = "2"
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 
 [profile.dev.package."*"]
 opt-level = 3
