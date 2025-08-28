@@ -10,7 +10,7 @@ eframe = { workspace = true, features = ["wgpu"] }
 egui-glyphon = { workspace = true, features = ["glyphon"] }
 egui_extras = { workspace = true, features = ["gif", "image", "webp"] }
 ehttp = "0.5.0"
-getrandom = { version = "0.2.16", features = ["js"] }
+getrandom = { version = "0.3.3", features = ["wasm_js"] }
 grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
 grezi_font_serde = { version = "0.1.0", path = "../grezi_font_serde" }
 grezi_parser = { version = "0.1.0", path = "../grezi_parser", default-features = false }
@@ -25,7 +25,7 @@ tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 wasm-bindgen-futures = "0.4.50"
 web-sys = { version = "0.3.77", features = ["HtmlCanvasElement"] }
-wgpu = { version = "24", features = ["webgl"] }
+wgpu = { version = "26", features = ["webgl"] }
 
 [[bin]]
 name = "grezi"

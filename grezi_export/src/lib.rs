@@ -20,7 +20,7 @@ use egui_glyphon::{
 use eyre::{Context, ContextCompat, OptionExt, bail};
 use grezi_egui::{GrzResolvedSlide, ResolvedTextTag};
 use grezi_font_serde::{FontRef, IndexSliceSerializer};
-use grezi_parser::{GrzRoot, parse::slideshow::actions::HIGHLIGHT_COLOR_DEFAULT};
+use grezi_parser::{GrzRoot, HIGHLIGHT_COLOR_DEFAULT};
 use image::ImageFormat;
 use indexmap::IndexSet;
 use keyframe::functions::EaseOutCubic;

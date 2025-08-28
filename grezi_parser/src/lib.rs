@@ -1,5 +1,6 @@
 use std::{collections::HashMap, hash::BuildHasherDefault};
 
+use ecolor::Color32;
 use emath::Rect;
 use indexmap::IndexMap;
 use object::Object;
@@ -14,6 +15,8 @@ pub mod object;
 pub mod parse;
 pub mod slide;
 pub mod text;
+
+pub const HIGHLIGHT_COLOR_DEFAULT: Color32 = Color32::from_rgba_premultiplied(61, 61, 53, 12);
 
 #[derive(Default, Serialize, Deserialize, Debug)]
 pub struct GrzRoot {

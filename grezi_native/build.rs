@@ -20,7 +20,7 @@ fn main() {
     let mut map = phf_codegen::Map::new();
 
     for (key, size) in paper_sizes.values().flatten() {
-        map.entry(key.as_ref(), &format!("{:?}", size.points));
+        map.entry(key.as_ref(), format!("{:?}", size.points));
     }
 
     write!(

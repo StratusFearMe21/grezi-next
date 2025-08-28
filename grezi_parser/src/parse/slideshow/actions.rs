@@ -7,6 +7,7 @@ use tracing::instrument;
 use tree_sitter_grz::NodeKind;
 
 use crate::{
+    HIGHLIGHT_COLOR_DEFAULT,
     actions::{DrawableAction, SlideParams},
     parse::{
         cursor::{GrzCursor, GrzCursorGuard},
@@ -28,8 +29,6 @@ use super::{object::parse_color, slide::parse_alignment_from_chars};
 //         (color.a() as f32 * 0.5 + 0.5) as u8,
 //     )
 // };
-
-pub const HIGHLIGHT_COLOR_DEFAULT: Color32 = Color32::from_rgba_premultiplied(61, 61, 53, 12);
 
 macro_rules! goto_next_existing_sibling {
     ($cursor:ident, $errors:ident) => {

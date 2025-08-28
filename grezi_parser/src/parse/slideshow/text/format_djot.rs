@@ -8,9 +8,8 @@ use nominals::{
 use smallvec::SmallVec;
 
 use crate::{
-    parse::slideshow::{
-        actions::HIGHLIGHT_COLOR_DEFAULT, text::syntax_highlighting::format_highlighted,
-    },
+    HIGHLIGHT_COLOR_DEFAULT,
+    parse::slideshow::text::syntax_highlighting::format_highlighted,
     text::{Family, Style, TextParagraph, TextSection, TextTag, Weight},
 };
 
