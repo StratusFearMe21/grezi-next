@@ -8,7 +8,7 @@ use std::{
 
 use ropey::{Rope, RopeSlice};
 use tracing::instrument;
-use tree_sitter::{Node, Tree, TreeCursor};
+use tree_house_bindings::{Node, Tree, TreeCursor};
 use tree_sitter_grz::NodeKind;
 
 use super::{
@@ -301,8 +301,9 @@ impl<'a> GrzCursor<'a> {
 
     #[instrument(skip(self))]
     pub fn rope_slice(&self) -> io::Result<RopeSlice<'a>> {
+        let byte_range = self.tree_cursor.node().byte_range();
         self.rope
-            .get_byte_slice(self.tree_cursor.node().byte_range())
+            .get_byte_slice(byte_range.start as usize..byte_range.end as usize)
             .ok_or_else(|| {
                 io::Error::new(
                     ErrorKind::NotFound,

@@ -1,11 +1,10 @@
 use helix_core::{
     Rope,
     syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor, Tree},
+    tree_sitter::{Point, Query, QueryCursor, StreamingIterator, Tree},
 };
 use helix_lsp_types as lsp_types;
 use lsp_types::FoldingRange;
-use tree_sitter::StreamingIterator;
 
 use super::formatter::char_range_from_byte_range;
 

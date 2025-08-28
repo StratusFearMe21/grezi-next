@@ -22,7 +22,6 @@ libloading = { version = "0.8.6", optional = true }
 miette = { version = "7.5.0", features = ["fancy"], optional = true }
 owo-colors = { version = "4.2.0", optional = true }
 supports-color = { version = "3.0.2", optional = true }
-parking_lot = { version = "0.12.3", optional = true }
 prehash = "1.0.0"
 ropey = { version = "1.6.1", optional = true }
 smart-default = "0.7.1"
@@ -30,9 +29,9 @@ smartstring = { version = "1.0.1", features = ["serde"] }
 thiserror = { version = "2.0.11", optional = true }
 tracing = "0.1.41"
 tracing-error = "0.2.1"
-tree-sitter = { version = "0.25.2", optional = true }
+tree-house-bindings = { path = "../../tree-house/bindings", optional = true, features = ["tree-sitter-language", "ropey"] }
 tree-sitter-grz = { version = "0.1.0", path = "../tree-sitter-grz", optional = true }
-tree-sitter-highlight = { version = "0.25.2", optional = true }
+tree-house = { path = "../../tree-house/highlighter", optional = true }
 emojis = { version = "0.7.2", optional = true }
 nominals = { version = "0.3.1", optional = true }
 smallvec = { version = "1.14.0", features = ["serde"] }
@@ -41,6 +40,7 @@ url = { version = "2.5.4", features = ["serde"] }
 bitcode = "0.6.5"
 serde = { version = "1.0.218", features = ["derive", "rc"] }
 oklab = "1.1.2"
+phf = { version = "0.13.1", features = ["macros"], optional = true }
 
 [features]
 default = ["parse"]
@@ -55,13 +55,13 @@ parse = [
   "libloading",
   "miette",
   "owo-colors",
+  "phf",
   "supports-color",
-  "parking_lot",
   "ropey",
   "thiserror",
-  "tree-sitter",
+  "tree-house-bindings",
   "tree-sitter-grz",
-  "tree-sitter-highlight",
+  "tree-house",
   "emojis",
   "nominals",
   "grezi_layout"

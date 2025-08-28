@@ -1003,6 +1003,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "diff"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1668,7 +1674,7 @@ dependencies = [
  "js-sys",
  "libc",
  "r-efi",
- "wasi 0.14.2+wasi-0.2.4",
+ "wasi 0.14.3+wasi-0.2.4",
  "wasm-bindgen",
 ]
 
@@ -1903,7 +1909,7 @@ checksum = "b89c83349105e3732062a895becfc71a8f921bb71ecbbdd8ff99263e3b53a0ca"
 dependencies = [
  "bitflags 2.9.3",
  "gpu-descriptor-types",
- "hashbrown 0.15.5",
+ "hashbrown",
 ]
 
 [[package]]
@@ -2004,7 +2010,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "tracing",
- "tree-sitter",
+ "tree-house-bindings",
  "tree-sitter-grz",
 ]
 
@@ -2075,7 +2081,7 @@ dependencies = [
  "nominals",
  "oklab",
  "owo-colors",
- "parking_lot",
+ "phf 0.13.1",
  "prehash",
  "ropey",
  "serde",
@@ -2087,9 +2093,9 @@ dependencies = [
  "tracing",
  "tracing-error",
  "tracing-subscriber",
- "tree-sitter",
+ "tree-house",
+ "tree-house-bindings",
  "tree-sitter-grz",
- "tree-sitter-highlight",
  "url",
 ]
 
@@ -2143,20 +2149,12 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
-dependencies = [
- "ahash",
- "allocator-api2",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -2182,17 +2180,16 @@ checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
 name = "helix-core"
-version = "25.1.1"
-source = "git+https://github.com/StratusFearMe21/helix.git#45fe81407fd6a21cec9b4e50cba36d966cf28d97"
+version = "25.7.1"
+source = "git+https://github.com/helix-editor/helix.git?rev=a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b#a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b"
 dependencies = [
- "ahash",
  "anyhow",
  "arc-swap",
  "bitflags 2.9.3",
  "chrono",
  "encoding_rs",
+ "foldhash",
  "globset",
- "hashbrown 0.14.5",
  "helix-loader",
  "helix-parsec",
  "helix-stdx",
@@ -2209,10 +2206,9 @@ dependencies = [
  "slotmap",
  "smallvec",
  "smartstring",
- "streaming-iterator",
  "textwrap",
  "toml",
- "tree-sitter",
+ "tree-house",
  "unicode-general-category",
  "unicode-segmentation",
  "unicode-width 0.1.12",
@@ -2221,27 +2217,26 @@ dependencies = [
 
 [[package]]
 name = "helix-loader"
-version = "25.1.1"
-source = "git+https://github.com/StratusFearMe21/helix.git#45fe81407fd6a21cec9b4e50cba36d966cf28d97"
+version = "25.7.1"
+source = "git+https://github.com/helix-editor/helix.git?rev=a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b#a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b"
 dependencies = [
  "anyhow",
  "cc",
  "etcetera",
  "helix-stdx",
- "libloading",
  "log",
  "once_cell",
  "serde",
  "tempfile",
  "threadpool",
  "toml",
- "tree-sitter",
+ "tree-house",
 ]
 
 [[package]]
 name = "helix-lsp"
-version = "25.1.1"
-source = "git+https://github.com/StratusFearMe21/helix.git#45fe81407fd6a21cec9b4e50cba36d966cf28d97"
+version = "25.7.1"
+source = "git+https://github.com/helix-editor/helix.git?rev=a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b#a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2265,7 +2260,7 @@ dependencies = [
 [[package]]
 name = "helix-lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/StratusFearMe21/helix.git#45fe81407fd6a21cec9b4e50cba36d966cf28d97"
+source = "git+https://github.com/helix-editor/helix.git?rev=a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b#a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b"
 dependencies = [
  "bitflags 2.9.3",
  "serde",
@@ -2275,13 +2270,13 @@ dependencies = [
 
 [[package]]
 name = "helix-parsec"
-version = "25.1.1"
-source = "git+https://github.com/StratusFearMe21/helix.git#45fe81407fd6a21cec9b4e50cba36d966cf28d97"
+version = "25.7.1"
+source = "git+https://github.com/helix-editor/helix.git?rev=a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b#a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b"
 
 [[package]]
 name = "helix-stdx"
-version = "25.1.1"
-source = "git+https://github.com/StratusFearMe21/helix.git#45fe81407fd6a21cec9b4e50cba36d966cf28d97"
+version = "25.7.1"
+source = "git+https://github.com/helix-editor/helix.git?rev=a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b#a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b"
 dependencies = [
  "bitflags 2.9.3",
  "dunce",
@@ -2293,7 +2288,7 @@ dependencies = [
  "rustix 1.0.8",
  "unicode-segmentation",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2548,11 +2543,12 @@ dependencies = [
 
 [[package]]
 name = "imara-diff"
-version = "0.1.8"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17d34b7d42178945f775e84bc4c36dde7c1c6cdfea656d3354d009056f2bb3d2"
+checksum = "2f01d462f766df78ab820dd06f5eb700233c51f0f4c2e846520eaf4ba6aa5c5c"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown",
+ "memchr",
 ]
 
 [[package]]
@@ -2574,7 +2570,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2481980430f9f78649238835720ddccc57e52df14ffce1c6f37391d61b563e9"
 dependencies = [
  "equivalent",
- "hashbrown 0.15.5",
+ "hashbrown",
  "serde",
 ]
 
@@ -2715,6 +2711,15 @@ name = "khronos_api"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
+
+[[package]]
+name = "kstring"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "558bf9508a558512042d3095138b1f7b8fe90c5467d94f9f1da28b3731c5dbd1"
+dependencies = [
+ "static_assertions",
+]
 
 [[package]]
 name = "lazy_static"
@@ -3021,7 +3026,7 @@ dependencies = [
  "cfg_aliases",
  "codespan-reporting",
  "half",
- "hashbrown 0.15.5",
+ "hashbrown",
  "hexf-parse",
  "indexmap",
  "log",
@@ -3612,7 +3617,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
 dependencies = [
- "phf_macros",
+ "phf_macros 0.11.3",
  "phf_shared 0.11.3",
 ]
 
@@ -3631,6 +3636,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
 dependencies = [
+ "phf_macros 0.13.1",
  "phf_shared 0.13.1",
  "serde",
 ]
@@ -3677,6 +3683,19 @@ dependencies = [
  "quote",
  "syn",
  "unicase",
+]
+
+[[package]]
+name = "phf_macros"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
+dependencies = [
+ "phf_generator 0.13.1",
+ "phf_shared 0.13.1",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -3826,6 +3845,16 @@ name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
+
+[[package]]
+name = "pretty_assertions"
+version = "1.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ae130e2f271fbc2ac3a40fb1d07180839cdbbe443c7a27e1e3c13c5cac0116d"
+dependencies = [
+ "diff",
+ "yansi",
+]
 
 [[package]]
 name = "proc-macro-crate"
@@ -5191,6 +5220,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-house"
+version = "0.3.0"
+dependencies = [
+ "arc-swap",
+ "hashbrown",
+ "kstring",
+ "once_cell",
+ "pretty_assertions",
+ "regex",
+ "regex-cursor",
+ "ropey",
+ "slab",
+ "tree-house-bindings",
+ "unicode-width 0.1.12",
+]
+
+[[package]]
+name = "tree-house-bindings"
+version = "0.2.1"
+dependencies = [
+ "cc",
+ "libloading",
+ "regex-cursor",
+ "ropey",
+ "thiserror 2.0.16",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter"
 version = "0.25.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5213,18 +5271,6 @@ dependencies = [
  "num_enum",
  "tree-sitter",
  "tree-sitter-language",
-]
-
-[[package]]
-name = "tree-sitter-highlight"
-version = "0.25.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bf7a0dfbd45d88e75c89da0d13fc46f477cc20ce15617b54ebf73978eb66aec"
-dependencies = [
- "regex",
- "streaming-iterator",
- "thiserror 2.0.16",
- "tree-sitter",
 ]
 
 [[package]]
@@ -5508,11 +5554,11 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasi"
-version = "0.14.2+wasi-0.2.4"
+version = "0.14.3+wasi-0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
+checksum = "6a51ae83037bdd272a9e28ce236db8c07016dd0d50c27038b3f407533c030c95"
 dependencies = [
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -5765,7 +5811,7 @@ dependencies = [
  "bitflags 2.9.3",
  "cfg_aliases",
  "document-features",
- "hashbrown 0.15.5",
+ "hashbrown",
  "js-sys",
  "log",
  "naga",
@@ -5795,7 +5841,7 @@ dependencies = [
  "bitflags 2.9.3",
  "cfg_aliases",
  "document-features",
- "hashbrown 0.15.5",
+ "hashbrown",
  "indexmap",
  "log",
  "naga",
@@ -5872,7 +5918,7 @@ dependencies = [
  "gpu-alloc",
  "gpu-allocator",
  "gpu-descriptor",
- "hashbrown 0.15.5",
+ "hashbrown",
  "js-sys",
  "khronos-egl",
  "libc",
@@ -5914,11 +5960,10 @@ dependencies = [
 
 [[package]]
 name = "which"
-version = "7.0.3"
+version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24d643ce3fd3e5b54854602a080f34fb10ab75e0b813ee32d00ca2b44fa74762"
+checksum = "d3fabb953106c3c8eea8306e4393700d7657561cb43122571b172bbfb7c7ba1d"
 dependencies = [
- "either",
  "env_home",
  "rustix 1.0.8",
  "winsafe",
@@ -6372,13 +6417,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
-name = "wit-bindgen-rt"
-version = "0.39.0"
+name = "wit-bindgen"
+version = "0.45.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f42320e61fe2cfd34354ecb597f86f413484a798ba44a8ca1165c58d42da6c1"
-dependencies = [
- "bitflags 2.9.3",
-]
+checksum = "052283831dbae3d879dc7f51f3d92703a316ca49f91540417d38591826127814"
 
 [[package]]
 name = "writeable"
@@ -6448,6 +6490,12 @@ name = "xml-rs"
 version = "0.8.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fd8403733700263c6eb89f192880191f1b83e332f7a20371ddcf421c4a337c7"
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yazi"
@@ -6588,3 +6636,11 @@ checksum = "fc1f7e205ce79eb2da3cd71c5f55f3589785cb7c79f6a03d1c8d1491bda5d089"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "skidder"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "skidder-cli"
+version = "0.1.0"

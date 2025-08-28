@@ -41,7 +41,7 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 use ropey::Rope;
-use tree_sitter::{Query, QueryCursor};
+use tree_house_bindings::{InactiveQueryCursor, Query, QueryCursor};
 use tree_sitter_grz::NodeKind;
 
 mod folding_range;
@@ -56,7 +56,7 @@ pub struct GrzLsp {
     grz_files: HashMap<Url, GrzFile>,
     shared_data: AppHandle,
     owner_receiver: Receiver<FileOwnerMessage>,
-    query_cursor: QueryCursor,
+    query_cursor: InactiveQueryCursor,
     // Queries
     rename_query: Query,
     semantic_tokens_query: Query,

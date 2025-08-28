@@ -1,7 +1,8 @@
 use crate::text::{Modifier, Style, Weight};
 use ecolor::Color32;
+use phf::OrderedSet;
 
-pub const THEME_NAMES: &[&str] = &[
+pub const THEME_NAMES: OrderedSet<&'static str> = phf::phf_ordered_set! {
     "attribute",
     "comment",
     "constant",
@@ -78,7 +79,7 @@ pub const THEME_NAMES: &[&str] = &[
     "diagnostic.error.underline",
     "diagnostic.underline",
     "diagnostic.deprecated",
-];
+};
 
 macro_rules! hex_color {
     ($color:expr) => {{

@@ -15,7 +15,7 @@ use prehash::Passthru;
 use ropey::Rope;
 use slideshow::viewbox::Viewbox;
 use tracing::instrument;
-use tree_sitter::{InputEdit, Point, Tree};
+use tree_house_bindings::{InputEdit, Point, Tree};
 use tree_sitter_grz::NodeKind;
 
 use crate::{GrzRoot, slide::ObjState};
@@ -26,7 +26,7 @@ pub mod helix_loader;
 pub mod slideshow;
 
 pub struct GrzFile {
-    parser: tree_sitter::Parser,
+    parser: tree_house_bindings::Parser,
     incremental_state: Option<IncrementalState>,
     pub tree: Option<Tree>,
     pub version: i32,
@@ -64,9 +64,13 @@ impl GrzFile {
     }
 
     pub fn empty() -> io::Result<Self> {
-        let mut parser = tree_sitter::Parser::new();
+        let mut parser = tree_house_bindings::Parser::new();
         parser
-            .set_language(&tree_sitter_grz::LANGUAGE.into())
+            .set_grammar(
+                tree_sitter_grz::LANGUAGE
+                    .try_into()
+                    .map_err(|e| io::Error::new(ErrorKind::Unsupported, e))?,
+            )
             .map_err(|e| io::Error::new(ErrorKind::Unsupported, e))?;
         Ok(Self {
             source: Rope::new(),
@@ -105,13 +109,14 @@ impl GrzFile {
         let starting_node = tree
             .root_node()
             .first_named_child_for_byte(edit.new_end_byte)?;
+        let starting_node_kind = NodeKind::from(starting_node.kind_id());
         let mut tree_walker = GrzCursor::from_node(
             starting_node,
             tree,
             &self.source,
             Arc::new(ErrsWithSource::default()),
         );
-        match NodeKind::from(starting_node.kind_id()) {
+        match starting_node_kind {
             NodeKind::SymSlide => {
                 let node_id = tree_walker.id(2, NodeKind::SymSlide).ok();
                 node_id.and_then(|nid| self.slideshow.slides.get_index_of(&nid))
@@ -157,25 +162,7 @@ impl GrzFile {
         let time = Instant::now();
         let tree = self
             .parser
-            .parse_with_options(
-                &mut |byte, _| {
-                    if byte <= self.source.len_bytes() {
-                        let (chunk, start_byte, _, _) = self.source.chunk_at_byte(byte);
-                        &chunk.as_bytes()[byte - start_byte..]
-                    } else {
-                        // out of range
-                        &[]
-                    }
-                },
-                self.error_free_tree.as_ref(),
-                // Some(tree_sitter::ParseOptions {
-                //     progress_callback: Some(&mut |state| {
-                //         dbg!(state.current_byte_offset());
-                //         true
-                //     }),
-                // }),
-                None,
-            )
+            .parse(self.source.slice(..), self.error_free_tree.as_ref())
             .ok_or_else(|| {
                 io::Error::new(
                     ErrorKind::TimedOut,
@@ -270,7 +257,10 @@ impl From<CharRange> for SourceSpan {
 }
 
 impl CharRange {
-    pub fn new(byte_range: tree_sitter::Range, current_rope: &Rope) -> io::Result<CharRange> {
+    pub fn new(
+        byte_range: tree_house_bindings::Range,
+        current_rope: &Rope,
+    ) -> io::Result<CharRange> {
         let start = char_pos_from_byte_pos(byte_range.start_point, current_rope)?;
         let end = char_pos_from_byte_pos(byte_range.end_point, current_rope)?;
         Ok(CharRange {
@@ -278,21 +268,23 @@ impl CharRange {
             start_character: start.1,
             end_line: end.0,
             end_character: end.1,
-            byte_range: byte_range.start_byte..byte_range.end_byte,
+            byte_range: byte_range.start_byte as usize..byte_range.end_byte as usize,
         })
     }
 }
 
 pub fn char_pos_from_byte_pos(byte_pos: Point, current_rope: &Rope) -> io::Result<(usize, usize)> {
-    let line = current_rope.get_line(byte_pos.row).ok_or_else(|| {
-        io::Error::new(
-            ErrorKind::NotFound,
-            format!("Line `{}` doesn't exist", byte_pos.row),
-        )
-    })?;
+    let line = current_rope
+        .get_line(byte_pos.row as usize)
+        .ok_or_else(|| {
+            io::Error::new(
+                ErrorKind::NotFound,
+                format!("Line `{}` doesn't exist", byte_pos.row),
+            )
+        })?;
     Ok((
-        byte_pos.row,
-        line.try_byte_to_char(byte_pos.column)
+        byte_pos.row as usize,
+        line.try_byte_to_char(byte_pos.col as usize)
             .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?,
     ))
 }
@@ -305,9 +297,14 @@ pub fn byte_pos_from_char_pos(char_pos: (usize, usize), current_rope: &Rope) -> 
         )
     })?;
     Ok(Point {
-        column: line
+        col: line
             .try_char_to_byte(char_pos.1)
-            .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?,
-        row: char_pos.0,
+            .map_err(|e| io::Error::new(ErrorKind::NotFound, e))?
+            .try_into()
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?,
+        row: char_pos
+            .0
+            .try_into()
+            .map_err(|e| io::Error::new(ErrorKind::Other, e))?,
     })
 }

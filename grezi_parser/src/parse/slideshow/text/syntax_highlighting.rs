@@ -1,96 +1,83 @@
-use std::{cell::RefCell, collections::HashMap, ops::Deref, rc::Rc};
+use std::time::Duration;
 
-use tree_sitter_highlight::{HighlightConfiguration, HighlightEvent};
+use ropey::RopeSlice;
+use tree_house::{
+    InjectionLanguageMarker, LanguageLoader, Syntax,
+    highlighter::{HighlightEvent, Highlighter},
+};
 
 use crate::{
-    parse::helix_loader,
-    text::{Attrs, Modifier, TextParagraph},
+    parse::{
+        helix_loader::grammar::HelixLanguageLoader, slideshow::text::dark_plus_theme::THEME_NAMES,
+    },
+    text::{Attrs, TextParagraph},
 };
 
 use super::dark_plus_theme::THEME_COLORS;
 
-macro_rules! get_highlight_config {
-    ($language:expr) => {
-        HELIX_HIGHLIGHT_CONFIGS.with_borrow_mut(|configs| {
-            Rc::clone(configs.entry($language.into()).or_insert_with(move || {
-                let mut config = match helix_loader::grammar::get_highlight_configuration($language)
-                {
-                    Ok(config) => config,
-                    Err(e) => return Rc::new(Err(e)),
-                };
-                config.configure(super::dark_plus_theme::THEME_NAMES);
-                Rc::new(Ok(config))
-            }))
-        })
-    };
-}
-
-thread_local! {
-    static HELIX_HIGHLIGHT_CONFIGS: RefCell<HashMap<smartstring::alias::String, Rc<Result<HighlightConfiguration, libloading::Error>>, ahash::RandomState>> = RefCell::new(HashMap::default());
-}
-
+// Copied mostly from https://github.com/helix-editor/helix/blob/7e4e556f84cd657dc99e3e0acfa7442170a01a11/helix-term/src/ui/markdown.rs#L31
 pub fn format_highlighted(
-    value: &str,
-    language: &str,
+    value: RopeSlice<'_>,
+    language: RopeSlice<'_>,
     default_attrs: &Attrs,
     paragraph: &mut TextParagraph,
 ) -> bool {
-    let mut highlighter = tree_sitter_highlight::Highlighter::new();
-    let initial_config = unsafe {
-        std::mem::transmute::<
-            &Result<HighlightConfiguration, libloading::Error>,
-            &Result<HighlightConfiguration, libloading::Error>,
-        >(get_highlight_config!(language).deref())
-    };
-    let Ok(initial_config) = initial_config else {
-        return false;
-    };
-    let Ok(highlight_iter) =
-        highlighter.highlight(initial_config, value.as_bytes(), None, |name| {
-            if let Ok(config) = get_highlight_config!(name).deref() {
-                Some(unsafe {
-                    std::mem::transmute::<
-                        &tree_sitter_highlight::HighlightConfiguration,
-                        &tree_sitter_highlight::HighlightConfiguration,
-                    >(config)
-                })
-            } else {
-                None
-            }
-        })
+    let language_loader = HelixLanguageLoader::new(&THEME_NAMES);
+    let Some(initial_language) =
+        language_loader.language_for_marker(InjectionLanguageMarker::Match(language))
     else {
+        tracing::error!("Failed to highlight '{language}'");
         return false;
     };
+    let Ok(initial_syntax) = Syntax::new(
+        value.clone(),
+        initial_language,
+        Duration::from_secs(5),
+        &language_loader,
+    ) else {
+        tracing::error!("Failed to highlight '{language}'");
+        return false;
+    };
+    let mut syntax_highlighter =
+        Highlighter::new(&initial_syntax, value.clone(), &language_loader, ..);
+    let mut syntax_highlight_stack = Vec::new();
+    let mut pos = 0;
 
-    let mut modifiers_active = Vec::new();
-
-    for highlight in highlight_iter {
-        let Ok(highlight_event) = highlight else {
-            return false;
-        };
-
-        match highlight_event {
-            HighlightEvent::Source { start, end } => {
-                let mut attrs = default_attrs.clone();
-
-                for modifier in modifiers_active
-                    .iter()
-                    .flat_map(|mods: &&[Modifier]| mods.iter())
-                {
-                    attrs.apply_modifier(*modifier);
-                }
-
-                paragraph
-                    .rich_text
-                    .push(((&value[start..end]).into(), attrs));
+    while pos < value.len_bytes() as u32 {
+        if pos == syntax_highlighter.next_event_offset() {
+            let (event, new_highlights) = syntax_highlighter.advance();
+            if event == HighlightEvent::Refresh {
+                syntax_highlight_stack.clear();
             }
-            HighlightEvent::HighlightEnd => {
-                modifiers_active.pop();
-            }
-            HighlightEvent::HighlightStart(highlight) => {
-                modifiers_active.push(THEME_COLORS[highlight.0]);
-            }
+            syntax_highlight_stack.extend(new_highlights);
         }
+
+        let start = pos;
+        pos = syntax_highlighter.next_event_offset();
+        if pos == u32::MAX {
+            pos = value.len_bytes() as u32;
+        }
+        if pos == start {
+            continue;
+        }
+        // The highlighter should always move forward.
+        // If the highlighter malfunctions, bail on syntax highlighting and log an error.
+        debug_assert!(pos > start);
+        if pos < start {
+            tracing::error!("Failed to highlight '{language}'");
+            return false;
+        }
+
+        let mut attrs = default_attrs.clone();
+
+        syntax_highlight_stack
+            .iter()
+            .flat_map(|highlight| THEME_COLORS[highlight.idx()])
+            .for_each(|highlight| attrs.apply_modifier(*highlight));
+
+        let slice = value.byte_slice(start as usize..pos as usize);
+
+        paragraph.rich_text.push((slice.chunks().collect(), attrs));
     }
 
     true

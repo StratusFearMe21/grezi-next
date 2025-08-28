@@ -33,17 +33,12 @@ impl From<TextJobParams<'_>> for SmallVec<[TextSection; 1]> {
     fn from(val: TextJobParams) -> Self {
         if !val.language.is_empty() {
             let mut text_job = val.new_paragraph();
-            let value: Cow<'_, str> = val.value.into();
-            let language: Cow<'_, str> = val.language.into();
-            if !format_highlighted(
-                value.as_ref(),
-                language.as_ref(),
-                &val.default_attrs,
-                &mut text_job,
-            ) {
+            let value: RopeSlice<'_> = val.value.as_rope_slice();
+            let language: RopeSlice<'_> = val.language.as_rope_slice();
+            if !format_highlighted(value, language, &val.default_attrs, &mut text_job) {
                 text_job
                     .rich_text
-                    .push((value.into(), val.default_attrs.clone()));
+                    .push((value.chunks().collect(), val.default_attrs.clone()));
             }
             if val.tagged {
                 text_job.tag = Some(TextTag::Code);

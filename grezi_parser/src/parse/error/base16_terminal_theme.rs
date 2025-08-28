@@ -1,6 +1,7 @@
 use owo_colors::{Effect, XtermColors};
+use phf::OrderedSet;
 
-pub const THEME_NAMES: &[&str] = &[
+pub const THEME_NAMES: OrderedSet<&'static str> = phf::phf_ordered_set! {
     "ui.menu",
     "ui.menu.selected",
     "ui.linenr",
@@ -51,7 +52,7 @@ pub const THEME_NAMES: &[&str] = &[
     "debug",
     "warning",
     "error",
-];
+};
 
 pub const THEME_COLORS: &[(Option<XtermColors>, Option<XtermColors>, &[Effect])] = &[
     // "ui.menu"

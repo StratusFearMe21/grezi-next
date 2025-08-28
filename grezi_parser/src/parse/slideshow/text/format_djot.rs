@@ -163,7 +163,8 @@ impl TextParagraph {
                 if !language.is_empty() {
                     match parser.next() {
                         Some(jotdown::Event::Str(code)) => {
-                            if format_highlighted(code.trim(), language, &attrs, self) {
+                            if format_highlighted(code.trim().into(), language.into(), &attrs, self)
+                            {
                                 return;
                             }
                         }
@@ -241,10 +242,11 @@ impl TextParagraph {
                             match parser.next() {
                                 Some(jotdown::Event::Str(code)) => {
                                     if format_highlighted(
-                                        code.as_ref(),
+                                        code.as_ref().into(),
                                         lang.parts()
                                             .collect::<smartstring::alias::String>()
-                                            .as_str(),
+                                            .as_str()
+                                            .into(),
                                         &attrs,
                                         self,
                                     ) {

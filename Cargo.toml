@@ -28,3 +28,10 @@ ecolor = { version = "0.32.1" }
 emath = { version = "0.32.1" }
 egui_extras = { version = "0.32.1" }
 egui-glyphon = { git = "https://github.com/StratusFearMe21/egui-glyphon.git", branch = "grezi", default-features = false }
+
+[patch.crates-io]
+tree-house-bindings = { path = "../tree-house/bindings" }
+tree-house = { path = "../tree-house/highlighter" }
+skidder = { path = "../tree-house/skidder" }
+skidder-cli = { path = "../tree-house/cli" }
+

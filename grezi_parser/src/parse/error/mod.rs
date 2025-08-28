@@ -11,7 +11,7 @@ use miette::{Diagnostic, GraphicalReportHandler};
 use ropey::Rope;
 use thiserror::Error;
 use tracing_error::{SpanTrace, SpanTraceStatus};
-use tree_sitter::Tree;
+use tree_house_bindings::Tree;
 use tree_sitter_grz::NodeKind;
 
 use super::cursor::ErrorInfo;
@@ -142,13 +142,14 @@ impl Debug for ErrsWithSource {
                 // error to map to the truncated source
                 let source: Arc<str> = if let Some(range) = error.char_range_mut() {
                     let mut walker = tree.walk();
-                    walker.goto_first_child_for_byte(range.byte_range.start);
+                    walker.goto_first_child_for_byte(range.byte_range.start as u32);
                     if let Ok(highlight_range) =
                         super::CharRange::new(walker.node().range(), source)
                     {
                         *range = range.clone() - highlight_range.clone();
+                        let byte_range = highlight_range.byte_range;
                         source
-                            .byte_slice(highlight_range.byte_range)
+                            .byte_slice(byte_range.start as usize..byte_range.end as usize)
                             .to_string()
                             .into()
                     } else {
@@ -159,11 +160,8 @@ impl Debug for ErrsWithSource {
                 };
                 source_code = Some(Arc::clone(&source));
                 if color {
-                    handler = handler.with_syntax_highlighting(GrzHighlighter::new(
-                        // SAFETY: The tree is stored in the `ErrsWithSource` struct
-                        // and thus won't be dropped while this reference is alive
-                        Arc::clone(&source),
-                    ));
+                    handler =
+                        handler.with_syntax_highlighting(GrzHighlighter::new(Arc::clone(&source)));
                 }
             }
             let mut report = miette::Report::new(error);
