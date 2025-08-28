@@ -65,6 +65,7 @@ pub struct GrzHighlighterState<'h> {
 }
 
 impl<'h> HighlighterState for GrzHighlighterState<'h> {
+    // Copied mostly from https://github.com/helix-editor/helix/blob/7e4e556f84cd657dc99e3e0acfa7442170a01a11/helix-term/src/ui/markdown.rs#L31
     #[instrument(skip(self))]
     fn highlight_line<'s>(&mut self, line: &'s str) -> Vec<Styled<&'s str>> {
         let mut out_line = Vec::new();
@@ -113,7 +114,10 @@ impl<'h> HighlighterState for GrzHighlighterState<'h> {
                     style.effects(highlight.2)
                 });
 
-            out_line.push(style.style(&line[start as usize..pos as usize]));
+            out_line.push(style.style(
+                &line[(start - initial_pos.unwrap()) as usize
+                    ..(pos - initial_pos.unwrap()) as usize],
+            ));
         }
 
         out_line

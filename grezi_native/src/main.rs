@@ -194,7 +194,7 @@ fn main() -> eyre::Result<()> {
                 }
                 #[cfg(not(feature = "lsp"))]
                 {
-                    color_eyre::eyre::bail!("LSP feature is not enabled");
+                    Err(eyre::eyre!("LSP feature is not enabled"))?;
                 }
             } else {
                 let t_app_shared_data = app_shared_data.clone();
