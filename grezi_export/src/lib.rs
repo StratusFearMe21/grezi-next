@@ -275,10 +275,6 @@ pub fn cairo_draw(
                     .unwrap(),
             )
             .unwrap(),
-            egui::ImageData::Font(_) => {
-                tracing::warn!("Font image data not supported");
-                continue;
-            }
         };
 
         if let Some(pos) = tex.pos {

@@ -22,15 +22,9 @@ panic = "abort"
 # ecolor = { version = "0.31.0" }
 # emath = { version = "0.31.0" }
 # egui_extras = { version = "0.31.0" }
-egui = { git = "https://github.com/StratusFearMe21/egui.git", default-features = false }
-eframe = { git = "https://github.com/StratusFearMe21/egui.git", default-features = false }
-ecolor = { git = "https://github.com/StratusFearMe21/egui.git" }
-emath = { git = "https://github.com/StratusFearMe21/egui.git" }
-egui_extras = { git = "https://github.com/StratusFearMe21/egui.git" }
+egui = { version = "0.32.1", default-features = false }
+eframe = { version = "0.32.1", default-features = false }
+ecolor = { version = "0.32.1" }
+emath = { version = "0.32.1" }
+egui_extras = { version = "0.32.1" }
 egui-glyphon = { git = "https://github.com/StratusFearMe21/egui-glyphon.git", branch = "grezi", default-features = false }
-
-
-[patch.crates-io]
-eyre = { git = "https://github.com/eyre-rs/eyre", rev = "c4ee249f7c51dc6452e8704ae8d117d90d6eeebc" }
-color-spantrace = { git = "https://github.com/eyre-rs/eyre", rev = "c4ee249f7c51dc6452e8704ae8d117d90d6eeebc" }
-color-eyre = { git = "https://github.com/eyre-rs/eyre", rev = "c4ee249f7c51dc6452e8704ae8d117d90d6eeebc" }

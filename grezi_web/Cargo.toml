@@ -25,7 +25,7 @@ tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 wasm-bindgen-futures = "0.4.50"
 web-sys = { version = "0.3.77", features = ["HtmlCanvasElement"] }
-wgpu = { version = "26", features = ["webgl"] }
+wgpu = { version = "25", features = ["webgl"] }
 
 [[bin]]
 name = "grezi"

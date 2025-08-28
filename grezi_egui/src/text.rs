@@ -3,8 +3,8 @@ use std::{ops::Deref, sync::Arc};
 use egui::{Align2, Pos2, Rect, Vec2, mutex::RwLock};
 use egui_glyphon::{
     cosmic_text::{
-        Align, Attrs, Buffer, CacheKeyFlags, Color, Cursor, Family, FontSystem, Metrics, Stretch,
-        Style, Weight, fontdb::ID,
+        Align, Attrs, Buffer, CacheKeyFlags, Color, Cursor, Family, FeatureTag, FontFeatures,
+        FontSystem, Metrics, Stretch, Style, Weight, fontdb::ID,
     },
     measure_buffer,
 };
@@ -300,11 +300,22 @@ pub fn resolve_text_paragraph(
                     weight: Weight(attrs.weight.0),
                     cache_key_flags: CacheKeyFlags::empty(),
                     metrics_opt: None,
+                    letter_spacing_opt: None,
+                    font_features: {
+                        let mut features = FontFeatures::new();
+                        features
+                            .enable(FeatureTag::STANDARD_LIGATURES)
+                            .enable(FeatureTag::CONTEXTUAL_LIGATURES)
+                            .enable(FeatureTag::CONTEXTUAL_ALTERNATES)
+                            .enable(FeatureTag::DISCRETIONARY_LIGATURES);
+                        features
+                    },
                 },
             )
         }),
-        Attrs::new(),
+        &Attrs::new(),
         egui_glyphon::cosmic_text::Shaping::Advanced,
+        Some(alignment),
     );
 
     buffer.shape_until_scroll(font_system, false);
@@ -316,9 +327,6 @@ pub fn resolve_text_paragraph(
         Some(buffer_size.width()),
         Some(buffer_size.height()),
     );
-    for line in &mut buffer.lines {
-        line.set_align(Some(alignment));
-    }
 
     buffer.shape_until_scroll(font_system, true);
 
