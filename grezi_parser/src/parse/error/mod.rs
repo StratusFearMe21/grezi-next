@@ -11,7 +11,6 @@ use miette::{Diagnostic, GraphicalReportHandler};
 use ropey::Rope;
 use thiserror::Error;
 use tracing_error::{SpanTrace, SpanTraceStatus};
-use tree_house_bindings::Tree;
 use tree_sitter_grz::NodeKind;
 
 use super::cursor::ErrorInfo;
@@ -106,7 +105,7 @@ impl From<io::Error> for ParseError {
 #[derive(Default)]
 pub struct ErrsWithSource {
     pub errors: boxcar::Vec<(ParseError, SpanTrace)>,
-    source_code_and_tree: OnceLock<(Rope, Tree)>,
+    source_code_and_tree: OnceLock<Rope>,
 }
 
 impl ErrsWithSource {
@@ -114,7 +113,7 @@ impl ErrsWithSource {
         self.errors.push((error, SpanTrace::capture()));
         let _ = self
             .source_code_and_tree
-            .get_or_init(|| (error_info.source.clone(), error_info.tree.clone()));
+            .get_or_init(|| error_info.source.clone());
     }
 
     pub fn has_errors(&self) -> bool {
@@ -133,39 +132,22 @@ impl Debug for ErrsWithSource {
         let color = supports_color::on(supports_color::Stream::Stderr)
             .map(|c| c.has_basic)
             .unwrap_or_default();
-        for (mut error, trace) in self.errors.iter().map(|(_, e)| (e.0.clone(), &e.1)) {
+        let source_code: Option<Arc<str>> = self.source_code_and_tree.get().and_then(|source| {
+            let source: Arc<str> = source.to_string().into();
+            Some(Arc::clone(&source))
+        });
+        let highlighter = source_code
+            .clone()
+            .map(|source| GrzHighlighter::new(source));
+        for (error, trace) in self.errors.iter().map(|(_, e)| (e.0.clone(), &e.1)) {
             let mut handler = GraphicalReportHandler::new();
-            let mut source_code: Option<Arc<str>> = None;
-            if let Some((source, tree)) = self.source_code_and_tree.get() {
-                // Gets the single top level element that needs to be highlighted
-                // to display the error. Also adjusts the CharRange of the
-                // error to map to the truncated source
-                let source: Arc<str> = if let Some(range) = error.char_range_mut() {
-                    let mut walker = tree.walk();
-                    walker.goto_first_child_for_byte(range.byte_range.start as u32);
-                    if let Ok(highlight_range) =
-                        super::CharRange::new(walker.node().range(), source)
-                    {
-                        *range = range.clone() - highlight_range.clone();
-                        let byte_range = highlight_range.byte_range;
-                        source
-                            .byte_slice(byte_range.start as usize..byte_range.end as usize)
-                            .to_string()
-                            .into()
-                    } else {
-                        source.to_string().into()
-                    }
-                } else {
-                    source.to_string().into()
-                };
-                source_code = Some(Arc::clone(&source));
-                if color {
-                    handler =
-                        handler.with_syntax_highlighting(GrzHighlighter::new(Arc::clone(&source)));
+            let mut report = miette::Report::new(error);
+            if color {
+                if let Some(highlighter) = highlighter.clone() {
+                    handler = handler.with_syntax_highlighting(highlighter);
                 }
             }
-            let mut report = miette::Report::new(error);
-            if let Some(sc) = source_code {
+            if let Some(sc) = source_code.clone() {
                 report = report.with_source_code(sc);
             }
             report.deref_mut();

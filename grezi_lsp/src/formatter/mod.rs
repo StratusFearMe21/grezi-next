@@ -2,7 +2,7 @@ use helix_lsp_types as lsp_types;
 use lsp_types::{Position, TextEdit};
 use ropey::Rope;
 use tracing::instrument;
-use tree_sitter::{Node, Tree, TreeCursor};
+use tree_house_bindings::{Node, Tree, TreeCursor};
 
 use grezi_parser::parse::{byte_pos_from_char_pos, char_pos_from_byte_pos};
 use tree_sitter_grz::NodeKind;
@@ -14,7 +14,7 @@ mod slide;
 mod viewbox;
 
 pub fn char_range_from_byte_range(
-    range: tree_sitter::Range,
+    range: tree_house_bindings::Range,
     current_rope: &Rope,
 ) -> Result<lsp_types::Range, ()> {
     let start = char_pos_from_byte_pos(range.start_point, current_rope).or(Err(()))?;
@@ -34,7 +34,7 @@ pub fn char_range_from_byte_range(
 pub fn byte_range_from_char_range(
     range: lsp_types::Range,
     current_rope: &Rope,
-) -> Result<tree_sitter::Range, ()> {
+) -> Result<tree_house_bindings::Range, ()> {
     let start_point = byte_pos_from_char_pos(
         (range.start.line as usize, range.start.character as usize),
         current_rope,
@@ -45,10 +45,15 @@ pub fn byte_range_from_char_range(
         current_rope,
     )
     .or(Err(()))?;
-    let start_byte =
-        current_rope.try_line_to_byte(start_point.row).or(Err(()))? + start_point.column;
-    let end_byte = current_rope.try_line_to_byte(end_point.row).or(Err(()))? + end_point.column;
-    Ok(tree_sitter::Range {
+    let start_byte = current_rope
+        .try_line_to_byte(start_point.row as usize)
+        .or(Err(()))? as u32
+        + start_point.col;
+    let end_byte = current_rope
+        .try_line_to_byte(end_point.row as usize)
+        .or(Err(()))? as u32
+        + end_point.col;
+    Ok(tree_house_bindings::Range {
         start_point,
         end_point,
         start_byte,
@@ -88,7 +93,8 @@ pub fn format_code(current_rope: &Rope, tree: &Tree) -> Result<Vec<TextEdit>, ()
             if formatting_cursor.edited {
                 formatting_cursor.edits.pop();
             }
-            if current_rope.byte_slice(formatting_cursor.node().byte_range()) != "\n" {
+            let range = formatting_cursor.node().byte_range();
+            if current_rope.byte_slice(range.start as usize..range.end as usize) != "\n" {
                 let mut edit = TextEdit {
                     range: lsp_types::Range {
                         start: Position {
@@ -239,10 +245,11 @@ impl<'a> FormattingCursor<'a> {
                     next = self.goto_next_impl()?;
                 }
                 WhitespaceEdit::Assert(assertion) => {
-                    if current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte)
-                        != assertion
+                    if current_rope.byte_slice(
+                        self.last_range.start_byte as usize..self.last_range.end_byte as usize,
+                    ) != assertion
                     {
-                        tracing::warn!(assertion, got = %current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte), whitespace = true, "Fix assertion");
+                        tracing::warn!(assertion, got = %current_rope.byte_slice(self.last_range.start_byte as usize..self.last_range.end_byte as usize), whitespace = true, "Fix assertion");
                         edit.new_text = assertion.to_owned();
                         self.edits.push(edit.clone());
                         self.edited = true;
@@ -251,8 +258,11 @@ impl<'a> FormattingCursor<'a> {
                 }
                 WhitespaceEdit::Trailing(trailing) => {
                     next = self.goto_next_impl()?;
-                    if current_rope.byte_slice(self.tree_cursor.node().byte_range()) != trailing {
-                        tracing::warn!(trailing, got = %current_rope.byte_slice(self.tree_cursor.node().byte_range()), whitespace = true, "Fix trailing");
+                    let range = self.tree_cursor.node().byte_range();
+                    if current_rope.byte_slice(range.start as usize..range.end as usize) != trailing
+                    {
+                        let range = self.tree_cursor.node().byte_range();
+                        tracing::warn!(trailing, got = %current_rope.byte_slice(range.start as usize..range.end as usize), whitespace = true, "Fix trailing");
                         edit.new_text = trailing.to_owned();
                     }
                     self.edits.push(edit.clone());
@@ -273,15 +283,18 @@ impl<'a> FormattingCursor<'a> {
                     self.last_range.end_byte = self.last_range.start_byte;
                 }
                 WhitespaceEdit::Assert(assertion) => {
-                    tracing::warn!(assertion, got = %current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte), whitespace = false, "Fix assertion");
+                    tracing::warn!(assertion, got = %current_rope.byte_slice(self.last_range.start_byte as usize..self.last_range.end_byte as usize), whitespace = false, "Fix assertion");
                     edit.new_text = assertion.to_owned();
                     edit.range.end = edit.range.start;
                     self.edits.push(edit);
                     self.edited = true;
                 }
                 WhitespaceEdit::Trailing(trailing) => {
-                    if current_rope.byte_slice(self.tree_cursor.node().byte_range()) != trailing {
-                        tracing::warn!(trailing, got = %current_rope.byte_slice(self.tree_cursor.node().byte_range()), whitespace = false, "Fix trailing");
+                    let range = self.tree_cursor.node().byte_range();
+                    if current_rope.byte_slice(range.start as usize..range.end as usize) != trailing
+                    {
+                        let range = self.tree_cursor.node().byte_range();
+                        tracing::warn!(trailing, got = %current_rope.byte_slice(range.start as usize..range.end as usize), whitespace = false, "Fix trailing");
                         edit.new_text = trailing.to_owned();
                         edit.range.end = edit.range.start;
                         self.edits.push(edit);
@@ -308,10 +321,11 @@ impl<'a> FormattingCursor<'a> {
     ) -> Result<(), ()> {
         match whitespace_rule {
             WhitespaceEdit::Assert(assertion) => {
-                if current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte)
-                    != assertion
+                if current_rope.byte_slice(
+                    self.last_range.start_byte as usize..self.last_range.end_byte as usize,
+                ) != assertion
                 {
-                    tracing::warn!(assertion, got = %current_rope.byte_slice(self.last_range.start_byte..self.last_range.end_byte), "Revisit and fix assertion");
+                    tracing::warn!(assertion, got = %current_rope.byte_slice(self.last_range.start_byte as usize..self.last_range.end_byte as usize), "Revisit and fix assertion");
                     if self.edited {
                         if let Some(edit) = self.edits.last_mut() {
                             edit.new_text = assertion.to_owned();

@@ -1,5 +1,5 @@
 use phf::OrderedSet;
-use std::path::PathBuf;
+use std::{ops::Deref, path::PathBuf, sync::Arc};
 use tree_house::{InjectionLanguageMarker, LanguageConfig, LanguageLoader, highlighter::Highlight};
 use tree_house_bindings::Grammar;
 
@@ -9,8 +9,9 @@ const DYLIB_EXTENSION: &str = "so";
 #[cfg(windows)]
 const DYLIB_EXTENSION: &str = "dll";
 
+#[derive(Clone)]
 pub struct HelixLanguageLoader {
-    languages: boxcar::Vec<LanguageConfig>,
+    languages: boxcar::Vec<Arc<LanguageConfig>>,
     names: &'static OrderedSet<&'static str>,
 }
 
@@ -24,12 +25,27 @@ impl LanguageLoader for HelixLanguageLoader {
         };
 
         let lang = get_highlight_configuration(name.as_str()).ok()?;
-        lang.configure(|name| Some(Highlight::new(self.names.get_index(name)? as u32)));
-        Some(tree_house::Language(self.languages.push(lang) as u32))
+        lang.configure(|name| {
+            let mut name = Some(name);
+            while let Some(n) = name {
+                if let Some(highlight) = self.names.get_index(n) {
+                    return Some(Highlight::new(highlight as u32));
+                }
+
+                name = n.rsplit_once('.').map(|(n, _)| n);
+            }
+
+            None
+        });
+        Some(tree_house::Language(
+            self.languages.push(Arc::new(lang)) as u32
+        ))
     }
 
     fn get_config(&self, lang: tree_house::Language) -> Option<&LanguageConfig> {
-        self.languages.get(lang.0 as usize)
+        self.languages
+            .get(lang.0 as usize)
+            .map(|config| config.deref())
     }
 }
 

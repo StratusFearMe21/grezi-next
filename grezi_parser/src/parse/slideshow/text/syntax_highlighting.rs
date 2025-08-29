@@ -8,12 +8,12 @@ use tree_house::{
 
 use crate::{
     parse::{
-        helix_loader::grammar::HelixLanguageLoader, slideshow::text::dark_plus_theme::THEME_NAMES,
+        helix_loader::grammar::HelixLanguageLoader, slideshow::text::dark_plus_theme::DEFAULT_STYLE,
     },
     text::{Attrs, TextParagraph},
 };
 
-use super::dark_plus_theme::THEME_COLORS;
+use super::dark_plus_theme::{THEME_COLORS, THEME_NAMES};
 
 // Copied mostly from https://github.com/helix-editor/helix/blob/7e4e556f84cd657dc99e3e0acfa7442170a01a11/helix-term/src/ui/markdown.rs#L31
 pub fn format_highlighted(
@@ -69,6 +69,7 @@ pub fn format_highlighted(
         }
 
         let mut attrs = default_attrs.clone();
+        attrs.apply_modifier(DEFAULT_STYLE);
 
         syntax_highlight_stack
             .iter()

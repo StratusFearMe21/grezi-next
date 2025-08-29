@@ -326,16 +326,12 @@ impl<'a> GrzCursor<'a> {
     }
 
     pub fn error_info(&self) -> ErrorInfo {
-        ErrorInfo {
-            source: self.rope,
-            tree: self.tree,
-        }
+        ErrorInfo { source: self.rope }
     }
 }
 
 pub struct ErrorInfo<'a> {
     pub source: &'a Rope,
-    pub tree: &'a Tree,
 }
 
 #[derive(Debug)]

@@ -88,6 +88,8 @@ macro_rules! hex_color {
     }};
 }
 
+pub const DEFAULT_STYLE: Modifier = Modifier::Color(hex_color!("#d4d4d4"));
+
 pub const THEME_COLORS: &[&[Modifier]] = &[
     &[Modifier::Color(hex_color!("#9CDCFE"))],
     &[Modifier::Color(hex_color!("#6A9955"))],
@@ -154,7 +156,7 @@ pub const THEME_COLORS: &[&[Modifier]] = &[
     &[Modifier::Color(hex_color!("#ffffff"))],
     &[Modifier::Color(hex_color!("#252526"))],
     &[Modifier::Color(hex_color!("#007acc"))],
-    &[Modifier::Color(hex_color!("#d4d4d4"))],
+    &[DEFAULT_STYLE],
     &[Modifier::Color(hex_color!("#ffffff"))],
     &[Modifier::Color(hex_color!("#6796E6"))],
     &[Modifier::Color(hex_color!("#858585"))],
