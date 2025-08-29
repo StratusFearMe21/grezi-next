@@ -56,7 +56,6 @@ impl Highlighter for GrzHighlighter {
         );
         let mut syntax_highlight_stack = Vec::new();
         while highlighter.next_event_offset() < source.span().offset() as u32 {
-            tracing::info!("hit");
             let (event, new_highlights) = highlighter.advance();
             if event == HighlightEvent::Refresh {
                 syntax_highlight_stack.clear();
