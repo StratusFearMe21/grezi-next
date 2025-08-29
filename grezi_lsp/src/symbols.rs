@@ -3,15 +3,13 @@ use std::sync::Arc;
 use grezi_parser::parse::{cursor::GrzCursor, error::ErrsWithSource};
 use helix_core::{
     Rope,
-    syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor, Tree},
+    tree_sitter::{InactiveQueryCursor, Point, Query, RopeInput, Tree},
 };
 use helix_lsp_types as lsp_types;
 use lsp_types::{
     DocumentSymbol, GotoDefinitionParams, GotoDefinitionResponse, Location, ReferenceParams,
     SymbolKind, Url,
 };
-use tree_sitter::StreamingIterator;
 use tree_sitter_grz::NodeKind;
 
 use super::formatter::char_range_from_byte_range;
@@ -20,13 +18,12 @@ pub fn references(
     rename_query: &Query,
     current_rope: &Rope,
     references: ReferenceParams,
-    query_cursor: &mut QueryCursor,
     tree: &Option<Tree>,
 ) -> Option<Vec<Location>> {
     let tree = tree.as_ref()?;
     let point = Point {
-        row: references.text_document_position.position.line as usize,
-        column: references.text_document_position.position.character as usize,
+        row: references.text_document_position.position.line,
+        col: references.text_document_position.position.character,
     };
 
     let reference_node = tree
@@ -34,25 +31,22 @@ pub fn references(
         .descendant_for_point_range(point, point)
         .unwrap();
 
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let mut iter = query_cursor.matches(
+    let mut iter = InactiveQueryCursor::default().execute_query(
         rename_query,
-        tree.root_node(),
-        RopeProvider(current_rope.slice(..)),
+        &tree.root_node(),
+        RopeInput::new(current_rope.slice(..)),
     );
 
     let mut locations = Vec::new();
 
-    while let Some(query_match) = iter.next() {
-        if current_rope.byte_slice(query_match.captures[0].node.byte_range())
-            == current_rope.byte_slice(reference_node.byte_range())
+    while let Some(query_match) = iter.next_match() {
+        let query_match_range = query_match.matched_node(0).node.byte_range();
+        let reference_node_range = reference_node.byte_range();
+        if current_rope.byte_slice(query_match_range.start as usize..query_match_range.end as usize)
+            == current_rope
+                .byte_slice(reference_node_range.start as usize..reference_node_range.end as usize)
         {
-            let range = query_match.captures[0].node.range();
+            let range = query_match.matched_node(0).node.range();
             locations.push(Location {
                 uri: references.text_document_position.text_document.uri.clone(),
                 range: char_range_from_byte_range(range, current_rope).ok()?,
@@ -68,16 +62,15 @@ pub fn goto_declaration(
     current_rope: &Rope,
     currently_open: Url,
     goto_declaration: GotoDefinitionParams,
-    query_cursor: &mut QueryCursor,
     tree: &Option<Tree>,
 ) -> Option<GotoDefinitionResponse> {
     let tree = tree.as_ref()?;
     let point = Point {
-        row: goto_declaration.text_document_position_params.position.line as usize,
-        column: goto_declaration
+        row: goto_declaration.text_document_position_params.position.line,
+        col: goto_declaration
             .text_document_position_params
             .position
-            .character as usize,
+            .character,
     };
 
     let usage_node = tree
@@ -85,23 +78,20 @@ pub fn goto_declaration(
         .descendant_for_point_range(point, point)
         .unwrap();
 
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let mut iter = query_cursor.matches(
+    let mut iter = InactiveQueryCursor::default().execute_query(
         top_level_search_query,
-        tree.root_node(),
-        RopeProvider(current_rope.slice(..)),
+        &tree.root_node(),
+        RopeInput::new(current_rope.slice(..)),
     );
 
-    while let Some(query_match) = iter.next() {
-        if current_rope.byte_slice(query_match.captures[1].node.byte_range())
-            == current_rope.byte_slice(usage_node.byte_range())
+    while let Some(query_match) = iter.next_match() {
+        let query_match_range = query_match.matched_node(1).node.byte_range();
+        let usage_node_range = usage_node.byte_range();
+        if current_rope.byte_slice(query_match_range.start as usize..query_match_range.end as usize)
+            == current_rope
+                .byte_slice(usage_node_range.start as usize..usage_node_range.end as usize)
         {
-            let range = query_match.captures[1].node.range();
+            let range = query_match.matched_node(1).node.range();
             return Some(GotoDefinitionResponse::Scalar(Location {
                 uri: currently_open,
                 range: char_range_from_byte_range(range, current_rope).ok()?,
@@ -159,10 +149,16 @@ where
                 let vb_ref_range = tree_cursor.node().byte_range();
 
                 symbols.push(callback(DocumentSymbol {
-                    name: current_rope.byte_slice(byte_range).to_string(),
+                    name: current_rope
+                        .byte_slice(byte_range.start as usize..byte_range.end as usize)
+                        .to_string(),
                     kind: SymbolKind::VARIABLE,
                     range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: Some(current_rope.byte_slice(vb_ref_range).to_string()),
+                    detail: Some(
+                        current_rope
+                            .byte_slice(vb_ref_range.start as usize..vb_ref_range.end as usize)
+                            .to_string(),
+                    ),
                     selection_range: char_range_from_byte_range(selection_range, current_rope)
                         .ok()?,
                     tags: None,
@@ -179,10 +175,16 @@ where
                 let name_range = tree_cursor.node().byte_range();
 
                 symbols.push(callback(DocumentSymbol {
-                    name: current_rope.byte_slice(byte_range).to_string(),
+                    name: current_rope
+                        .byte_slice(byte_range.start as usize..byte_range.end as usize)
+                        .to_string(),
                     kind: SymbolKind::OBJECT,
                     range: char_range_from_byte_range(range, current_rope).ok()?,
-                    detail: Some(current_rope.byte_slice(name_range).to_string()),
+                    detail: Some(
+                        current_rope
+                            .byte_slice(name_range.start as usize..name_range.end as usize)
+                            .to_string(),
+                    ),
                     selection_range: char_range_from_byte_range(selection_range, current_rope)
                         .ok()?,
                     tags: None,

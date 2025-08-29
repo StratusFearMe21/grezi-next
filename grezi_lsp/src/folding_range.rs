@@ -1,7 +1,6 @@
 use helix_core::{
     Rope,
-    syntax::RopeProvider,
-    tree_sitter::{Point, Query, QueryCursor, StreamingIterator, Tree},
+    tree_sitter::{InactiveQueryCursor, Node, Query, RopeInput},
 };
 use helix_lsp_types as lsp_types;
 use lsp_types::FoldingRange;
@@ -10,28 +9,22 @@ use super::formatter::char_range_from_byte_range;
 
 pub fn folding_ranges(
     rope: &Rope,
-    tree: &Option<Tree>,
-    query_cursor: &mut QueryCursor,
+    node: Option<Node>,
     folding_ranges_query: &Query,
 ) -> Option<Vec<FoldingRange>> {
-    let tree = tree.as_ref()?;
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
+    let node = node.as_ref()?;
 
-    let mut iter = query_cursor.matches(
+    let mut iter = InactiveQueryCursor::default().execute_query(
         folding_ranges_query,
-        tree.root_node(),
-        RopeProvider(rope.slice(..)),
+        node,
+        RopeInput::new(rope.slice(..)),
     );
 
     let mut locations = Vec::new();
 
-    while let Some(query_match) = iter.next() {
-        let range = char_range_from_byte_range(query_match.captures[0].node.range(), rope).ok()?;
+    while let Some(query_match) = iter.next_match() {
+        let range =
+            char_range_from_byte_range(query_match.matched_node(0).node.range(), rope).ok()?;
         locations.push(FoldingRange {
             start_line: range.start.line,
             start_character: Some(range.start.character),

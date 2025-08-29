@@ -1,8 +1,8 @@
+use helix_core::tree_sitter::{self, Node, Tree, TreeCursor};
 use helix_lsp_types as lsp_types;
 use lsp_types::{Position, TextEdit};
 use ropey::Rope;
 use tracing::instrument;
-use tree_house_bindings::{Node, Tree, TreeCursor};
 
 use grezi_parser::parse::{byte_pos_from_char_pos, char_pos_from_byte_pos};
 use tree_sitter_grz::NodeKind;
@@ -14,7 +14,7 @@ mod slide;
 mod viewbox;
 
 pub fn char_range_from_byte_range(
-    range: tree_house_bindings::Range,
+    range: tree_sitter::Range,
     current_rope: &Rope,
 ) -> Result<lsp_types::Range, ()> {
     let start = char_pos_from_byte_pos(range.start_point, current_rope).or(Err(()))?;
@@ -34,7 +34,7 @@ pub fn char_range_from_byte_range(
 pub fn byte_range_from_char_range(
     range: lsp_types::Range,
     current_rope: &Rope,
-) -> Result<tree_house_bindings::Range, ()> {
+) -> Result<tree_sitter::Range, ()> {
     let start_point = byte_pos_from_char_pos(
         (range.start.line as usize, range.start.character as usize),
         current_rope,
@@ -53,7 +53,7 @@ pub fn byte_range_from_char_range(
         .try_line_to_byte(end_point.row as usize)
         .or(Err(()))? as u32
         + end_point.col;
-    Ok(tree_house_bindings::Range {
+    Ok(tree_sitter::Range {
         start_point,
         end_point,
         start_byte,

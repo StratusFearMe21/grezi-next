@@ -5,7 +5,10 @@ use egui::Modifiers;
 use grezi_egui::GrzResolvedSlide;
 use grezi_file_owner::{AppHandle, FileOwnerMessage};
 use grezi_parser::parse::{GrzFile, error::ErrsWithSource};
-use helix_core::syntax::generate_edits;
+use helix_core::{
+    syntax::generate_edits,
+    tree_sitter::{Grammar, Query, query::InvalidPredicateError},
+};
 use helix_lsp::{Position, Url};
 use helix_lsp_types::{
     self as lsp_types, DeclarationCapability, DocumentSymbolParams, DocumentSymbolResponse,
@@ -41,7 +44,6 @@ use nucleo_matcher::{
     pattern::{AtomKind, CaseMatching, Normalization, Pattern},
 };
 use ropey::Rope;
-use tree_house_bindings::{InactiveQueryCursor, Query, QueryCursor};
 use tree_sitter_grz::NodeKind;
 
 mod folding_range;
@@ -56,7 +58,6 @@ pub struct GrzLsp {
     grz_files: HashMap<Url, GrzFile>,
     shared_data: AppHandle,
     owner_receiver: Receiver<FileOwnerMessage>,
-    query_cursor: InactiveQueryCursor,
     // Queries
     rename_query: Query,
     semantic_tokens_query: Query,
@@ -66,22 +67,29 @@ pub struct GrzLsp {
 
 impl GrzLsp {
     pub fn new(shared_data: AppHandle, owner_receiver: Receiver<FileOwnerMessage>) -> Self {
-        let tree_sitter_grz_lang = tree_sitter_grz::LANGUAGE.into();
-        let rename_query =
-            Query::new(&tree_sitter_grz_lang, include_str!("queries/rename.scm")).unwrap();
+        let tree_sitter_grz_lang: Grammar = tree_sitter_grz::LANGUAGE.try_into().unwrap();
+        let rename_query = Query::new(
+            tree_sitter_grz_lang,
+            include_str!("queries/rename.scm"),
+            |_, predicate| Err(InvalidPredicateError::unknown(predicate)),
+        )
+        .unwrap();
         let semantic_tokens_query = Query::new(
-            &tree_sitter_grz_lang,
+            tree_sitter_grz_lang,
             include_str!("queries/semantic_tokens.scm"),
+            |_, predicate| Err(InvalidPredicateError::unknown(predicate)),
         )
         .unwrap();
         let folding_range_query = Query::new(
-            &tree_sitter_grz_lang,
+            tree_sitter_grz_lang,
             include_str!("queries/folding_range.scm"),
+            |_, predicate| Err(InvalidPredicateError::unknown(predicate)),
         )
         .unwrap();
         let top_level_search_query = Query::new(
-            &tree_sitter_grz_lang,
+            tree_sitter_grz_lang,
             include_str!("queries/top_level_search.scm"),
+            |_, predicate| Err(InvalidPredicateError::unknown(predicate)),
         )
         .unwrap();
 
@@ -91,7 +99,6 @@ impl GrzLsp {
             grz_files: HashMap::new(),
             shared_data,
             owner_receiver,
-            query_cursor: QueryCursor::new(),
             rename_query,
             semantic_tokens_query,
             folding_range_query,
@@ -128,9 +135,8 @@ impl GrzLsp {
                     legend: SemanticTokensLegend {
                         token_types: self
                             .semantic_tokens_query
-                            .capture_names()
-                            .iter()
-                            .map(|name| {
+                            .captures()
+                            .map(|(_, name)| {
                                 SemanticTokenType::new(unsafe {
                                     std::mem::transmute::<&str, &'static str>(
                                         name.split_once('.').map(|split| split.0).unwrap_or(name),
@@ -140,9 +146,10 @@ impl GrzLsp {
                             .collect(),
                         token_modifiers: self
                             .semantic_tokens_query
-                            .capture_names()
-                            .iter()
-                            .map(|name| unsafe { std::mem::transmute::<&str, &'static str>(name) })
+                            .captures()
+                            .map(|(_, name)| unsafe {
+                                std::mem::transmute::<&str, &'static str>(name)
+                            })
                             .filter_map(|name| {
                                 // Safe because string exists for lifetime of LSP
                                 name.split_once('.')
@@ -233,8 +240,7 @@ impl GrzLsp {
                                     rqid,
                                     folding_range::folding_ranges(
                                         &doc.source,
-                                        &doc.tree,
-                                        &mut self.query_cursor,
+                                        doc.tree.as_ref().map(|tree| tree.root_node()),
                                         &self.folding_range_query,
                                     ),
                                 )))
@@ -367,7 +373,6 @@ impl GrzLsp {
                                             .uri
                                             .clone(),
                                         goto_params,
-                                        &mut self.query_cursor,
                                         &doc.tree,
                                     ),
                                 )))
@@ -390,7 +395,6 @@ impl GrzLsp {
                                         &self.rename_query,
                                         &doc.source,
                                         reference_params,
-                                        &mut self.query_cursor,
                                         &doc.tree,
                                     ),
                                 )))
@@ -409,7 +413,6 @@ impl GrzLsp {
                                     semantic_tokens::semantic_tokens(
                                         &self.semantic_tokens_query,
                                         &doc.source,
-                                        &mut self.query_cursor,
                                         &doc.tree,
                                     ),
                                 )))
@@ -444,7 +447,6 @@ impl GrzLsp {
                                                     rename_params,
                                                     &doc.source,
                                                     &self.rename_query,
-                                                    &mut self.query_cursor,
                                                     &doc.tree,
                                                 ),
                                             },
@@ -584,7 +586,7 @@ impl GrzLsp {
                                     Some(
                                         n.kind_id() == NodeKind::SymWhitespace as u16
                                             && n.start_position().row
-                                                != edit_range?.start_position.row,
+                                                != edit_range?.start_point.row,
                                     )
                                 })
                                 .unwrap_or(true)

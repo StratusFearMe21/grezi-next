@@ -1,12 +1,11 @@
 use grezi_parser::parse::byte_pos_from_char_pos;
-use helix_core::syntax::RopeProvider;
+use helix_core::tree_sitter::{InactiveQueryCursor, Query, RopeInput, Tree};
 use helix_lsp_types as lsp_types;
 use lsp_types::{
     AnnotatedTextEdit, OneOf, PrepareRenameResponse, RenameParams, TextDocumentPositionParams,
     TextEdit,
 };
 use ropey::Rope;
-use tree_sitter::{Point, Query, QueryCursor, StreamingIterator, Tree};
 use tree_sitter_grz::NodeKind;
 
 use super::formatter::char_range_from_byte_range;
@@ -41,7 +40,6 @@ pub fn rename(
     rename: RenameParams,
     current_rope: &Rope,
     rename_query: &Query,
-    query_cursor: &mut QueryCursor,
     tree: &Option<Tree>,
 ) -> Vec<OneOf<TextEdit, AnnotatedTextEdit>> {
     let mut workspace_edit: Vec<OneOf<TextEdit, AnnotatedTextEdit>> = Vec::new();
@@ -63,24 +61,23 @@ pub fn rename(
         .descendant_for_point_range(point, point)
         .unwrap();
 
-    let rename_name = current_rope.byte_slice(rename_node.byte_range());
+    let range = rename_node.byte_range();
+    let rename_name = current_rope.byte_slice(range.start as usize..range.end as usize);
 
-    query_cursor.set_point_range(
-        Point { row: 0, column: 0 }..Point {
-            row: usize::MAX,
-            column: usize::MAX,
-        },
-    );
-    let mut iter = query_cursor.matches(
+    let mut iter = InactiveQueryCursor::default().execute_query(
         rename_query,
-        tree.root_node(),
-        RopeProvider(current_rope.slice(..)),
+        &tree.root_node(),
+        RopeInput::new(current_rope.slice(..)),
     );
 
-    while let Some(query_match) = iter.next() {
-        let node = query_match.captures[0].node;
-        if current_rope.byte_slice(node.byte_range()).eq(&rename_name) {
-            let range = node.range();
+    while let Some(query_match) = iter.next_match() {
+        let node = query_match.matched_node(0);
+        let range = node.node.byte_range();
+        if current_rope
+            .byte_slice(range.start as usize..range.end as usize)
+            .eq(&rename_name)
+        {
+            let range = node.node.range();
 
             workspace_edit.push(OneOf::Left(TextEdit {
                 range: char_range_from_byte_range(range, current_rope).unwrap(),
