@@ -6,11 +6,11 @@ edition = "2024"
 [dependencies]
 lsp-server = "0.7.8"
 egui.workspace = true
-grezi_parser = { version = "0.1.0", path = "../grezi_parser" }
+grezi_parser = { path = "../grezi_parser" }
 crossbeam-channel = "0.5.14"
 serde_json = "1.0.140"
-grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
-grezi_file_owner = { version = "0.1.0", path = "../grezi_file_owner" }
+grezi_egui = { path = "../grezi_egui" }
+grezi_file_owner = { path = "../grezi_file_owner" }
 miette = { version = "7.5.0", default-features = false }
 helix-lsp = { git = "https://github.com/helix-editor/helix.git", rev = "a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b" }
 helix-core = { git = "https://github.com/helix-editor/helix.git", rev = "a05c151bb6e8e9c65ec390b0ae2afe7a5efd619b" }
@@ -18,6 +18,6 @@ helix-lsp-types = { git = "https://github.com/helix-editor/helix.git", rev = "a0
 percent-encoding = "2.3.1"
 smallvec = "1.14.0"
 ropey = "1.6.1"
-tree-sitter-grz = { version = "0.1.0", path = "../tree-sitter-grz" }
+tree-sitter-grz = { path = "../tree-sitter-grz" }
 tracing = "0.1.41"
 nucleo-matcher = "0.3.1"

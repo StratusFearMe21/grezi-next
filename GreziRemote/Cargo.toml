@@ -13,9 +13,9 @@ color-eyre = "0.6.3"
 eframe = { workspace = true, features = ["android-native-activity", "default_fonts", "wgpu"] }
 egui-glyphon = { workspace = true, features = ["glyphon"] }
 egui_extras = { workspace = true, features = ["image", "webp", "gif"] }
-grezi_egui = { version = "0.1.0", path = "../grezi_egui" }
-grezi_font_serde = { version = "0.1.0", path = "../grezi_font_serde" }
-grezi_parser = { version = "0.1.0", path = "../grezi_parser", default-features = false }
+grezi_egui = { path = "../grezi_egui" }
+grezi_font_serde = { path = "../grezi_font_serde" }
+grezi_parser = { path = "../grezi_parser", default-features = false }
 image = "0.25.5"
 keyframe = { version = "1.1.1", default-features = false }
 postcard = { version = "1.1.1", features = ["use-std"] }

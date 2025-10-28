@@ -5,4 +5,4 @@ edition.workspace = true
 
 [dependencies]
 egui-glyphon.workspace = true
-roxmltree = "0.20.0"
+roxmltree = "0.21.1"

@@ -22,16 +22,16 @@ panic = "abort"
 # ecolor = { version = "0.31.0" }
 # emath = { version = "0.31.0" }
 # egui_extras = { version = "0.31.0" }
-egui = { version = "0.32.1", default-features = false }
-eframe = { version = "0.32.1", default-features = false }
-ecolor = { version = "0.32.1" }
-emath = { version = "0.32.1" }
-egui_extras = { version = "0.32.1" }
+egui = { version = "0.33", default-features = false }
+eframe = { version = "0.33", default-features = false }
+ecolor = { version = "0.33" }
+emath = { version = "0.33" }
+egui_extras = { version = "0.33" }
 egui-glyphon = { git = "https://github.com/StratusFearMe21/egui-glyphon.git", branch = "grezi", default-features = false }
 
-[patch.crates-io]
-tree-house-bindings = { path = "../tree-house/bindings" }
-tree-house = { path = "../tree-house/highlighter" }
-skidder = { path = "../tree-house/skidder" }
-skidder-cli = { path = "../tree-house/cli" }
+# [patch.crates-io]
+# tree-house-bindings = { path = "../tree-house/bindings" }
+# tree-house = { path = "../tree-house/highlighter" }
+# skidder = { path = "../tree-house/skidder" }
+# skidder-cli = { path = "../tree-house/cli" }
 
