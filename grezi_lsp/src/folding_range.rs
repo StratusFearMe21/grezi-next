@@ -5,7 +5,7 @@ use helix_core::{
 use helix_lsp_types as lsp_types;
 use lsp_types::FoldingRange;
 
-use super::formatter::char_range_from_byte_range;
+use crate::formatter::char_range_from_byte_range;
 
 pub fn folding_ranges(
     rope: &Rope,

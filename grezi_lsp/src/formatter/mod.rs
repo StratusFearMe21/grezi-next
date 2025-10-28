@@ -146,7 +146,7 @@ pub enum WhitespaceEdit {
 pub struct FormattingCursor<'a> {
     tree_cursor: TreeCursor<'a>,
     pub edits: Vec<TextEdit>,
-    pub last_range: helix_core::tree_sitter::Range,
+    pub last_range: tree_sitter::Range,
     pub edited: bool,
 }
 
@@ -261,7 +261,6 @@ impl<'a> FormattingCursor<'a> {
                     let range = self.tree_cursor.node().byte_range();
                     if current_rope.byte_slice(range.start as usize..range.end as usize) != trailing
                     {
-                        let range = self.tree_cursor.node().byte_range();
                         tracing::warn!(trailing, got = %current_rope.byte_slice(range.start as usize..range.end as usize), whitespace = true, "Fix trailing");
                         edit.new_text = trailing.to_owned();
                     }
@@ -293,7 +292,6 @@ impl<'a> FormattingCursor<'a> {
                     let range = self.tree_cursor.node().byte_range();
                     if current_rope.byte_slice(range.start as usize..range.end as usize) != trailing
                     {
-                        let range = self.tree_cursor.node().byte_range();
                         tracing::warn!(trailing, got = %current_rope.byte_slice(range.start as usize..range.end as usize), whitespace = false, "Fix trailing");
                         edit.new_text = trailing.to_owned();
                         edit.range.end = edit.range.start;
